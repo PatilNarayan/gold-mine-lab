@@ -84,7 +84,7 @@ func (s *Service) generateSignals(ctx context.Context) ([]strategy.Signal, error
 			if err != nil {
 				return nil, fmt.Errorf("signals: asset %s: %w", assetID, err)
 			}
-			candles, err := s.data.Tail(asset, st.Timeframe(), 4000, simulatedNow)
+			candles, err := s.data.Tail(asset, st.Timeframe(), 4000, marketTailAsOf)
 			if err != nil {
 				return nil, fmt.Errorf("signals: %s %s: %w", assetID, st.Timeframe(), err)
 			}

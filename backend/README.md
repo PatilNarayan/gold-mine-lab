@@ -92,17 +92,24 @@ semicolon-delimited, timestamps `YYYY.MM.DD HH:MM` treated as UTC.
 Timeframes: `1m 5m 15m 1h 4h 1d` map to files directly — no resampling.
 
 `CSVProvider`:
-- `Tail(asset, tf, n, asOf)` — last n candles ≤ asOf (market endpoints)
-- `Range(asset, tf, from, to, warmup)` — every candle in the window plus up to
-  `warmup` bars before `from` for indicator warm-up; streams the file so large
-  ranges never OOM; aborts on the first bad row
-- Validation: positive OHLC, volume ≥ 0, `high ≥ max(o,c)`, `low ≤ min(o,c)`,
-  `high ≥ low`, strict ascending order, no duplicate timestamps. Errors carry
-  `file:line` context — bad rows are rejected, never silently dropped.
+- `Tail(asset, tf, n, asOf)` — last n candles ≤ asOf; zero asOf = the
+  dataset's actual end (market endpoints report real freshness, no simulated
+  "now")
+- `Range(asset, tf, from, toExclusive, warmup)` — every candle in
+  `[from, toExclusive)` plus up to `warmup` bars before `from` for indicator
+  warm-up; streams the file so large ranges never OOM; aborts on the first
+  bad row
+- Date convention: `startDate`/`endDate` are inclusive at date granularity;
+  the service converts them to `[start, endDate+1day)` — a candle at next
+  day's midnight is excluded.
+- One shared `scanRows` validator for charts and backtests: explicit header
+  recognition (`Date;Open;High;Low;Close;Volume`), `file:line` errors,
+  finite positive OHLC (`NaN`/`±Inf` rejected), `high ≥ max(o,c)`,
+  `low ≤ min(o,c)`, `high ≥ low`, volume ≥ 0, strictly ascending, no
+  duplicate timestamps — bad rows are rejected, never silently dropped.
 
-Market endpoints truncate at `simulatedNow = 2025-10-14` (one year back for
-testing — the dataset has a gap 2025-09-12 → 2025-10-15, so the latest served
-candle is 2025-09-12).
+`GetCandles`/`Tail` and `Range` cannot disagree about data integrity — they
+share the same scan policy.
 
 ## Strategy: ema-cross v1.0.0
 
@@ -117,7 +124,13 @@ Rules, evaluated at each bar's close (EMA seeded at first close, k=2/(n+1)):
 - score = `min(1, |fast−slow|/price·20)`; reason e.g. `"EMA20 crossed above EMA50"`
 
 `strategy.Stream` (optional interface) gives O(1)-per-bar evaluation; the
-engine falls back to prefix `Evaluate` otherwise.
+engine falls back to prefix `Evaluate` otherwise. Both paths are proven
+equivalent bar-for-bar by `TestEMACrossStreamEqualsEvaluate`.
+
+Timeframe is a **per-run choice**: `Definition.timeframe` is the default and
+`supportedTimeframes` (15m/1h/4h/1d) bounds what a run may request —
+validation rejects anything else. EMA warm-up is parameter-derived:
+`Warmupper.WarmupBars() = 3× slow_period` pre-window bars for convergence.
 
 ## Backtest execution model
 
@@ -130,31 +143,42 @@ engine falls back to prefix `Evaluate` otherwise.
 4. Slippage is adverse: entry `open·(1+s%)`, exit `open·(1−s%)`.
    Commission is `%` of notional charged per fill (entry and exit).
 5. `positionSize` = % of current equity deployed (`qty = equity·s%/fill`).
-6. Equity is mark-to-market at each bar's close inside the window; an open
-   position at the last bar is liquidated at its close.
-7. A run is persisted atomically: trades + metrics + equity curve + status
+6. Accounting (engine 2.1): `grossPnL = (exitFill − entryFill)·qty`;
+   `netPnL = grossPnL − entryComm − exitComm`. Trade `pnl` is **net**;
+   gross + both commissions are stored separately. Win/loss classified on
+   net — a gross-positive trade can be a net loss.
+7. Equity is mark-to-market at each bar's close. On the final bar the open
+   position is liquidated at `close·(1−s%)` inside the curve — the terminal
+   equity point equals `initial + Σ netPnL` exactly.
+8. A run is persisted atomically: trades + metrics + equity curve + status
    `completed` in one transaction; failures write status `failed` + a safe
    message. Never a partially-completed run.
 
 ## Metric formulas
 
 `netPnl = finalEquity − initialCapital` · `returnPct = netPnl/initialCapital` ·
-`winRate = wins/closedTrades` · `avgTradePnl = netPnl/closedTrades` ·
-`grossProfit/grossLoss = Σ` of winning/losing trade P&L ·
+`winRate = wins/closedTrades` (classified on **net** P&L) ·
+`avgTradePnl = netPnl/closedTrades` ·
+`grossProfit/grossLoss = Σ` of winning/losing trade **net** P&L ·
 `profitFactor = grossProfit/grossLoss` (0 when no losses — not infinity) ·
-`maxDrawdown = max((peak−equity)/peak)` over the equity curve.
+`maxDrawdown = max((peak−equity)/peak)` over the equity curve (includes the
+post-liquidation terminal point).
 Sharpe is deliberately absent: no defined return frequency → not faked.
 
-## Database schema (migration 000001)
+## Database schema (migrations 000001 + 000002)
 
 | Table              | Key columns                                                        |
 | ------------------ | ------------------------------------------------------------------ |
 | `assets`           | id(text pk), symbol, name, asset_class, currency, metadata jsonb   |
-| `strategies`       | id(text pk), name, version, supported_assets jsonb, parameters jsonb |
+| `strategies`       | id(text pk), name, version, supported_assets jsonb, **supported_timeframes jsonb**, parameters jsonb |
 | `strategy_signals` | uuid pk, strategy_id→strategies, asset_id→assets, ts, action, score, price, reason — UNIQUE(strategy_id, asset_id, timestamp) |
-| `backtest_runs`    | uuid pk, strategy/asset refs, tf, dates, capital, size, commission, slippage, parameters jsonb, status, equity_curve jsonb, error |
-| `backtest_trades`  | uuid pk, run_id→runs (cascade), side, entry/exit time+price, qty, pnl, status, result |
+| `backtest_runs`    | uuid pk, strategy/asset refs, tf, dates, capital, size, commission, slippage, parameters jsonb, status, equity_curve jsonb, error, **engine_version, strategy_version, dataset** |
+| `backtest_trades`  | uuid pk, run_id→runs (cascade), side, entry/exit time+price, qty, **gross_pnl**, pnl (net), **entry/exit_commission**, status, result |
 | `backtest_metrics` | uuid pk, run_id→runs (cascade), metric_name, metric_value — UNIQUE(run_id, metric_name) |
+
+Migration 000002 preserves existing rows: pre-2.1 runs are marked
+`engine_version='legacy'` — their `pnl` was stored gross and they lack cost
+columns. They are preserved as-is, not recomputed.
 
 Indexes: `signals(strategy_id, asset_id, ts)`, `runs(strategy_id, asset_id,
 created_at)`, `trades(run_id)`, `trades(asset_id, entry_time)`,
@@ -172,12 +196,12 @@ Same contract as before — thin handlers → `service` → repos/engine:
 | GET    | `/api/health` | liveness + DB check |
 | GET    | `/api/assets` | from `assets` table |
 | GET    | `/api/market/candles?asset&timeframe` | real CSV candles + EMA overlays |
-| GET    | `/api/market/summary` | real last close / change |
+| GET    | `/api/market/summary` | real last candle close / change (status `Historical` — no live feed) |
 | GET    | `/api/strategies` | defs + latest signal + real run aggregates |
 | GET    | `/api/signals` | persisted crossover signals |
 | GET    | `/api/backtests?strategy` | all runs |
 | GET    | `/api/backtests/latest` | newest completed run ID |
-| GET    | `/api/backtests/summary` | aggregate metrics + trade-P&L equity curve |
+| GET    | `/api/backtests/summary` | experiment count + **latest run's** metrics and equity curve |
 | GET    | `/api/backtests/:id` | run + metrics + equity + trades |
 | POST   | `/api/backtests` | **executes the real engine**, persists, 201 |
 | GET    | `/api/trades` | filtered paginated trades from DB |
@@ -210,5 +234,9 @@ generation, market-data config, and DB errors — each carrying `run_id`,
 - One strategy (ema-cross), one asset (XAUUSD); registry is static in-memory.
 - POST /api/backtests is synchronous — large 1m windows take seconds.
 - Market endpoints serve a bounded tail; full range available via Range().
+- Legacy (pre-2.1) runs keep gross-P&L trades and no cost decomposition —
+  they're labeled `engine_version='legacy'`, not retroactively corrected.
+- Dashboard shows the latest run only; no portfolio view exists yet.
 - Sharpe/benchmark metrics deferred until return frequency is defined.
+- No live market data — every price is historical.
 - No auth, no websockets, no async job queue — by design for now.

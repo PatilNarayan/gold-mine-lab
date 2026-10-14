@@ -44,8 +44,9 @@ export const mockBacktestService: BacktestService = {
     if (isEmptyScenario()) {
       return {
         totalBacktests: 0,
-        bestStrategyId: null,
-        bestStrategyName: null,
+        latestRunId: null,
+        latestRunStrategyId: null,
+        latestRunStrategyName: null,
         winRate: 0,
         netPnl: 0,
         maxDrawdown: 0,

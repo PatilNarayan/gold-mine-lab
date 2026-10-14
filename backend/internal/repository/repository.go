@@ -32,8 +32,13 @@ type RunRow struct {
 	Status         string
 	EquityCurve    []EquityPointRow // nil until completed
 	Error          *string
-	CreatedAt      time.Time
-	CompletedAt    *time.Time
+	// Provenance — captured at execution time (migration 000002). NULL on
+	// legacy rows = pre-2.1 engine that recorded gross P&L only.
+	EngineVersion   *string
+	StrategyVersion *string
+	Dataset         *string
+	CreatedAt       time.Time
+	CompletedAt     *time.Time
 }
 
 // EquityPointRow is one point of a persisted equity curve.
@@ -43,21 +48,26 @@ type EquityPointRow struct {
 	Drawdown float64   `json:"drawdown"`
 }
 
-// TradeRow mirrors the backtest_trades table.
+// TradeRow mirrors the backtest_trades table. Pnl is NET of commissions for
+// engine ≥2.1 runs; legacy rows have NULL GrossPnl/commissions and store
+// gross in Pnl.
 type TradeRow struct {
-	ID         string
-	RunID      string
-	StrategyID string
-	AssetID    string
-	Side       string
-	EntryTime  time.Time
-	EntryPrice float64
-	ExitTime   *time.Time
-	ExitPrice  *float64
-	Quantity   float64
-	Pnl        *float64
-	Status     string
-	Result     string
+	ID              string
+	RunID           string
+	StrategyID      string
+	AssetID         string
+	Side            string
+	EntryTime       time.Time
+	EntryPrice      float64
+	ExitTime        *time.Time
+	ExitPrice       *float64
+	Quantity        float64
+	GrossPnl        *float64
+	Pnl             *float64
+	EntryCommission *float64
+	ExitCommission  *float64
+	Status          string
+	Result          string
 }
 
 // TradeQuery carries filters + pagination for the trades table.

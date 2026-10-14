@@ -22,9 +22,10 @@ import (
 	"github.com/gold-mine-lab/backend/internal/strategy/indicators"
 )
 
-// simulatedNow is the testing as-of: market data is truncated here even
-// though the dataset extends further.
-var simulatedNow = time.Date(2025, 10, 14, 0, 0, 0, 0, time.UTC)
+// marketTailAsOf is the zero time — Tail treats it as "the dataset's actual
+// end" so the market views report the real latest candle, never a simulated
+// "now". Historical data only; there is no live feed in V1.
+var marketTailAsOf time.Time
 
 // serveCaps bounds candles returned per timeframe by the market endpoints.
 var serveCaps = map[market.Timeframe]int{
@@ -76,7 +77,7 @@ func (s *Service) Candles(ctx context.Context, assetID string, tf market.Timefra
 		}
 		return api.CandleSeries{}, err
 	}
-	candles, err := s.data.Tail(asset, tf, serveCaps[tf], simulatedNow)
+	candles, err := s.data.Tail(asset, tf, serveCaps[tf], marketTailAsOf)
 	if err != nil {
 		return api.CandleSeries{}, fmt.Errorf("%w: %v", api.ErrNotFound, err)
 	}
@@ -104,7 +105,7 @@ func (s *Service) MarketSummary(ctx context.Context, assetID string, tf market.T
 		Change:        change,
 		ChangePercent: change / prev.Close,
 		AsOf:          last.Time.UTC().Format(time.RFC3339),
-		Status:        "Closed", // historical dataset replayed as-of simulatedNow
+		Status:        "Historical", // real historical dataset; no live feed in V1
 	}, nil
 }
 

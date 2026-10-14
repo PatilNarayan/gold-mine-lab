@@ -22,21 +22,26 @@ func (s *Store) UpsertStrategy(ctx context.Context, d strategy.Definition) error
 	if err != nil {
 		return fmt.Errorf("marshal parameters: %w", err)
 	}
+	tfs, err := json.Marshal(d.SupportedTimeframes)
+	if err != nil {
+		return fmt.Errorf("marshal supported_timeframes: %w", err)
+	}
 	const q = `
-		INSERT INTO strategies (id, name, version, description, supported_assets, timeframe, parameters, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO strategies (id, name, version, description, supported_assets, timeframe, supported_timeframes, parameters, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (id) DO UPDATE
 		SET name = EXCLUDED.name, version = EXCLUDED.version, description = EXCLUDED.description,
 		    supported_assets = EXCLUDED.supported_assets, timeframe = EXCLUDED.timeframe,
+		    supported_timeframes = EXCLUDED.supported_timeframes,
 		    parameters = EXCLUDED.parameters, status = EXCLUDED.status, updated_at = now()`
-	_, err = s.db.Exec(ctx, q, d.ID, d.Name, d.Version, d.Description, assets, d.Timeframe, params, d.Status)
+	_, err = s.db.Exec(ctx, q, d.ID, d.Name, d.Version, d.Description, assets, d.Timeframe, tfs, params, d.Status)
 	if err != nil {
 		return fmt.Errorf("upsert strategy %s: %w", d.ID, err)
 	}
 	return nil
 }
 
-const strategyCols = `id, name, version, description, supported_assets, timeframe, parameters, status`
+const strategyCols = `id, name, version, description, supported_assets, timeframe, supported_timeframes, parameters, status`
 
 func (s *Store) ListStrategies(ctx context.Context) ([]strategy.Definition, error) {
 	rows, err := s.db.Query(ctx, `SELECT `+strategyCols+` FROM strategies ORDER BY name`)
@@ -67,15 +72,20 @@ func (s *Store) GetStrategy(ctx context.Context, id string) (strategy.Definition
 
 func scanStrategy(row pgx.Row) (strategy.Definition, error) {
 	var d strategy.Definition
-	var assets, params []byte
+	var assets, tfs, params []byte
 	var tf string
-	err := row.Scan(&d.ID, &d.Name, &d.Version, &d.Description, &assets, &tf, &params, &d.Status)
+	err := row.Scan(&d.ID, &d.Name, &d.Version, &d.Description, &assets, &tf, &tfs, &params, &d.Status)
 	if err != nil {
 		return d, err
 	}
 	d.Timeframe = market.Timeframe(tf)
 	if err := json.Unmarshal(assets, &d.SupportedAssets); err != nil {
 		return d, fmt.Errorf("decode supported_assets: %w", err)
+	}
+	if len(tfs) > 0 {
+		if err := json.Unmarshal(tfs, &d.SupportedTimeframes); err != nil {
+			return d, fmt.Errorf("decode supported_timeframes: %w", err)
+		}
 	}
 	if err := json.Unmarshal(params, &d.Parameters); err != nil {
 		return d, fmt.Errorf("decode parameters: %w", err)

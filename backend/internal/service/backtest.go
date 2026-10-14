@@ -13,6 +13,11 @@ import (
 	"github.com/gold-mine-lab/backend/internal/strategy"
 )
 
+var (
+	engineVersion = backtest.EngineVersion
+	datasetID     = "kaggle/xauusd-gold-price-historical-2004-2024"
+)
+
 // --- backtests ---------------------------------------------------------------
 
 func (s *Service) ListRuns(ctx context.Context, strategyID string) ([]api.BacktestRun, error) {
@@ -66,66 +71,48 @@ func (s *Service) LatestRunID(ctx context.Context) (string, error) {
 	return s.repos.Runs.LatestCompletedRunID(ctx)
 }
 
-// DashboardSummary aggregates persisted run metrics. The equity curve is a
-// cumulative-P&L account view: every completed run's initial capital summed
-// as the base, then all trades' realized P&L applied in exit-time order.
+// DashboardSummary is deliberately NOT a portfolio aggregate: independent
+// runs (different parameters, windows, capital) cannot be summed into one
+// account. totalBacktests is the experiment count; the performance figures
+// and equity curve describe the latest completed run only.
 func (s *Service) DashboardSummary(ctx context.Context) (api.DashboardSummary, error) {
 	sum := api.DashboardSummary{}
 
-	netPnl, winRateMean, maxDD, totalRuns, err := s.repos.Metrics.AggregateMetrics(ctx)
-	if err != nil {
-		return sum, err
-	}
-	sum.TotalBacktests = totalRuns
-	sum.NetPnl = netPnl
-	sum.WinRate = winRateMean
-	sum.MaxDrawdown = maxDD
-
-	bestID, bestName, ok, err := s.repos.Metrics.BestStrategyByNetPnl(ctx)
-	if err != nil {
-		return sum, err
-	}
-	if ok {
-		sum.BestStrategyID, sum.BestStrategyName = &bestID, &bestName
-	}
-
-	// Aggregate equity: base capital = Σ completed runs' initial capital;
-	// then cumulative realized P&L at each trade's exit time.
 	runs, err := s.repos.Runs.ListRuns(ctx, "")
 	if err != nil {
 		return sum, err
 	}
-	base := 0.0
 	for _, r := range runs {
 		if r.Status == "completed" {
-			base += r.InitialCapital
+			sum.TotalBacktests++
 		}
 	}
-	trades, err := s.repos.Trades.ListAllClosed(ctx)
+
+	latestID, err := s.repos.Runs.LatestCompletedRunID(ctx)
 	if err != nil {
 		return sum, err
 	}
-	equity, peak := base, base
-	if len(trades) > 0 {
-		sum.Equity = append(sum.Equity, api.EquityPoint{
-			Time: trades[0].EntryTime.UTC().Format("2006-01-02T15:04:05Z"), Equity: base,
-		})
+	if latestID == "" {
+		return sum, nil
 	}
-	for _, t := range trades {
-		equity += *t.Pnl
-		if equity > peak {
-			peak = equity
-		}
-		dd := 0.0
-		if peak > 0 {
-			dd = (equity - peak) / peak
-		}
-		ts := t.ExitTime
-		if ts == nil {
-			ts = &t.EntryTime
-		}
+	latest, err := s.repos.Runs.GetRun(ctx, latestID)
+	if err != nil {
+		return sum, err
+	}
+	sum.LatestRunID = &latest.ID
+	sum.LatestRunStrategyID = &latest.StrategyID
+	if def, err := s.repos.Strategies.GetStrategy(ctx, latest.StrategyID); err == nil {
+		name := def.Name
+		sum.LatestRunStrategyName = &name
+	}
+	if m, err := s.repos.Metrics.GetMetrics(ctx, latest.ID); err == nil {
+		sum.NetPnl = m["net_pnl"]
+		sum.WinRate = m["win_rate"]
+		sum.MaxDrawdown = m["max_drawdown"]
+	}
+	for _, p := range latest.EquityCurve {
 		sum.Equity = append(sum.Equity, api.EquityPoint{
-			Time: ts.UTC().Format("2006-01-02T15:04:05Z"), Equity: equity, Drawdown: dd,
+			Time: p.Time.UTC().Format("2006-01-02T15:04:05Z"), Equity: p.Equity, Drawdown: p.Drawdown,
 		})
 	}
 	return sum, nil
@@ -205,6 +192,21 @@ func (s *Service) validateRequest(ctx context.Context, req api.BacktestRequest) 
 	if !supported {
 		return verr("strategy does not support this asset")
 	}
+	// Timeframe is a per-run choice constrained to the strategy's advertised
+	// supported set (its default is Definition.Timeframe).
+	def := describe(base)
+	if len(def.SupportedTimeframes) > 0 {
+		tfOK := false
+		for _, t := range def.SupportedTimeframes {
+			if t == req.Timeframe {
+				tfOK = true
+			}
+		}
+		if !tfOK {
+			return verr(fmt.Sprintf("timeframe %s is not supported by %s (supported: %v)",
+				req.Timeframe, def.ID, def.SupportedTimeframes))
+		}
+	}
 	strat, err := configureStrategy(base, req.Parameters)
 	if err != nil {
 		return verr(err.Error())
@@ -237,8 +239,13 @@ func (s *Service) validateRequest(ctx context.Context, req api.BacktestRequest) 
 		StartDate: req.StartDate, EndDate: req.EndDate,
 		InitialCapital: req.InitialCapital, PositionSize: req.PositionSize,
 		Commission: req.Commission, Slippage: req.Slippage, Parameters: req.Parameters,
+		EngineVersion:   &engineVersion,
+		StrategyVersion: ptr(strat.Version()), // captured at execution time
+		Dataset:         &datasetID,
 	}, strat, nil
 }
+
+func ptr[T any](v T) *T { return &v }
 
 // runEngine loads the candle window (plus indicator warm-up) and executes.
 func (s *Service) runEngine(ctx context.Context, req api.BacktestRequest, strat strategy.Strategy) (backtest.Result, []repository.TradeRow, []repository.MetricValue, []repository.EquityPointRow, error) {
@@ -248,7 +255,13 @@ func (s *Service) runEngine(ctx context.Context, req api.BacktestRequest, strat 
 	end, _ := time.Parse("2006-01-02", req.EndDate)
 	to := end.AddDate(0, 0, 1) // end_date inclusive → exclusive upper bound
 
-	warmup := 120 // covers the slowest EMA period allowed (slow<=100)
+	// Pre-window warm-up comes from the configured strategy (Warmupper) —
+	// ema-cross asks for 3× slow_period for EMA convergence — never a fixed
+	// constant that could mismatch the effective parameters.
+	warmup := 60
+	if w, ok := strat.(strategy.Warmupper); ok {
+		warmup = w.WarmupBars()
+	}
 	candles, err := s.data.Range(asset, req.Timeframe, start, to, warmup)
 	if err != nil {
 		return zero, nil, nil, nil, &api.ValidationError{Msg: fmt.Sprintf("no candle data for window: %v", err)}
@@ -276,7 +289,9 @@ func (s *Service) runEngine(ctx context.Context, req api.BacktestRequest, strat 
 			StrategyID: req.StrategyID, AssetID: req.AssetID, Side: t.Side,
 			EntryTime: t.EntryTime, EntryPrice: t.EntryPrice,
 			ExitTime: t.ExitTime, ExitPrice: t.ExitPrice,
-			Quantity: t.Quantity, Pnl: t.Pnl, Status: t.Status, Result: t.Result,
+			Quantity: t.Quantity, GrossPnl: t.GrossPnl, Pnl: t.Pnl,
+			EntryCommission: &t.EntryCommission, ExitCommission: &t.ExitCommission,
+			Status: t.Status, Result: t.Result,
 		})
 	}
 	m := metrics.Compute(res, req.InitialCapital)
@@ -309,6 +324,7 @@ func runDTO(r repository.RunRow) api.BacktestRun {
 		Commission: r.Commission, Slippage: r.Slippage, Parameters: r.Parameters,
 		Status: r.Status, CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 		CompletedAt: completedAt, Error: r.Error,
+		EngineVersion: r.EngineVersion, StrategyVersion: r.StrategyVersion, Dataset: r.Dataset,
 	}
 }
 
@@ -322,6 +338,8 @@ func tradeDTO(t repository.TradeRow) api.BacktestTrade {
 		ID: t.ID, RunID: t.RunID, StrategyID: t.StrategyID, AssetID: t.AssetID,
 		Side: t.Side, EntryTime: t.EntryTime.UTC().Format(time.RFC3339),
 		EntryPrice: t.EntryPrice, ExitTime: exitTime, ExitPrice: t.ExitPrice,
-		Quantity: t.Quantity, Pnl: t.Pnl, Status: t.Status, Result: t.Result,
+		Quantity: t.Quantity, GrossPnl: t.GrossPnl, Pnl: t.Pnl,
+		EntryCommission: t.EntryCommission, ExitCommission: t.ExitCommission,
+		Status: t.Status, Result: t.Result,
 	}
 }

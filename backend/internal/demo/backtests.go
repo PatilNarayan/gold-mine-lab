@@ -369,9 +369,10 @@ func (s *store) summary() api.DashboardSummary {
 		summary.WinRate = round(winRateSum/float64(len(completed)), 4)
 	}
 	if best != nil {
-		summary.BestStrategyID = strPtr(best.Run.StrategyID)
+		summary.LatestRunID = strPtr(best.Run.ID)
+		summary.LatestRunStrategyID = strPtr(best.Run.StrategyID)
 		if def, ok := strategyByID(best.Run.StrategyID); ok {
-			summary.BestStrategyName = strPtr(def.Name)
+			summary.LatestRunStrategyName = strPtr(def.Name)
 		}
 	}
 

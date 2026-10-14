@@ -94,23 +94,33 @@ type BacktestRun struct {
 	CreatedAt      string           `json:"createdAt"`
 	CompletedAt    *string          `json:"completedAt"`
 	Error          *string          `json:"error"`
+	// Provenance (migration 000002). nil on pre-2.1 rows: those recorded
+	// gross P&L on trades and lack cost decomposition.
+	EngineVersion   *string `json:"engineVersion"`
+	StrategyVersion *string `json:"strategyVersion"`
+	Dataset         *string `json:"dataset"`
 }
 
 // BacktestTrade mirrors the planned backtest_trades table.
+// Pnl is NET of commissions (engine ≥2.1); GrossPnl/commissions are null on
+// legacy rows where pnl was stored gross.
 type BacktestTrade struct {
-	ID         string   `json:"id"`
-	RunID      string   `json:"runId"`
-	StrategyID string   `json:"strategyId"`
-	AssetID    string   `json:"assetId"`
-	Side       string   `json:"side"` // BUY|SELL
-	EntryTime  string   `json:"entryTime"`
-	EntryPrice float64  `json:"entryPrice"`
-	ExitTime   *string  `json:"exitTime"`
-	ExitPrice  *float64 `json:"exitPrice"`
-	Quantity   float64  `json:"quantity"`
-	Pnl        *float64 `json:"pnl"`
-	Status     string   `json:"status"` // open|closed
-	Result     string   `json:"result"` // win|loss|open
+	ID              string   `json:"id"`
+	RunID           string   `json:"runId"`
+	StrategyID      string   `json:"strategyId"`
+	AssetID         string   `json:"assetId"`
+	Side            string   `json:"side"` // BUY|SELL
+	EntryTime       string   `json:"entryTime"`
+	EntryPrice      float64  `json:"entryPrice"`
+	ExitTime        *string  `json:"exitTime"`
+	ExitPrice       *float64 `json:"exitPrice"`
+	Quantity        float64  `json:"quantity"`
+	GrossPnl        *float64 `json:"grossPnl"`
+	Pnl             *float64 `json:"pnl"` // net of commissions
+	EntryCommission *float64 `json:"entryCommission"`
+	ExitCommission  *float64 `json:"exitCommission"`
+	Status          string   `json:"status"` // open|closed
+	Result          string   `json:"result"` // win|loss|open — classified on net
 }
 
 // EquityPoint is one point on an equity curve (drawdown as fraction ≤ 0).
@@ -130,14 +140,18 @@ type BacktestDetail struct {
 }
 
 // DashboardSummary is the aggregate payload for GET /api/backtests/summary.
+// Independent runs are NOT a portfolio: totalBacktests is an experiment
+// count and the performance figures + equity curve describe the latest
+// completed run only (identified by latestRunId).
 type DashboardSummary struct {
-	TotalBacktests   int           `json:"totalBacktests"`
-	BestStrategyID   *string       `json:"bestStrategyId"`
-	BestStrategyName *string       `json:"bestStrategyName"`
-	WinRate          float64       `json:"winRate"`
-	NetPnl           float64       `json:"netPnl"`
-	MaxDrawdown      float64       `json:"maxDrawdown"`
-	Equity           []EquityPoint `json:"equity"`
+	TotalBacktests        int           `json:"totalBacktests"`
+	LatestRunID           *string       `json:"latestRunId"`
+	LatestRunStrategyID   *string       `json:"latestRunStrategyId"`
+	LatestRunStrategyName *string       `json:"latestRunStrategyName"`
+	WinRate               float64       `json:"winRate"`
+	NetPnl                float64       `json:"netPnl"`
+	MaxDrawdown           float64       `json:"maxDrawdown"`
+	Equity                []EquityPoint `json:"equity"` // latest run's curve
 }
 
 // BacktestRequest is the body of POST /api/backtests.

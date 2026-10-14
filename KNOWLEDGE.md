@@ -45,18 +45,18 @@ React frontend       (charts, tables, run-history — reads, never computes)
 | BUY/SELL signal markers + signals table | **Real** — ema-cross evaluated over real candles | Real crossovers |
 | Backtest trades/metrics/equity curves | **Real** — engine replayed over real candles | Real simulated results (a real backtest, not fabricated) |
 | Strategy list / performance tiles | Real — aggregated from persisted runs | Real |
-| Market status | "Closed" | Dataset is frozen history, not live feed |
+| Market status | "Historical" | Dataset is frozen history, not live feed |
+| Dashboard cards | **Latest completed run** only | Independent runs ≠ portfolio |
 
 Nothing on screen is random filler anymore. The old deterministic `demo`
 package still exists but is only used by tests — production path is real.
 
-## Simulated "now"
+## Data freshness
 
-For testing the app pretends today is **2025-10-14** (one year before real
-now): market endpoints truncate candles at that as-of
-(`service.simulatedNow`). Note the dataset has a gap 2025-09-12 → 2025-10-15,
-so the newest candle shown is 2025-09-12. Backtests use their explicit date
-range — change the constant to move the as-of.
+Market endpoints serve the dataset's **actual last candle** (currently
+2026-01-30, XAUUSD ≈ $4,889) — there is no simulated "now" and no invented
+price. Market status reports `Historical`; V1 has no live feed. Backtests use
+their explicit date range.
 
 ## Backend module map (backend/)
 
@@ -82,9 +82,29 @@ Never Handler→SQL, never Strategy→I/O.
 
 - **Next-candle-open fills.** Signals compute on bar *i* close and fill at bar
   *i+1* open — same-candle execution would be look-ahead bias.
-- **Warm-up windowed reads.** `CSVProvider.Range(from, to, warmup)` returns
-  bars before the window so a 50-EMA is accurate at the window's first bar,
-  while signals are only *acted on* inside the requested range.
+- **Date-range convention.** `startDate` inclusive, `endDate` inclusive at
+  date granularity → translated to `[start, endDate+1day)` UTC exclusive — a
+  candle at midnight on the day after endDate is never included.
+- **Warm-up windowed reads.** `CSVProvider.Range(from, toExclusive, warmup)`
+  returns pre-window bars for indicator convergence (ema-cross asks for
+  `3× slow_period` via the `Warmupper` interface — parameter-derived, not a
+  fixed constant). Signals are only *acted on* inside the requested range.
+- **Shared validation.** Charts (`Tail`) and backtests (`Range`) use the same
+  `scanRows` policy: explicit header recognition, file:line errors, NaN/±Inf
+  rejected, OHLC integrity, strictly ascending, no duplicates.
+- **Net P&L accounting (engine 2.1).** `grossPnL = (exitFill − entryFill)·qty`;
+  `netPnL = grossPnL − entryCommission − exitCommission`; win/loss classified
+  on **net**; `equity_final = initial + Σ netPnL` reconciles exactly with the
+  equity curve's terminal point (final liquidation is inside the curve).
+- **Experiment provenance.** Every run persists `engine_version`,
+  `strategy_version`, `dataset`, params, window, capital, costs (migration
+  000002). Pre-2.1 rows are marked `engine_version='legacy'` — their `pnl`
+  was gross and they lack cost decomposition; they are preserved, not
+  retroactively "corrected".
+- **Latest-run dashboard.** Independent runs (different params, windows,
+  capital) are experiments, not one portfolio — the dashboard shows the
+  experiment count plus the *latest completed run's* metrics and equity
+  curve, labeled as such.
 - **Streaming evaluation.** Strategies can implement `strategy.Streamer`
   (O(1) state per bar); the engine falls back to prefix `Evaluate` —
   correctness first, efficiency when available.
@@ -104,22 +124,42 @@ Never Handler→SQL, never Strategy→I/O.
    No shorts/leverage/pyramiding/partial exits/trailing stops (V1).
 3. Slippage adverse (`±s%` on fill price), commission `%` of notional per fill.
 4. `positionSize` = % of current equity per trade.
-5. Mark-to-market equity each bar; final open position liquidated at last
-   bar close.
-6. Fully deterministic: same input → same output.
+5. Trade P&L: `gross = (exit − entry)·qty`; `net = gross − entryComm − exitComm`.
+   `pnl` stored and displayed is **net**; gross + both commissions stored
+   separately (engine ≥2.1). Legacy runs (pre-migration-000002) keep their
+   gross `pnl` and NULL cost columns — they are marked, not recomputed.
+6. Mark-to-market equity each bar; final open position liquidated at last
+   bar's close inside the curve → terminal equity point = realized equity =
+   `initial + Σ netPnL`.
+7. Fully deterministic: same input → same output.
 
 ## Metric formulas
 
-netPnl = final − initial · returnPct = netPnl/initial · winRate = wins/closed ·
-avgTradePnl = netPnl/closed · profitFactor = grossWin/grossLoss (0 if no
-losses) · maxDD = max((peak−equity)/peak) over the curve.
+netPnl = final − initial · returnPct = netPnl/initial · winRate = wins/closed
+(classified on **net** trade P&L) · avgTradePnl = netPnl/closed ·
+profitFactor = grossWin/grossLoss (0 if no losses) ·
+maxDD = max((peak−equity)/peak) over the curve.
 **Sharpe intentionally absent** — no defined return frequency yet.
+
+## Strategy & engine versioning
+
+- `backtest.EngineVersion = "2.1.0"` — net-P&L accounting + post-liquidation
+  terminal equity.
+- Strategy versions come from `Strategy.Version()` at execution time (ema-cross
+  = 1.0.0). Changing strategy logic must bump its version so historical runs
+  keep their identity.
+- `strategies.supported_timeframes` (JSONB): per-run timeframe is a choice
+  within the advertised set — ema-cross: 15m/1h/4h/1d, default 1h.
+- `EMA` seeds at the first close, `k = 2/(n+1)`; warm-up = `3× slow_period`
+  fetched pre-window; first `slow` streamed bars emit NEUTRAL only.
 
 ## Database schema
 
-`assets`, `strategies` (slugs), `strategy_signals`, `backtest_runs`
-(+`equity_curve` jsonb), `backtest_trades`, `backtest_metrics` — see
-`migrations/000001_initial_schema.up.sql`. Indexes per access pattern:
+`assets`, `strategies` (slugs, `supported_timeframes` jsonb), `strategy_signals`,
+`backtest_runs` (+`equity_curve` jsonb, `engine_version`, `strategy_version`,
+`dataset`), `backtest_trades` (+`gross_pnl`, `entry_commission`,
+`exit_commission`), `backtest_metrics` — see `migrations/000001` and
+`000002_accounting_consistency`. Indexes per access pattern:
 signals (strategy,asset,ts), runs (strategy,asset,created), trades (run_id),
 metrics (run_id).
 

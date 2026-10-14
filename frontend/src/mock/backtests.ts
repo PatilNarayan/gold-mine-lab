@@ -8,7 +8,7 @@ import type {
   EquityPoint,
   ParameterValues,
 } from '@/types/domain';
-import { generateCandleSeries, HISTORY_START, HISTORY_END } from './candles';
+import { generateCandleSeries, HISTORY_END } from './candles';
 import { strategyById } from './strategies';
 import { rngFor, randBetween, randInt, round } from './seed';
 import { assetMeta } from './assets';
@@ -239,42 +239,22 @@ export function dashboardSummary(): DashboardSummary {
     .filter((d) => d.metrics);
 
   const totalBacktests = completed.length;
-  const netPnl = round(completed.reduce((s, d) => s + d.metrics!.netPnl, 0), 2);
-  const winRate = completed.length
-    ? round(completed.reduce((s, d) => s + d.metrics!.winRate, 0) / completed.length, 4)
-    : 0;
-  const maxDrawdown = completed.length
-    ? Math.min(...completed.map((d) => d.metrics!.maxDrawdown))
-    : 0;
-  const best = [...completed].sort((a, b) => b.metrics!.netPnl - a.metrics!.netPnl)[0];
-  const bestStrategy = best ? strategyById(best.run.strategyId) : null;
-
-  // Aggregate equity curve (dedicated seeded series covering the window).
-  const rng = rngFor('dashboard-equity');
-  const points = 160;
-  const start = Date.parse(HISTORY_START);
-  const step = (Date.parse(HISTORY_END) - start) / (points - 1);
-  const equity: EquityPoint[] = [];
-  let eq = 100_000;
-  let peak = eq;
-  for (let i = 0; i < points; i++) {
-    if (i > 0) eq *= 1 + 0.0016 + (rng() - 0.5) * 2 * 0.014;
-    peak = Math.max(peak, eq);
-    equity.push({
-      time: new Date(start + i * step).toISOString(),
-      equity: round(eq, 2),
-      drawdown: round(eq / peak - 1, 4),
-    });
-  }
+  // Latest completed run — independent runs are NOT a portfolio, so the
+  // dashboard shows the most recent experiment's figures and curve only.
+  const latest = [...completed].sort((a, b) =>
+    (b.run.completedAt ?? '').localeCompare(a.run.completedAt ?? ''),
+  )[0];
+  const latestStrategy = latest ? strategyById(latest.run.strategyId) : null;
 
   return {
     totalBacktests,
-    bestStrategyId: best?.run.strategyId ?? null,
-    bestStrategyName: bestStrategy?.name ?? null,
-    winRate,
-    netPnl,
-    maxDrawdown: round(maxDrawdown, 4),
-    equity,
+    latestRunId: latest?.run.id ?? null,
+    latestRunStrategyId: latest?.run.strategyId ?? null,
+    latestRunStrategyName: latestStrategy?.name ?? null,
+    winRate: latest?.metrics?.winRate ?? 0,
+    netPnl: latest?.metrics?.netPnl ?? 0,
+    maxDrawdown: latest?.metrics?.maxDrawdown ?? 0,
+    equity: latest?.equity ?? [],
   };
 }
 

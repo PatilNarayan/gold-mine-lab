@@ -132,15 +132,18 @@ export default function Dashboard() {
           ) : perf.data ? (
             <div className="grid grid-cols-2 gap-2">
               <StatCard label="Total backtests" value={formatInteger(perf.data.totalBacktests)} />
-              <StatCard label="Best strategy" value={perf.data.bestStrategyName ?? '—'} />
-              <StatCard label="Win rate" value={formatPercent(perf.data.winRate)} />
               <StatCard
-                label="Net P&L"
+                label="Latest run — strategy"
+                value={perf.data.latestRunStrategyName ?? '—'}
+              />
+              <StatCard label="Win rate (latest run)" value={formatPercent(perf.data.winRate)} />
+              <StatCard
+                label="Net P&L (latest run)"
                 value={formatSignedCurrency(perf.data.netPnl)}
                 tone={perf.data.netPnl >= 0 ? 'buy' : 'sell'}
               />
               <StatCard
-                label="Max drawdown"
+                label="Max drawdown (latest)"
                 value={formatPercent(perf.data.maxDrawdown)}
                 tone="sell"
               />
@@ -152,13 +155,18 @@ export default function Dashboard() {
 
       {/* Equity curve */}
       <section aria-label="Portfolio equity curve" className="border border-line bg-surface-1 p-3">
-        <h2 className="section-label mb-2">Aggregate equity curve</h2>
+        <h2 className="section-label mb-2">
+          Latest run equity curve
+          {perf.data?.latestRunId ? (
+            <span className="tnum text-content-3"> — {perf.data.latestRunId.slice(0, 8)}</span>
+          ) : null}
+        </h2>
         {perf.isLoading ? (
           <Skeleton className="h-[280px] w-full" />
         ) : perf.isError ? (
           <ErrorState error={perf.error} onRetry={() => perf.refetch()} />
         ) : perf.data && perf.data.equity.length ? (
-          <EquityCurveChart points={perf.data.equity} height={280} title="Aggregate equity" />
+          <EquityCurveChart points={perf.data.equity} height={280} title="Latest run equity" />
         ) : (
           <p className="text-xs text-content-3">No equity data.</p>
         )}

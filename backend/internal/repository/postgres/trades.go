@@ -10,7 +10,8 @@ import (
 )
 
 const tradeCols = `id::text, run_id::text, strategy_id, asset_id, side,
-	entry_time, entry_price, exit_time, exit_price, quantity, pnl, status, result`
+	entry_time, entry_price, exit_time, exit_price, quantity,
+	gross_pnl, pnl, entry_commission, exit_commission, status, result`
 
 func (s *Store) ListTradesByRun(ctx context.Context, runID string) ([]repository.TradeRow, error) {
 	rows, err := s.db.Query(ctx,
@@ -89,7 +90,8 @@ func scanTrades(rows pgx.Rows) ([]repository.TradeRow, error) {
 		var t repository.TradeRow
 		err := rows.Scan(&t.ID, &t.RunID, &t.StrategyID, &t.AssetID, &t.Side,
 			&t.EntryTime, &t.EntryPrice, &t.ExitTime, &t.ExitPrice,
-			&t.Quantity, &t.Pnl, &t.Status, &t.Result)
+			&t.Quantity, &t.GrossPnl, &t.Pnl, &t.EntryCommission, &t.ExitCommission,
+			&t.Status, &t.Result)
 		if err != nil {
 			return nil, fmt.Errorf("scan trade: %w", err)
 		}

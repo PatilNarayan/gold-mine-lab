@@ -89,7 +89,8 @@ func TestEngineNextCandleOpenExecution(t *testing.T) {
 	}
 }
 
-// Commission and slippage adjust fills adversarially.
+// Commission and slippage adjust fills adversarially; P&L is net of both
+// commissions while gross is preserved separately.
 func TestEngineCosts(t *testing.T) {
 	opens := []float64{100, 100, 100, 100, 100, 110, 110, 110, 110, 110}
 	in := baseInput()
@@ -111,9 +112,85 @@ func TestEngineCosts(t *testing.T) {
 		t.Fatalf("exit %v, want 108.9", *tr.ExitPrice)
 	}
 	qty := 10000 * 0.10 / 101
-	wantPnl := (108.9 - 101) * qty
-	if !almostEq(*tr.Pnl, wantPnl) {
-		t.Fatalf("pnl %v, want %v", *tr.Pnl, wantPnl)
+	wantGross := (108.9 - 101) * qty
+	wantNet := wantGross - tr.EntryCommission - tr.ExitCommission
+	if !almostEq(*tr.GrossPnl, wantGross) {
+		t.Fatalf("gross %v, want %v", *tr.GrossPnl, wantGross)
+	}
+	if !almostEq(*tr.Pnl, wantNet) {
+		t.Fatalf("net pnl %v, want %v (gross - commissions)", *tr.Pnl, wantNet)
+	}
+	if tr.EntryCommission <= 0 || tr.ExitCommission <= 0 {
+		t.Fatal("both commissions must be recorded")
+	}
+	if *tr.Pnl >= *tr.GrossPnl {
+		t.Fatal("net must be strictly below gross when commissions > 0")
+	}
+}
+
+// A trade that's gross-positive but net-negative must classify as a loss.
+func TestEngineMarginFlipTrade(t *testing.T) {
+	opens := []float64{100, 100, 100, 100.05, 100.05, 100.05, 100.05, 100.05}
+	in := baseInput()
+	in.Candles = candles(opens)
+	in.Commission = 1 // 1% each way on ~1% position → costs exceed the 0.05 move
+	in.Strategy = &scripted{sigs: map[int]strategy.Action{0: strategy.ActionBuy, 5: strategy.ActionSell}}
+	res, err := NewEngine().Run(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := res.Trades[0]
+	if *tr.GrossPnl <= 0 {
+		t.Fatalf("fixture broken: gross should be positive, got %v", *tr.GrossPnl)
+	}
+	if *tr.Pnl >= 0 || tr.Result != "loss" {
+		t.Fatalf("gross win / net loss must classify 'loss': net=%v result=%s", *tr.Pnl, tr.Result)
+	}
+}
+
+// Net P&L reconciles exactly: final equity = initial + Σ net trade pnl.
+func TestEngineEquityReconciliation(t *testing.T) {
+	opens := []float64{100, 100, 100, 105, 105, 105, 95, 95, 95, 95}
+	in := baseInput()
+	in.Candles = candles(opens)
+	in.Commission = 0.5
+	in.Slippage = 0.2
+	in.Strategy = &scripted{sigs: map[int]strategy.Action{
+		0: strategy.ActionBuy, 4: strategy.ActionSell, // trade 1
+		5: strategy.ActionBuy, 8: strategy.ActionSell, // trade 2 (loss)
+	}}
+	res, err := NewEngine().Run(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sumNet float64
+	for _, tr := range res.Trades {
+		sumNet += *tr.Pnl
+	}
+	last := res.Equity[len(res.Equity)-1]
+	if !almostEq(last.Equity, in.InitialCapital+sumNet) {
+		t.Fatalf("final equity %v != initial %v + Σnet %v", last.Equity, in.InitialCapital, sumNet)
+	}
+}
+
+// Final liquidation costs show up in the terminal equity point.
+func TestEngineFinalLiquidationCosts(t *testing.T) {
+	in := baseInput()
+	in.Commission = 1
+	in.Slippage = 1
+	in.Strategy = &scripted{sigs: map[int]strategy.Action{0: strategy.ActionBuy}}
+	res, err := NewEngine().Run(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := res.Trades[0]
+	last := res.Equity[len(res.Equity)-1]
+	if !almostEq(last.Equity, in.InitialCapital+*tr.Pnl) {
+		t.Fatalf("terminal equity %v != initial + net %v", last.Equity, *tr.Pnl)
+	}
+	// With 1% slippage + 2% commissions the trade must be a net loss.
+	if tr.Result != "loss" {
+		t.Fatalf("expected cost-driven loss, got %s", tr.Result)
 	}
 }
 

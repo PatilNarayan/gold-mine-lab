@@ -12,6 +12,21 @@
 //   - positionSize is the % of current equity deployed per trade
 //     (quantity = equity*positionSize/entryPrice).
 //
+// Accounting model (documented and reconciled):
+//   - entryCommission = qty * entryFill * commission%   (cash out at entry)
+//   - exitCommission  = qty * exitFill  * commission%   (cash out at exit)
+//   - grossPnL        = (exitFill - entryFill) * qty    (slippage already in fills)
+//   - netPnL          = grossPnL - entryCommission - exitCommission
+//   - equity          = cash; entry charges entryCommission, exit credits
+//     grossPnL - exitCommission, so equity_final = initial + Σ netPnL exactly.
+//   - Trade win/loss is classified on netPnL — a trade whose gross is
+//     positive but net is negative is a LOSS.
+//   - The last open position is liquidated at the final bar's close with
+//     adverse slippage + exit commission, and the final equity point is
+//     post-liquidation — the curve's terminal value reconciles with netPnL.
+//   - Drawdown is computed on the same mark-to-market series (unrealized
+//     P&L included); an open position is valued at bar close.
+//
 // The engine is pure computation — no DB, no HTTP, deterministic.
 package backtest
 
@@ -35,17 +50,26 @@ type Input struct {
 	Slippage       float64 // % adverse price adjustment (e.g. 0.01)
 }
 
+// EngineVersion identifies the accounting model that produced a result —
+// persisted on every run so historical experiments keep their provenance.
+// "2.1" = net-P&L trades + post-liquidation terminal equity point.
+const EngineVersion = "2.1.0"
+
 // Trade is one closed (or still-open) position record.
+// Pnl is NET (after both commissions); GrossPnl excludes commissions.
 type Trade struct {
-	Side       string     `json:"side"`
-	EntryTime  time.Time  `json:"entryTime"`
-	EntryPrice float64    `json:"entryPrice"`
-	ExitTime   *time.Time `json:"exitTime,omitempty"`
-	ExitPrice  *float64   `json:"exitPrice,omitempty"`
-	Quantity   float64    `json:"quantity"`
-	Pnl        *float64   `json:"pnl,omitempty"`
-	Status     string     `json:"status"`
-	Result     string     `json:"result"`
+	Side            string     `json:"side"`
+	EntryTime       time.Time  `json:"entryTime"`
+	EntryPrice      float64    `json:"entryPrice"`
+	ExitTime        *time.Time `json:"exitTime,omitempty"`
+	ExitPrice       *float64   `json:"exitPrice,omitempty"`
+	Quantity        float64    `json:"quantity"`
+	GrossPnl        *float64   `json:"grossPnl,omitempty"`
+	Pnl             *float64   `json:"pnl,omitempty"` // net of commissions
+	EntryCommission float64    `json:"entryCommission"`
+	ExitCommission  float64    `json:"exitCommission"`
+	Status          string     `json:"status"`
+	Result          string     `json:"result"` // classified on NET pnl
 }
 
 // EquityPoint is one bar of the equity curve.
@@ -133,19 +157,11 @@ func (e *Engine) Run(ctx context.Context, in Input) (Result, error) {
 			entryComm := qty * fill * (in.Commission / 100)
 			equity -= entryComm
 			pos = &Trade{Side: "BUY", EntryTime: c.Time, EntryPrice: fill,
-				Quantity: qty, Status: "open", Result: "open"}
+				Quantity: qty, EntryCommission: entryComm, Status: "open", Result: "open"}
 		} else if pending == strategy.ActionSell && pos != nil {
-			fill := c.Open * (1 - in.Slippage/100)
-			exitComm := pos.Quantity * fill * (in.Commission / 100)
-			equity -= exitComm
-			pnl := (fill - pos.EntryPrice) * pos.Quantity
-			equity += pnl
-			pos.ExitTime, pos.ExitPrice, pos.Pnl = &c.Time, &fill, &pnl
-			pos.Status = "closed"
-			pos.Result = "loss"
-			if pnl > 0 {
-				pos.Result = "win"
-			}
+			exitPrice := c.Open * (1 - in.Slippage/100)
+			*pos = closeTrade(*pos, c.Time, exitPrice, in.Commission)
+			equity += (*pos.GrossPnl - pos.ExitCommission)
 			res.Trades = append(res.Trades, *pos)
 			pos = nil
 		}
@@ -167,6 +183,17 @@ func (e *Engine) Run(ctx context.Context, in Input) (Result, error) {
 			pending = sig.Action
 		}
 
+		// Final bar: liquidate any open position at its close so the curve's
+		// terminal point is post-liquidation realized equity — it reconciles
+		// exactly with Σ netPnL.
+		if i == len(in.Candles)-1 && pos != nil {
+			exitPrice := c.Close * (1 - in.Slippage/100)
+			*pos = closeTrade(*pos, c.Time, exitPrice, in.Commission)
+			equity += (*pos.GrossPnl - pos.ExitCommission)
+			res.Trades = append(res.Trades, *pos)
+			pos = nil
+		}
+
 		// Mark-to-market equity at this bar's close (window bars only).
 		if i >= in.WindowStart {
 			mtm := equity
@@ -182,21 +209,23 @@ func (e *Engine) Run(ctx context.Context, in Input) (Result, error) {
 			})
 		}
 	}
-
-	// Close any open position at the last bar's close for realized P&L.
-	if pos != nil {
-		last := in.Candles[len(in.Candles)-1]
-		fill := last.Close * (1 - in.Slippage/100)
-		exitComm := pos.Quantity * fill * (in.Commission / 100)
-		equity -= exitComm
-		pnl := (fill - pos.EntryPrice) * pos.Quantity
-		pos.ExitTime, pos.ExitPrice, pos.Pnl = &last.Time, &fill, &pnl
-		pos.Status = "closed"
-		pos.Result = "loss"
-		if pnl > 0 {
-			pos.Result = "win"
-		}
-		res.Trades = append(res.Trades, *pos)
-	}
 	return res, nil
+}
+
+// closeTrade finalizes an open position at exitPrice. Gross P&L comes from
+// the fill prices (slippage is already in them); net deducts both
+// commissions. Result is classified on net — a gross win can be a net loss.
+func closeTrade(t Trade, exitTime time.Time, exitPrice, commissionPct float64) Trade {
+	gross := (exitPrice - t.EntryPrice) * t.Quantity
+	exitComm := t.Quantity * exitPrice * (commissionPct / 100)
+	net := gross - t.EntryCommission - exitComm
+	t.ExitTime, t.ExitPrice = &exitTime, &exitPrice
+	t.GrossPnl, t.Pnl = &gross, &net
+	t.ExitCommission = exitComm
+	t.Status = "closed"
+	t.Result = "loss"
+	if net > 0 {
+		t.Result = "win"
+	}
+	return t
 }

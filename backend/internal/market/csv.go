@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -107,36 +108,12 @@ func (p *CSVProvider) Range(asset Asset, tf Timeframe, from, to time.Time, warmu
 	pre := make([]Candle, 0, warmup) // ring of the last `warmup` rows before `from`
 	prePos := 0
 	out := make([]Candle, 0, 1024)
-	var prev time.Time
 
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 256*1024), 256*1024)
-	line := 0
-	for sc.Scan() {
-		line++
-		c, err := parseCSVRow(sc.Text())
-		if err != nil {
-			if line == 1 {
-				continue // header row
-			}
-			return nil, fmt.Errorf("%s:%d: %w", filepath.Base(path), line, err)
-		}
-		if err := validateOHLC(c); err != nil {
-			return nil, fmt.Errorf("%s:%d: %w", filepath.Base(path), line, err)
-		}
-		if prev.IsZero() {
-			prev = c.Time
-		} else {
-			if c.Time.Equal(prev) {
-				return nil, fmt.Errorf("%s:%d: duplicate timestamp %s", filepath.Base(path), line, c.Time)
-			}
-			if c.Time.Before(prev) {
-				return nil, fmt.Errorf("%s:%d: unsorted timestamps (%s after %s)", filepath.Base(path), line, c.Time, prev)
-			}
-			prev = c.Time
-		}
-		if c.Time.After(to) {
-			break // file is ascending — everything beyond `to` is irrelevant
+	// Interval semantics: [from, toExclusive). A candle at exactly `to` is
+	// excluded — callers pass endDate+1day so the end date is inclusive.
+	err = scanRows(f, filepath.Base(path), func(c Candle) bool {
+		if !c.Time.Before(to) {
+			return false // file is ascending — stop at the exclusive bound
 		}
 		if c.Time.Before(from) {
 			if warmup > 0 {
@@ -147,15 +124,16 @@ func (p *CSVProvider) Range(asset Asset, tf Timeframe, from, to time.Time, warmu
 					prePos = (prePos + 1) % warmup
 				}
 			}
-			continue
+			return true
 		}
 		out = append(out, c)
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("csv provider: read %s: %w", filepath.Base(path), err)
+		return true
+	})
+	if err != nil {
+		return nil, err
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("csv provider: no %s %s candles in [%s, %s]", asset.Symbol, tf, from, to)
+		return nil, fmt.Errorf("csv provider: no %s %s candles in [%s, %s)", asset.Symbol, tf, from, to)
 	}
 
 	// Prepend the warmup ring in ascending order.
@@ -169,9 +147,60 @@ func (p *CSVProvider) Range(asset Asset, tf Timeframe, from, to time.Time, warmu
 	return append(result, out...), nil
 }
 
+// csvHeader is the expected header line. It is recognized explicitly — any
+// other unparseable first line is a data error, not a header.
+const csvHeader = "Date;Open;High;Low;Close;Volume"
+
+// scanRows streams validated candles from an open CSV file. The expected
+// header line is skipped; every other malformed row aborts with file:line
+// context. Rows are checked for finite positive OHLC values, valid OHLC
+// relationships, nonnegative volume, strictly ascending timestamps, and no
+// duplicates — the same policy for charts and backtests. Returning false
+// from fn stops the scan early (used to cut off at exclusive bounds).
+func scanRows(f *os.File, name string, fn func(c Candle) bool) error {
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 256*1024), 256*1024)
+	line := 0
+	var prev time.Time
+	for sc.Scan() {
+		line++
+		text := sc.Text()
+		if line == 1 && text == csvHeader {
+			continue
+		}
+		c, err := parseCSVRow(text)
+		if err != nil {
+			return fmt.Errorf("%s:%d: %w", name, line, err)
+		}
+		if err := validateOHLC(c); err != nil {
+			return fmt.Errorf("%s:%d: %w", name, line, err)
+		}
+		switch {
+		case c.Time.Equal(prev):
+			return fmt.Errorf("%s:%d: duplicate timestamp %s", name, line, c.Time)
+		case c.Time.Before(prev):
+			return fmt.Errorf("%s:%d: unsorted timestamps (%s after %s)", name, line, c.Time, prev)
+		}
+		prev = c.Time
+		if !fn(c) {
+			return nil
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	return nil
+}
+
 // validateOHLC enforces price sanity; a bad row rejects the load rather than
-// silently corrupting results.
+// silently corrupting results. NaN/±Inf (accepted by ParseFloat) are rejected.
 func validateOHLC(c Candle) error {
+	for _, v := range []float64{c.Open, c.High, c.Low, c.Close, c.Volume} {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("non-finite value in row (o=%v h=%v l=%v c=%v v=%v)",
+				c.Open, c.High, c.Low, c.Close, c.Volume)
+		}
+	}
 	if c.Time.IsZero() {
 		return fmt.Errorf("zero timestamp")
 	}
@@ -195,15 +224,18 @@ func validateOHLC(c Candle) error {
 	return nil
 }
 
-// Tail returns the last n retained candles ending at or before asOf.
+// Tail returns the last n retained candles ending at or before asOf. A zero
+// asOf means "the dataset's actual end" — no artificial truncation.
 func (p *CSVProvider) Tail(asset Asset, tf Timeframe, n int, asOf time.Time) ([]Candle, error) {
 	candles, err := p.load(asset, tf)
 	if err != nil {
 		return nil, err
 	}
 	end := len(candles)
-	for end > 0 && candles[end-1].Time.After(asOf) {
-		end--
+	if !asOf.IsZero() {
+		for end > 0 && candles[end-1].Time.After(asOf) {
+			end--
+		}
 	}
 	start := end - n
 	if start < 0 {
@@ -243,13 +275,7 @@ func (p *CSVProvider) load(asset Asset, tf Timeframe) ([]Candle, error) {
 	ring := make([]Candle, 0, keep)
 	pos, total := 0, 0
 
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 256*1024), 256*1024)
-	for sc.Scan() {
-		c, err := parseCSVRow(sc.Text())
-		if err != nil {
-			continue // header or malformed line
-		}
+	err = scanRows(f, filepath.Base(path), func(c Candle) bool {
 		if total < keep {
 			ring = append(ring, c)
 		} else {
@@ -257,11 +283,12 @@ func (p *CSVProvider) load(asset Asset, tf Timeframe) ([]Candle, error) {
 		}
 		pos = (pos + 1) % keep
 		total++
+		return true
+	})
+	if err != nil {
+		return nil, err
 	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("csv provider: read %s: %w", filepath.Base(path), err)
-	}
-	if len(ring) == 0 {
+	if total == 0 {
 		p.missing[key] = true
 		return nil, fmt.Errorf("csv provider: %s has no rows", filepath.Base(path))
 	}

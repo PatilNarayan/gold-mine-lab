@@ -143,9 +143,11 @@ export function BacktestForm({
             value={v.timeframe}
             onChange={(e) => update({ timeframe: e.target.value as Timeframe })}
           >
-            {TIMEFRAMES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
+            {/* The strategy's supported set — the run processes exactly the
+                timeframe shown here. */}
+            {(strategy?.supportedTimeframes ?? TIMEFRAMES.map((t) => t.value)).map((tf) => (
+              <option key={tf} value={tf}>
+                {TIMEFRAMES.find((t) => t.value === tf)?.label ?? tf}
               </option>
             ))}
           </Select>

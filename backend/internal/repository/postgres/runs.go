@@ -17,13 +17,15 @@ func (s *Store) CreateRun(ctx context.Context, r repository.RunRow) (string, err
 	const q = `
 		INSERT INTO backtest_runs
 		    (strategy_id, asset_id, timeframe, start_date, end_date,
-		     initial_capital, position_size, commission, slippage, parameters, status)
-		VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, 'queued')
+		     initial_capital, position_size, commission, slippage, parameters,
+		     engine_version, strategy_version, dataset, status)
+		VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, $13, 'queued')
 		RETURNING id::text`
 	var id string
 	err := s.db.QueryRow(ctx, q,
 		r.StrategyID, r.AssetID, r.Timeframe, r.StartDate, r.EndDate,
 		r.InitialCapital, r.PositionSize, r.Commission, r.Slippage, params,
+		r.EngineVersion, r.StrategyVersion, r.Dataset,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("create run: %w", err)
@@ -58,12 +60,14 @@ func (s *Store) CompleteRun(ctx context.Context, runID string, trades []reposito
 			rows = append(rows, []any{
 				runID, t.StrategyID, t.AssetID, t.Side,
 				t.EntryTime, t.EntryPrice, t.ExitTime, t.ExitPrice,
-				t.Quantity, t.Pnl, t.Status, t.Result,
+				t.Quantity, t.GrossPnl, t.Pnl, t.EntryCommission, t.ExitCommission,
+				t.Status, t.Result,
 			})
 		}
 		_, err := tx.CopyFrom(ctx, pgx.Identifier{"backtest_trades"},
 			[]string{"run_id", "strategy_id", "asset_id", "side", "entry_time", "entry_price",
-				"exit_time", "exit_price", "quantity", "pnl", "status", "result"},
+				"exit_time", "exit_price", "quantity", "gross_pnl", "pnl",
+				"entry_commission", "exit_commission", "status", "result"},
 			pgx.CopyFromRows(rows))
 		if err != nil {
 			return fmt.Errorf("insert trades: %w", err)
@@ -108,7 +112,9 @@ func (s *Store) FailRun(ctx context.Context, runID, message string) error {
 
 const runCols = `id::text, strategy_id, asset_id, timeframe, start_date, end_date,
 	initial_capital, position_size, commission, slippage, parameters,
-	status, equity_curve, error, created_at, completed_at`
+	status, equity_curve, error,
+	engine_version, strategy_version, dataset,
+	created_at, completed_at`
 
 func (s *Store) GetRun(ctx context.Context, runID string) (repository.RunRow, error) {
 	row := s.db.QueryRow(ctx, `SELECT `+runCols+` FROM backtest_runs WHERE id = $1`, runID)
@@ -161,7 +167,9 @@ func scanRun(row pgx.Row) (repository.RunRow, error) {
 	err := row.Scan(&r.ID, &r.StrategyID, &r.AssetID, &r.Timeframe,
 		&startDate, &endDate,
 		&r.InitialCapital, &r.PositionSize, &r.Commission, &r.Slippage,
-		&params, &r.Status, &curve, &r.Error, &r.CreatedAt, &r.CompletedAt)
+		&params, &r.Status, &curve, &r.Error,
+		&r.EngineVersion, &r.StrategyVersion, &r.Dataset,
+		&r.CreatedAt, &r.CompletedAt)
 	if err != nil {
 		return r, err
 	}

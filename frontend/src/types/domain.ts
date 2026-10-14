@@ -49,7 +49,7 @@ export const candleSeriesSchema = z.object({
 });
 export type CandleSeries = z.infer<typeof candleSeriesSchema>;
 
-export const marketStatusSchema = z.enum(['Historical / Demo', 'Open', 'Closed']);
+export const marketStatusSchema = z.enum(['Historical / Demo', 'Historical', 'Open', 'Closed']);
 export type MarketStatus = z.infer<typeof marketStatusSchema>;
 
 export const marketSummarySchema = z.object({
@@ -85,7 +85,8 @@ export const strategySchema = z.object({
   version: z.string(),
   description: z.string(),
   supportedAssets: z.array(z.string()),
-  timeframe: timeframeSchema,
+  timeframe: timeframeSchema, // default; runs may pick any of supportedTimeframes
+  supportedTimeframes: z.array(timeframeSchema).optional(),
   parameters: z.array(parameterFieldSchema),
   status: strategyStatusSchema,
 });
@@ -156,6 +157,10 @@ export const backtestRunSchema = z.object({
   createdAt: z.string(),
   completedAt: z.string().nullable(),
   error: z.string().nullable(),
+  // Provenance — present on engine ≥2.1 runs, null on legacy rows.
+  engineVersion: z.string().nullable().optional(),
+  strategyVersion: z.string().nullable().optional(),
+  dataset: z.string().nullable().optional(),
 });
 export type BacktestRun = z.infer<typeof backtestRunSchema>;
 
@@ -177,7 +182,10 @@ export const backtestTradeSchema = z.object({
   exitTime: z.string().nullable(),
   exitPrice: z.number().nullable(),
   quantity: z.number(),
-  pnl: z.number().nullable(),
+  grossPnl: z.number().nullable().optional(), // null on legacy runs
+  pnl: z.number().nullable(), // net of commissions (engine >= 2.1)
+  entryCommission: z.number().nullable().optional(),
+  exitCommission: z.number().nullable().optional(),
   status: z.enum(['open', 'closed']),
   result: tradeResultSchema,
 });
@@ -199,11 +207,13 @@ export const backtestDetailSchema = z.object({
 });
 export type BacktestDetail = z.infer<typeof backtestDetailSchema>;
 
-/** Aggregate stats for the dashboard, precomputed by the service layer. */
+/** Latest-run snapshot for the dashboard — independent runs are not a
+ *  portfolio; figures + equity describe the latest completed run only. */
 export const dashboardSummarySchema = z.object({
   totalBacktests: z.number(),
-  bestStrategyId: z.string().nullable(),
-  bestStrategyName: z.string().nullable(),
+  latestRunId: z.string().nullable(),
+  latestRunStrategyId: z.string().nullable(),
+  latestRunStrategyName: z.string().nullable(),
   winRate: z.number(),
   netPnl: z.number(),
   maxDrawdown: z.number(),

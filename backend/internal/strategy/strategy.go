@@ -50,14 +50,17 @@ type ParameterSpec struct {
 // Definition is the serializable descriptor of a registered strategy —
 // what the API returns for list/detail endpoints.
 type Definition struct {
-	ID              string           `json:"id"`
-	Name            string           `json:"name"`
-	Version         string           `json:"version"`
-	Description     string           `json:"description"`
-	SupportedAssets []string         `json:"supportedAssets"`
-	Timeframe       market.Timeframe `json:"timeframe"`
-	Parameters      []ParameterSpec  `json:"parameters"`
-	Status          string           `json:"status"` // "active" | "inactive"
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Version         string   `json:"version"`
+	Description     string   `json:"description"`
+	SupportedAssets []string `json:"supportedAssets"`
+	// Timeframe is the strategy's DEFAULT timeframe; a run may select any of
+	// SupportedTimeframes (per-run choice for cross-timeframe comparison).
+	Timeframe           market.Timeframe   `json:"timeframe"`
+	SupportedTimeframes []market.Timeframe `json:"supportedTimeframes"`
+	Parameters          []ParameterSpec    `json:"parameters"`
+	Status              string             `json:"status"` // "active" | "inactive"
 }
 
 // Parameters is the resolved parameter value set for one evaluation.
