@@ -11,12 +11,11 @@ type assetMeta struct {
 	baseVolume float64
 }
 
+// assets is what the API serves. Focused on XAUUSD — the only asset with a
+// real dataset loaded. More symbols become available as their CSVs arrive;
+// the schema and UI stay asset-agnostic.
 var assets = []market.Asset{
 	{ID: "xauusd", Symbol: "XAUUSD", Name: "Gold Spot", AssetClass: "metal", QuoteCurrency: "USD"},
-	{ID: "xagusd", Symbol: "XAGUSD", Name: "Silver Spot", AssetClass: "metal", QuoteCurrency: "USD"},
-	{ID: "msft", Symbol: "MSFT", Name: "Microsoft Corp", AssetClass: "equity", QuoteCurrency: "USD"},
-	{ID: "tsla", Symbol: "TSLA", Name: "Tesla Inc", AssetClass: "equity", QuoteCurrency: "USD"},
-	{ID: "eurusd", Symbol: "EURUSD", Name: "Euro / US Dollar", AssetClass: "forex", QuoteCurrency: "USD"},
 }
 
 var assetMetas = map[string]assetMeta{

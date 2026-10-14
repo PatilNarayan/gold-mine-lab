@@ -20,15 +20,13 @@ type seedSpec struct {
 	daysAgo    int // offset into the historical window for createdAt
 }
 
+// XAUUSD-only seed runs (single-asset focus; one failed run for UI variety).
 var seedSpecs = []seedSpec{
 	{"ema-cross", "xauusd", "completed", "2024-02-01", "2024-11-30", 10},
-	{"ema-cross", "xagusd", "completed", "2024-03-01", "2024-12-15", 8},
 	{"rsi-reversion", "xauusd", "completed", "2024-04-01", "2024-10-31", 6},
-	{"macd-trend", "msft", "completed", "2024-01-10", "2024-12-01", 5},
-	{"macd-trend", "tsla", "completed", "2024-02-15", "2024-12-20", 4},
 	{"atr-breakout", "xauusd", "completed", "2024-05-01", "2024-11-15", 3},
-	{"bollinger-squeeze", "xagusd", "failed", "2024-06-01", "2024-12-01", 2},
-	{"rsi-reversion", "xauusd", "completed", "2024-07-01", "2024-12-28", 1},
+	{"rsi-reversion", "xauusd", "failed", "2024-06-01", "2024-12-01", 2},
+	{"ema-cross", "xauusd", "completed", "2024-07-01", "2024-12-28", 1},
 }
 
 func defaultParameters(strategyID string) map[string]any {
