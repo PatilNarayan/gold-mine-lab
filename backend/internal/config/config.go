@@ -13,10 +13,11 @@ import (
 
 // Config is the application's typed runtime configuration.
 type Config struct {
-	Env  string // APP_ENV: "dev" | "prod"
-	HTTP HTTPConfig
-	Log  LogConfig
-	DB   DBConfig
+	Env           string // APP_ENV: "dev" | "prod"
+	MarketDataDir string // MARKET_DATA_DIR: directory of historical CSVs (optional)
+	HTTP          HTTPConfig
+	Log           LogConfig
+	DB            DBConfig
 }
 
 // HTTPConfig holds HTTP server settings.
@@ -46,6 +47,8 @@ type DBConfig struct {
 func Load() (Config, error) {
 	var errs []string
 	var cfg Config
+
+	cfg.MarketDataDir = os.Getenv("MARKET_DATA_DIR")
 
 	cfg.Env = envOr("APP_ENV", "dev")
 	if cfg.Env != "dev" && cfg.Env != "prod" && cfg.Env != "test" {

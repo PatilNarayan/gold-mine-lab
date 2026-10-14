@@ -8,3 +8,6 @@
 # OS noise
 Thumbs.db
 Desktop.ini
+
+# Market data CSVs — large, kept out of the repo
+data/

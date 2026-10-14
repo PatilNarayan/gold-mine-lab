@@ -46,7 +46,12 @@ func run(shutdown <-chan os.Signal) error {
 
 	// demo.Service implements all api.*Service contracts over deterministic
 	// in-memory data — replace with Postgres-backed services in a later phase.
-	svc := demo.New()
+	// When MARKET_DATA_DIR points at historical CSVs, real candles are served
+	// for covered assets (currently XAUUSD) truncated at the simulated as-of.
+	svc := demo.New(cfg.MarketDataDir)
+	if cfg.MarketDataDir != "" {
+		log.Info("market data directory configured", "dir", cfg.MarketDataDir)
+	}
 	router := api.NewRouter(api.Deps{
 		Logger:         log,
 		Health:         pool,

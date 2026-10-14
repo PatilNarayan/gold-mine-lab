@@ -5,8 +5,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gold-mine-lab/backend/internal/api"
+	"github.com/gold-mine-lab/backend/internal/market"
 	"github.com/gold-mine-lab/backend/internal/strategy"
 )
+
+// seriesOf resolves a candle series for an asset/timeframe — real CSV data
+// when configured, else the deterministic generator.
+type seriesOf func(assetID string, tf market.Timeframe) (api.CandleSeries, error)
 
 var neutralReasons = []string{
 	"No cross within threshold band",
@@ -18,7 +24,7 @@ var neutralReasons = []string{
 // signalsForStrategy derives deterministic signals from the EMA overlays of
 // the strategy's own candle series — buy on bullish cross, sell on bearish,
 // occasional neutral readings.
-func signalsForStrategy(strategyID string) []strategy.Signal {
+func signalsForStrategy(strategyID string, sof seriesOf) []strategy.Signal {
 	s, ok := strategyByID(strategyID)
 	if !ok {
 		return nil
@@ -27,7 +33,7 @@ func signalsForStrategy(strategyID string) []strategy.Signal {
 	var out []strategy.Signal
 
 	for _, assetID := range s.SupportedAssets {
-		series, err := candleSeries(assetID, s.Timeframe)
+		series, err := sof(assetID, s.Timeframe)
 		if err != nil {
 			continue
 		}
@@ -89,17 +95,17 @@ func signalID(strategyID, assetID string, n int) string {
 	return "sig-" + strategyID + "-" + assetID + "-" + strconv.Itoa(n)
 }
 
-func allSignals() []strategy.Signal {
+func allSignals(sof seriesOf) []strategy.Signal {
 	var out []strategy.Signal
 	for _, s := range strategies {
-		out = append(out, signalsForStrategy(s.ID)...)
+		out = append(out, signalsForStrategy(s.ID, sof)...)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.After(out[j].Timestamp) })
 	return out
 }
 
-func latestSignalFor(strategyID string) *strategy.Signal {
-	sigs := signalsForStrategy(strategyID)
+func latestSignalFor(strategyID string, sof seriesOf) *strategy.Signal {
+	sigs := signalsForStrategy(strategyID, sof)
 	if len(sigs) == 0 {
 		return nil
 	}

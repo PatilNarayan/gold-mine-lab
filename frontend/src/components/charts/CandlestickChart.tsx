@@ -107,10 +107,32 @@ export function CandlestickChart({
       })),
     );
 
+    // Markers must land on an existing bar — lightweight-charts clamps
+    // unmatched times to the edge, stacking labels there. Snap to the
+    // containing bar instead; drop markers before the first bar.
+    const barTimes = candles.map((c) => toUtc(c.time)).sort((a, b) => a - b);
+    const snap = (t: number): UTCTimestamp | null => {
+      let lo = 0;
+      let hi = barTimes.length - 1;
+      let best = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (barTimes[mid] <= t) {
+          best = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return best >= 0 ? barTimes[best] : null;
+    };
+    const seen = new Set<number>();
     const tradeMarkers = markers
       .filter((m) => m.action === 'BUY' || m.action === 'SELL')
-      .map((m) => ({
-        time: toUtc(m.time),
+      .map((m) => ({ m, t: snap(Date.parse(m.time) / 1000) }))
+      .filter((x): x is { m: ChartMarker; t: UTCTimestamp } => x.t !== null && !seen.has(x.t) && (seen.add(x.t), true))
+      .map(({ m, t }) => ({
+        time: t,
         position: (m.action === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
         color: m.action === 'BUY' ? p.buy : p.sell,
         shape: (m.action === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',

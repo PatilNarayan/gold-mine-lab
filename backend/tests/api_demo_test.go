@@ -24,7 +24,7 @@ func (upHealth) Ping(context.Context) error { return nil }
 
 func testRouter() *gin.Engine {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := demo.New()
+	svc := demo.New("")
 	return api.NewRouter(api.Deps{
 		Logger:         log,
 		Health:         upHealth{},

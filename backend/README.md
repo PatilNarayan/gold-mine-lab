@@ -54,6 +54,21 @@ default. Invalid or missing values fail startup with a complete error list.
 | `HTTP_WRITE_TIMEOUT`    | `10s`                            | Go duration                  |
 | `SHUTDOWN_TIMEOUT`      | `15s`                            | drain window on SIGINT/TERM  |
 | `CORS_ALLOWED_ORIGINS`  | `http://localhost:5173`          | comma-separated              |
+| `MARKET_DATA_DIR`       | — (optional)                     | dir of historical CSVs       |
+
+### Real historical data (optional)
+
+Point `MARKET_DATA_DIR` at a directory of CSV exports named
+`XAU_1m_data.csv`, `XAU_1h_data.csv`, `XAU_1d_data.csv`, …
+(semicolon-delimited `Date;Open;High;Low;Close;Volume`, `YYYY.MM.DD HH:MM`,
+treated as UTC). When set, `/api/market/*` and derived views serve **real
+candles** for covered assets (currently XAUUSD); other assets fall back to the
+synthetic generator.
+
+The app pretends "now" is `simulatedNow = 2025-10-14` (one year back for
+testing): data is truncated at that as-of even if the dataset is newer.
+Files are loaded lazily and only a bounded tail is retained, so the 1m file
+doesn't exhaust memory — its first request takes a few seconds.
 
 ## Run it
 

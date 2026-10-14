@@ -51,10 +51,16 @@ type store struct {
 	runs     map[string]api.BacktestRun
 	details  map[string]api.BacktestDetail
 	userRuns int
+	// seriesFn resolves candles for trade sampling (real CSV when configured).
+	seriesFn seriesOf
 }
 
 func newStore() *store {
-	s := &store{runs: map[string]api.BacktestRun{}, details: map[string]api.BacktestDetail{}}
+	s := &store{
+		runs:     map[string]api.BacktestRun{},
+		details:  map[string]api.BacktestDetail{},
+		seriesFn: candleSeries,
+	}
 	for i, spec := range seedSpecs {
 		strat, _ := strategyByID(spec.strategyID)
 		created := historyEnd.Add(-time.Duration(spec.daysAgo) * 24 * time.Hour)
@@ -125,7 +131,7 @@ func (s *store) buildDetail(run api.BacktestRun) api.BacktestDetail {
 	}
 
 	r := newRng("run|" + run.ID + "|" + run.StrategyID + "|" + run.AssetID)
-	series, err := candleSeries(run.AssetID, run.Timeframe)
+	series, err := s.seriesFn(run.AssetID, run.Timeframe)
 	if err != nil {
 		return detail
 	}

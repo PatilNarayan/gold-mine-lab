@@ -11,21 +11,47 @@ import (
 )
 
 // Service implements the api.*Service contracts over deterministic in-memory
-// data. Swap it for Postgres-backed services in a later phase — the handlers
-// and frontend do not change.
+// data — plus real historical candles when a CSV dataset is configured.
+// Swap it for Postgres-backed services in a later phase; the handlers and
+// frontend do not change.
+//
+// Simulated "now": for testing, the application pretends the current time is
+// exactly one year back (2025-10-14). Real candle data is truncated at this
+// as-of even though the dataset extends further.
+var simulatedNow = time.Date(2025, 10, 14, 0, 0, 0, 0, time.UTC)
+
+// serveCaps bounds how many candles an API response carries per timeframe.
+var serveCaps = map[market.Timeframe]int{
+	market.Timeframe1m:  800,
+	market.Timeframe5m:  800,
+	market.Timeframe15m: 800,
+	market.Timeframe1h:  1500,
+	market.Timeframe4h:  1500,
+	market.Timeframe1d:  50000,
+}
+
 type Service struct {
 	store *store
+	csv   *market.CSVProvider // nil when no data dir configured
 
 	mu      sync.Mutex // guards the caches below (concurrent handlers)
 	candles map[string]api.CandleSeries
 	signals []strategy.Signal
 }
 
-// New builds a demo service with all data lazily deterministic.
-func New() *Service {
-	return &Service{store: newStore(), candles: map[string]api.CandleSeries{}}
+// New builds a demo service. If dataDir is non-empty, real CSV candles are
+// served for assets the dataset covers (currently XAUUSD); everything else
+// falls back to the deterministic generator.
+func New(dataDir string) *Service {
+	svc := &Service{store: newStore(), candles: map[string]api.CandleSeries{}}
+	if dataDir != "" {
+		svc.csv = market.NewCSVProvider(dataDir, nil)
+	}
+	svc.store.seriesFn = svc.series
+	return svc
 }
 
+// series returns real CSV candles when available, else synthetic.
 func (s *Service) series(assetID string, tf market.Timeframe) (api.CandleSeries, error) {
 	key := assetID + "|" + string(tf)
 	s.mu.Lock()
@@ -33,12 +59,64 @@ func (s *Service) series(assetID string, tf market.Timeframe) (api.CandleSeries,
 	if cs, ok := s.candles[key]; ok {
 		return cs, nil
 	}
-	cs, err := candleSeries(assetID, tf)
+	cs, err := s.buildSeries(assetID, tf)
 	if err != nil {
 		return api.CandleSeries{}, err
 	}
 	s.candles[key] = cs
 	return cs, nil
+}
+
+func (s *Service) buildSeries(assetID string, tf market.Timeframe) (api.CandleSeries, error) {
+	if cs, ok := s.realSeries(assetID, tf); ok {
+		return cs, nil
+	}
+	return candleSeries(assetID, tf)
+}
+
+// realSeries reports whether a real CSV series exists for asset/timeframe.
+func (s *Service) realSeries(assetID string, tf market.Timeframe) (api.CandleSeries, bool) {
+	if s.csv == nil {
+		return api.CandleSeries{}, false
+	}
+	asset, ok := assetByID(assetID)
+	if !ok {
+		return api.CandleSeries{}, false
+	}
+	candles, err := s.csv.Tail(asset, tf, serveCaps[tf], simulatedNow)
+	if err != nil || len(candles) == 0 {
+		return api.CandleSeries{}, false
+	}
+	return seriesFromCandles(assetID, tf, candles), true
+}
+
+// seriesFromCandles wraps raw candles with EMA20/EMA50 overlays — the same
+// response shape as the synthetic generator.
+func seriesFromCandles(assetID string, tf market.Timeframe, candles []market.Candle) api.CandleSeries {
+	m := meta(assetID)
+	closes := make([]float64, len(candles))
+	for i, c := range candles {
+		closes[i] = c.Close
+	}
+	toPoints := func(vals []float64, warmup int) []api.SeriesPoint {
+		pts := make([]api.SeriesPoint, 0, len(vals)-warmup+1)
+		for i := warmup - 1; i < len(vals); i++ {
+			pts = append(pts, api.SeriesPoint{
+				Time:  candles[i].Time.UTC().Format(time.RFC3339),
+				Value: round(vals[i], m.digits),
+			})
+		}
+		return pts
+	}
+	return api.CandleSeries{
+		AssetID:   assetID,
+		Timeframe: tf,
+		Candles:   candles,
+		Overlays: api.Overlays{
+			EMA20: toPoints(ema(closes, 20), 20),
+			EMA50: toPoints(ema(closes, 50), 50),
+		},
+	}
 }
 
 // --- api.MarketService ---
@@ -64,6 +142,10 @@ func (s *Service) MarketSummary(_ context.Context, assetID string, tf market.Tim
 	last := cs[len(cs)-1]
 	prev := cs[len(cs)-2]
 	change := round(last.Close-prev.Close, meta(assetID).digits)
+	status := "Historical / Demo"
+	if _, real := s.realSeries(assetID, tf); real {
+		status = "Closed" // real historical dataset, replayed as-of simulatedNow
+	}
 	return api.MarketSummary{
 		Asset:         asset,
 		Timeframe:     tf,
@@ -71,8 +153,7 @@ func (s *Service) MarketSummary(_ context.Context, assetID string, tf market.Tim
 		Change:        change,
 		ChangePercent: round(change/prev.Close, 4),
 		AsOf:          last.Time.UTC().Format(time.RFC3339),
-		// Data is synthetic history — label it honestly even over the API.
-		Status: "Historical / Demo",
+		Status:        status,
 	}, nil
 }
 
@@ -83,7 +164,7 @@ func (s *Service) List(_ context.Context) ([]api.StrategyListItem, error) {
 	for _, def := range strategies {
 		out = append(out, api.StrategyListItem{
 			Definition:  def,
-			LastSignal:  latestSignalFor(def.ID),
+			LastSignal:  latestSignalFor(def.ID, s.series),
 			Performance: s.store.performanceFor(def.ID),
 		})
 	}
@@ -99,11 +180,14 @@ func (s *Service) Get(_ context.Context, id string) (strategy.Definition, error)
 
 func (s *Service) Signals(_ context.Context, assetID, strategyID string, limit int) ([]strategy.Signal, error) {
 	s.mu.Lock()
-	if s.signals == nil {
-		s.signals = allSignals()
-	}
 	signals := s.signals
 	s.mu.Unlock()
+	if signals == nil {
+		signals = allSignals(s.series) // generation calls s.series — never under s.mu
+		s.mu.Lock()
+		s.signals = signals
+		s.mu.Unlock()
+	}
 
 	out := make([]strategy.Signal, 0)
 	for _, sig := range signals { // sorted newest-first
