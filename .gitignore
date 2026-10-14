@@ -1,0 +1,10 @@
+# Environment & secrets — never commit
+.env
+*.local
+
+# Agent/local tooling
+.devin/
+
+# OS noise
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,23 @@
+# Local development Postgres for Gold Mine Lab. Dev-only convenience —
+# credentials here are throwaway and match .env.example.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: goldmine-postgres
+    environment:
+      POSTGRES_USER: goldmine
+      POSTGRES_PASSWORD: goldmine
+      POSTGRES_DB: goldmine
+    ports:
+      # 5433 on the host to avoid clashing with a locally installed Postgres.
+      - "5433:5432"
+    volumes:
+      - goldmine_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U goldmine -d goldmine"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  goldmine_pgdata:
