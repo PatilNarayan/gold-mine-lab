@@ -82,6 +82,9 @@ type Strategy interface {
 	Evaluate(ctx context.Context, candles []market.Candle) (Signal, error)
 }
 
+// f64 is a shorthand for *float64 fields in ParameterSpec literals.
+func f64(v float64) *float64 { return &v }
+
 // Registry discovers and stores strategies. Implementations are provided by
 // later phases (static registry first, then DB-backed).
 type Registry interface {

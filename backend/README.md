@@ -1,46 +1,60 @@
-# Gold Mine Lab — Backend (Phase 1: foundation)
+# Gold Mine Lab — Backend
 
 Go service for the Gold Mine Lab quantitative research and backtesting platform.
-Phase 1 provides runtime infrastructure only: config, DB pool, HTTP plumbing,
-health check, consistent error format, graceful shutdown. Domain packages exist
-as documented scaffolding for later phases — no strategy/backtest/metrics logic.
+Phase 2 replaced the demo layer with the real research pipeline:
+
+```
+Historical CSV (MARKET_DATA_DIR)
+      ↓  market.CSVProvider            # streaming, validated, bounded
+Strategy Engine (strategy.Registry)    # ema-cross v1.0.0, pure compute
+      ↓  indicators.EMA
+Signal Generation → strategy_signals   # real crossovers, persisted
+      ↓  backtest.Engine               # next-candle-open fills, deterministic
+Performance Metrics (internal/metrics)
+      ↓  repository/postgres           # parameterized SQL only
+PostgreSQL (golang-migrate schema)
+      ↓  internal/api                  # thin handlers, envelope errors
+REST API → React frontend (unchanged contract)
+```
 
 ## Stack
 
-- Go 1.22+ (`go 1.22` in go.mod; developed against toolchain 1.25)
-- Gin (v1.10) HTTP router
-- PostgreSQL via pgx/v5 + pgxpool
-- `log/slog` structured logging (text in dev/test, JSON in prod)
+- Go 1.23 (`go` directive; toolchain 1.25) — Gin v1.10, pgx/v5 + pgxpool,
+  golang-migrate v4, `log/slog` (text dev / JSON prod)
 - Config from environment variables only
 
 ## Layout
 
 ```
 backend/
-├── cmd/server/main.go    # thin entrypoint: config → logger → pool → router → run → shutdown
+├── cmd/server/main.go        # thin wiring: config → migrate → pool →
+│                             #   repos → registry → service → bootstrap → serve
+├── migrations/               # golang-migrate source (embedded)
+│   ├── 000001_initial_schema.up.sql / .down.sql
+│   └── migrations.go         # migrations.Up(dbURL)
 ├── internal/
-│   ├── api/              # router + Deps, middleware (request-ID, logging,
-│   │                     #   recovery, CORS), error envelope, health handler
-│   ├── config/           # env loading + fail-fast validation
-│   ├── database/         # pgxpool constructor + Ping (own 2s timeout)
-│   ├── demo/             # deterministic in-memory impl of the service contracts
-│   ├── market/           # Asset, Timeframe, Candle, DataProvider interface
-│   ├── strategy/         # Strategy, Signal, ParameterSpec, Registry interface
-│   ├── backtest/         # doc.go only (later phases)
-│   ├── metrics/          # doc.go only (later phases)
-│   └── portfolio/        # doc.go only (later phases)
-├── migrations/           # empty — no tables in Phase 1
-├── tests/                # integration tests (//go:build integration)
-├── docker-compose.yml    # local Postgres 16 (host port 5433)
-├── Makefile              # run / build / test / vet / db-up / db-down
-└── .env.example          # placeholder values only
+│   ├── api/                  # router, middleware, error envelope, handlers,
+│   │                         #   contract.go = wire DTOs + service interfaces
+│   ├── config/               # env loading + fail-fast validation
+│   ├── database/             # pgxpool + Ping
+│   ├── market/               # Asset/Timeframe/Candle + DataProvider iface
+│   │   └── csv.go            # CSVProvider: Tail() + Range() + row validation
+│   ├── strategy/
+│   │   ├── strategy.go       # Strategy, Signal, Registry contracts
+│   │   ├── registry.go       # static in-memory registry (dup IDs fail)
+│   │   ├── emacross.go       # ema-cross v1.0.0 (+ Streamer for O(1)/bar)
+│   │   └── indicators/ema.go # EMA + EMAState (streaming)
+│   ├── backtest/engine.go    # deterministic engine — see execution model
+│   ├── metrics/metrics.go    # metric formulas — see below
+│   ├── repository/           # repository interfaces + row types (no logic)
+│   │   └── postgres/         # pgx implementations (Store)
+│   ├── service/              # api.*Service impls over repos+engine; bootstrap
+│   ├── demo/                 # legacy deterministic service — tests only
+│   └── portfolio/            # scaffolding
+└── tests/                    # //go:build integration — real DB pipeline test
 ```
 
 ## Configuration
-
-All config comes from env vars (`os.Getenv`). `DATABASE_URL` is required — it
-has no default because it carries credentials. Everything else has a safe
-default. Invalid or missing values fail startup with a complete error list.
 
 | Var                     | Default                          | Notes                        |
 | ----------------------- | -------------------------------- | ---------------------------- |
@@ -54,119 +68,147 @@ default. Invalid or missing values fail startup with a complete error list.
 | `HTTP_WRITE_TIMEOUT`    | `10s`                            | Go duration                  |
 | `SHUTDOWN_TIMEOUT`      | `15s`                            | drain window on SIGINT/TERM  |
 | `CORS_ALLOWED_ORIGINS`  | `http://localhost:5173`          | comma-separated              |
-| `MARKET_DATA_DIR`       | — (optional)                     | dir of historical CSVs       |
-
-### Real historical data (optional)
-
-Point `MARKET_DATA_DIR` at a directory of CSV exports named
-`XAU_1m_data.csv`, `XAU_1h_data.csv`, `XAU_1d_data.csv`, …
-(semicolon-delimited `Date;Open;High;Low;Close;Volume`, `YYYY.MM.DD HH:MM`,
-treated as UTC). When set, `/api/market/*` and derived views serve **real
-candles** for covered assets (currently XAUUSD); other assets fall back to the
-synthetic generator.
-
-The app pretends "now" is `simulatedNow = 2025-10-14` (one year back for
-testing): data is truncated at that as-of even if the dataset is newer.
-Files are loaded lazily and only a bounded tail is retained, so the 1m file
-doesn't exhaust memory — its first request takes a few seconds.
+| `MARKET_DATA_DIR`       | — **required**                   | dir of historical CSVs       |
 
 ## Run it
 
 ```bash
-cp .env.example .env          # optional; or export vars directly
-docker compose up -d postgres # local Postgres (host port 5433)
-go run ./cmd/server           # or: make run
+docker compose up -d postgres   # Postgres on host port 5433 (5432 often taken)
+export DATABASE_URL="postgres://goldmine:goldmine@localhost:5433/goldmine?sslmode=disable"
+export MARKET_DATA_DIR="../data"   # directory holding XAU_*.csv files
+go run ./cmd/server               # migrates, seeds, then serves :8080
 ```
 
-If you have `make`: `make db-up`, `make run`, `make test`, `make db-down`.
-(Windows without make: use the commands inside the Makefile directly.)
+Startup sequence: `migrations.Up` → pgx pool → CSV provider → registry
+(ema-cross) → service → **Bootstrap** (idempotent: upsert asset + strategy
+defs, generate real signals from the dataset tail, run 3 seed backtests on an
+empty DB) → serve.
 
-Port note: the compose file maps Postgres to host **5433** so it can coexist
-with a locally installed Postgres already bound to 5432.
+## Historical CSV format
+
+Files: `<PREFIX>_<tf>_data.csv` where PREFIX = symbol minus quote currency
+(`XAUUSD` → `XAU_`). Header `Date;Open;High;Low;Close;Volume`,
+semicolon-delimited, timestamps `YYYY.MM.DD HH:MM` treated as UTC.
+Timeframes: `1m 5m 15m 1h 4h 1d` map to files directly — no resampling.
+
+`CSVProvider`:
+- `Tail(asset, tf, n, asOf)` — last n candles ≤ asOf (market endpoints)
+- `Range(asset, tf, from, to, warmup)` — every candle in the window plus up to
+  `warmup` bars before `from` for indicator warm-up; streams the file so large
+  ranges never OOM; aborts on the first bad row
+- Validation: positive OHLC, volume ≥ 0, `high ≥ max(o,c)`, `low ≤ min(o,c)`,
+  `high ≥ low`, strict ascending order, no duplicate timestamps. Errors carry
+  `file:line` context — bad rows are rejected, never silently dropped.
+
+Market endpoints truncate at `simulatedNow = 2025-10-14` (one year back for
+testing — the dataset has a gap 2025-09-12 → 2025-10-15, so the latest served
+candle is 2025-09-12).
+
+## Strategy: ema-cross v1.0.0
+
+Parameters: `fast_period` (20), `slow_period` (50); validated `0 < fast < slow`.
+
+Rules, evaluated at each bar's close (EMA seeded at first close, k=2/(n+1)):
+
+- **BUY**  — `prevFast ≤ prevSlow` AND `fast > slow`
+- **SELL** — `prevFast ≥ prevSlow` AND `fast < slow`
+- **NEUTRAL** otherwise — a cross must actually occur
+- first `slow_period` bars are warm-up and can only emit NEUTRAL
+- score = `min(1, |fast−slow|/price·20)`; reason e.g. `"EMA20 crossed above EMA50"`
+
+`strategy.Stream` (optional interface) gives O(1)-per-bar evaluation; the
+engine falls back to prefix `Evaluate` otherwise.
+
+## Backtest execution model
+
+1. Signals are generated at candle **close** on bar i.
+2. Fills execute at the **next candle's open** (bar i+1) — never the same
+   candle; no look-ahead (strategy only sees bars ≤ i).
+3. Single long position: BUY opens when flat, SELL closes when long, anything
+   else is ignored. No shorts, leverage, pyramiding, partial exits, trailing
+   stops.
+4. Slippage is adverse: entry `open·(1+s%)`, exit `open·(1−s%)`.
+   Commission is `%` of notional charged per fill (entry and exit).
+5. `positionSize` = % of current equity deployed (`qty = equity·s%/fill`).
+6. Equity is mark-to-market at each bar's close inside the window; an open
+   position at the last bar is liquidated at its close.
+7. A run is persisted atomically: trades + metrics + equity curve + status
+   `completed` in one transaction; failures write status `failed` + a safe
+   message. Never a partially-completed run.
+
+## Metric formulas
+
+`netPnl = finalEquity − initialCapital` · `returnPct = netPnl/initialCapital` ·
+`winRate = wins/closedTrades` · `avgTradePnl = netPnl/closedTrades` ·
+`grossProfit/grossLoss = Σ` of winning/losing trade P&L ·
+`profitFactor = grossProfit/grossLoss` (0 when no losses — not infinity) ·
+`maxDrawdown = max((peak−equity)/peak)` over the equity curve.
+Sharpe is deliberately absent: no defined return frequency → not faked.
+
+## Database schema (migration 000001)
+
+| Table              | Key columns                                                        |
+| ------------------ | ------------------------------------------------------------------ |
+| `assets`           | id(text pk), symbol, name, asset_class, currency, metadata jsonb   |
+| `strategies`       | id(text pk), name, version, supported_assets jsonb, parameters jsonb |
+| `strategy_signals` | uuid pk, strategy_id→strategies, asset_id→assets, ts, action, score, price, reason — UNIQUE(strategy_id, asset_id, timestamp) |
+| `backtest_runs`    | uuid pk, strategy/asset refs, tf, dates, capital, size, commission, slippage, parameters jsonb, status, equity_curve jsonb, error |
+| `backtest_trades`  | uuid pk, run_id→runs (cascade), side, entry/exit time+price, qty, pnl, status, result |
+| `backtest_metrics` | uuid pk, run_id→runs (cascade), metric_name, metric_value — UNIQUE(run_id, metric_name) |
+
+Indexes: `signals(strategy_id, asset_id, ts)`, `runs(strategy_id, asset_id,
+created_at)`, `trades(run_id)`, `trades(asset_id, entry_time)`,
+`metrics(run_id)`.
+
+Migrations apply at startup via embedded golang-migrate. Manual control:
+`migrate -source file://migrations -database "$DATABASE_URL" up|down|version`.
 
 ## API
 
-All routes live under `/api` and emit the field names the frontend's Zod
-contracts expect. Handlers stay thin — every route delegates to a service
-interface (`MarketService`, `StrategyService`, `BacktestService`,
-`TradeService` in `internal/api/contract.go`). Phase 1 wires them to
-`internal/demo`, a deterministic in-memory implementation (seeded mulberry32,
-fixed historical window ending 2024-12-31). Swap `demo.New()` in `main.go`
-for Postgres-backed services in a later phase — no handler or frontend change.
+Same contract as before — thin handlers → `service` → repos/engine:
 
-| Method | Path                                | Payload                                   |
-| ------ | ----------------------------------- | ----------------------------------------- |
-| GET    | `/api/health`                       | `{status, service, database}`             |
-| GET    | `/api/assets`                       | `[Asset]`                                 |
-| GET    | `/api/market/candles?asset&timeframe` | candles + EMA20/EMA50 overlays          |
-| GET    | `/api/market/summary?asset&timeframe` | market overview tile                    |
-| GET    | `/api/strategies`                   | strategy + last signal + performance      |
-| GET    | `/api/strategies/:id`               | one strategy (404 envelope if unknown)    |
-| GET    | `/api/signals?asset&strategy&limit` | newest-first signals                      |
-| GET    | `/api/backtests`                    | runs (`?strategy=` filter)                |
-| GET    | `/api/backtests/latest`             | `{runId}` or `{runId: null}`              |
-| GET    | `/api/backtests/summary`            | dashboard aggregate                       |
-| GET    | `/api/backtests/:id`                | run + metrics + equity curve + trades     |
-| POST   | `/api/backtests`                    | run request → `201` + run (validates input) |
-| GET    | `/api/trades`                       | paginated trades (`strategy|side|result|from|to|page|pageSize`) |
+| Method | Path | Notes |
+| ------ | ---- | ----- |
+| GET    | `/api/health` | liveness + DB check |
+| GET    | `/api/assets` | from `assets` table |
+| GET    | `/api/market/candles?asset&timeframe` | real CSV candles + EMA overlays |
+| GET    | `/api/market/summary` | real last close / change |
+| GET    | `/api/strategies` | defs + latest signal + real run aggregates |
+| GET    | `/api/signals` | persisted crossover signals |
+| GET    | `/api/backtests?strategy` | all runs |
+| GET    | `/api/backtests/latest` | newest completed run ID |
+| GET    | `/api/backtests/summary` | aggregate metrics + trade-P&L equity curve |
+| GET    | `/api/backtests/:id` | run + metrics + equity + trades |
+| POST   | `/api/backtests` | **executes the real engine**, persists, 201 |
+| GET    | `/api/trades` | filtered paginated trades from DB |
 
-### `GET /api/health`
-
-- DB reachable → `200 {"status":"ok","service":"gold-mine-lab-backend","database":"up"}`
-- DB unreachable → `503 {"status":"degraded","service":"gold-mine-lab-backend","database":"down"}`
-
-The handler calls a `HealthChecker` interface — no DB code in the handler.
-
-### Errors
-
-All failures use one envelope:
-
-```json
-{"error": {"code": "not_found", "message": "resource not found", "request_id": "…"}}
-```
-
-404 and 405 responses use the same shape. Internal error details are logged
-server-side, never leaked to clients. `X-Request-ID` is honoured inbound and
-echoed on every response.
-
-### Graceful shutdown
-
-SIGINT/SIGTERM → stop accepting requests → drain in-flight requests within
-`SHUTDOWN_TIMEOUT` → close the DB pool.
-
-## Database
-
-Phase 1 configures only connectivity and pooling — no tables yet. Planned
-schema (later phases, via migrations):
-
-| Table              | Purpose                                     |
-| ------------------ | ------------------------------------------- |
-| `assets`           | tradeable instruments (XAUUSD, MSFT, …)     |
-| `strategies`       | registered strategies + parameter schemas   |
-| `strategy_signals` | emitted signals                             |
-| `backtest_runs`    | run configuration + status                  |
-| `backtest_trades`  | per-run simulated trades                    |
-| `backtest_metrics` | computed run metrics (win rate, PF, max DD) |
-
-Recommended migration tool: **golang-migrate** (`migrate` CLI + `migrations/`
-directory already reserved). Not wired in during Phase 1.
+Errors: `{"error":{"code","message","request_id"}}` everywhere; internals are
+logged, never leaked.
 
 ## Testing
 
 ```bash
-go test ./...                          # unit tests (no DB needed)
-go test -tags=integration ./tests/     # real-DB test; skips if DATABASE_URL unset
+go test ./...                    # unit tests — no DB needed
+DATABASE_URL=… MARKET_DATA_DIR=… go test -tags=integration ./...  # real pipeline
 ```
 
-Covered: config validation (valid env, missing required var, invalid values),
-health handler 200/503 via a fake `HealthChecker`, error envelope on 404/405,
-request-ID passthrough, CORS allow/deny, panic recovery, and a graceful-
-shutdown test that starts the real server and injects SIGTERM.
+Covered: EMA vs known values + streaming parity, crossover rules & warm-up,
+registry (dup IDs), CSV parse/validation/range/warmup/dupe/unsorted rejection,
+engine next-candle fills / commission / slippage / force-close / single
+position / **no look-ahead** / input validation, all metric formulas, and an
+integration test running bootstrap → Execute → persisted detail over real
+Postgres + real CSVs.
 
-## Deliberately absent (Phase 1)
+## Observability
 
-Real strategy evaluation, a real backtest engine, any DB schema, auth,
-WebSockets, broker/live-market-data integrations. The `/api/*` data endpoints
-serve deterministic synthetic data (`internal/demo`) so the frontend runs
-against the real REST contract today; the `Historical / Demo` market status
-keeps that honest until Postgres repositories land.
+Structured logs for `backtest started/completed/failed`, `bootstrap`, signal
+generation, market-data config, and DB errors — each carrying `run_id`,
+`strategy_id`, `asset_id`. No secrets are logged (`DATABASE_URL` never printed).
+
+## Known limitations
+
+- One strategy (ema-cross), one asset (XAUUSD); registry is static in-memory.
+- POST /api/backtests is synchronous — large 1m windows take seconds.
+- Market endpoints serve a bounded tail; full range available via Range().
+- Sharpe/benchmark metrics deferred until return frequency is defined.
+- No auth, no websockets, no async job queue — by design for now.

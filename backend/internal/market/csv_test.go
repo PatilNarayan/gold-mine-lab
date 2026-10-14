@@ -63,3 +63,45 @@ func TestCSVProviderMissingFile(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 }
+
+func TestCSVProviderRangeWithWarmup(t *testing.T) {
+	p := NewCSVProvider(writeFixture(t), nil)
+	from := time.Date(2025, 10, 13, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2025, 10, 20, 0, 0, 0, 0, time.UTC)
+
+	got, err := p.Range(xau, Timeframe1h, from, to, 1)
+	if err != nil {
+		t.Fatalf("Range: %v", err)
+	}
+	// 1 warmup row (10/10 10:00) + 2 in-range rows (10/13, 10/15)
+	if len(got) != 3 {
+		t.Fatalf("got %d candles, want 3", len(got))
+	}
+	if got[0].Time.Format("2006-01-02 15:04") != "2025-10-10 10:00" {
+		t.Errorf("warmup candle = %v", got[0].Time)
+	}
+}
+
+func TestCSVProviderRangeRejectsBadRows(t *testing.T) {
+	cases := map[string]string{
+		"bad ohlc":  "2025.10.10 09:00;4000;3990;4010;3995;100\n", // high < open
+		"negative":  "2025.10.10 09:00;-1;10;0.5;9;100\n",
+		"dup ts":    "2025.10.10 09:00;4000;4001;3999;4000;100\n2025.10.10 09:00;4000;4001;3999;4000;100\n",
+		"unsorted":  "2025.10.10 10:00;4000;4001;3999;4000;100\n2025.10.10 09:00;4000;4001;3999;4000;100\n",
+		"malformed": "not-a-date;1;2;3;4;5\n2025.10.10 09:00;4000;4001;3999;4000;100\n",
+	}
+	for name, bad := range cases {
+		dir := t.TempDir()
+		good := "2025.10.08 08:00;4000;4001;3999;4000;100\n" + "2025.10.09 08:00;4000;4001;3999;4000;100\n"
+		content := "Date;Open;High;Low;Close;Volume\n" + good + bad
+		if err := os.WriteFile(filepath.Join(dir, "XAU_1h_data.csv"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p := NewCSVProvider(dir, nil)
+		from := time.Date(2025, 10, 9, 0, 0, 0, 0, time.UTC)
+		to := time.Date(2025, 10, 31, 0, 0, 0, 0, time.UTC)
+		if _, err := p.Range(xau, Timeframe1h, from, to, 0); err == nil {
+			t.Errorf("%s: expected error, got nil", name)
+		}
+	}
+}

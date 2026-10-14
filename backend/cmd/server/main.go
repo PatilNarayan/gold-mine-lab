@@ -15,7 +15,11 @@ import (
 	"github.com/gold-mine-lab/backend/internal/api"
 	"github.com/gold-mine-lab/backend/internal/config"
 	"github.com/gold-mine-lab/backend/internal/database"
-	"github.com/gold-mine-lab/backend/internal/demo"
+	"github.com/gold-mine-lab/backend/internal/market"
+	"github.com/gold-mine-lab/backend/internal/repository/postgres"
+	"github.com/gold-mine-lab/backend/internal/service"
+	"github.com/gold-mine-lab/backend/internal/strategy"
+	"github.com/gold-mine-lab/backend/migrations"
 )
 
 func main() {
@@ -39,18 +43,41 @@ func run(shutdown <-chan os.Signal) error {
 	log.Info("starting", "env", cfg.Env, "port", cfg.HTTP.Port)
 
 	ctx := context.Background()
+
+	// Apply pending schema migrations before building the pool's dependents.
+	if err := migrations.Up(cfg.DB.URL); err != nil {
+		return fmt.Errorf("migrations: %w", err)
+	}
+	log.Info("migrations applied")
+
 	pool, err := database.NewPool(ctx, cfg.DB)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	// demo.Service implements all api.*Service contracts over deterministic
-	// in-memory data — replace with Postgres-backed services in a later phase.
-	// When MARKET_DATA_DIR points at historical CSVs, real candles are served
-	// for covered assets (currently XAUUSD) truncated at the simulated as-of.
-	svc := demo.New(cfg.MarketDataDir)
-	if cfg.MarketDataDir != "" {
-		log.Info("market data directory configured", "dir", cfg.MarketDataDir)
+	// Real pipeline: CSV provider → registry → service → repositories.
+	if cfg.MarketDataDir == "" {
+		return fmt.Errorf("MARKET_DATA_DIR is required (historical CSV directory)")
+	}
+	data := market.NewCSVProvider(cfg.MarketDataDir, nil)
+	log.Info("market data directory configured", "dir", cfg.MarketDataDir)
+
+	reg := strategy.NewRegistry()
+	if err := reg.Register(strategy.NewEMACross()); err != nil {
+		return fmt.Errorf("register strategy: %w", err)
+	}
+
+	store := postgres.New(pool.Pool)
+	svc := service.New(service.Repositories{
+		Assets: store, Strategies: store, Signals: store,
+		Runs: store, Trades: store, Metrics: store,
+	}, data, reg, log)
+
+	// Seed asset/strategies, generate real signals, run seed backtests on an
+	// empty database — all idempotent.
+	if err := svc.Bootstrap(ctx); err != nil {
+		pool.Close()
+		return fmt.Errorf("bootstrap: %w", err)
 	}
 	router := api.NewRouter(api.Deps{
 		Logger:         log,

@@ -1,3 +1,8 @@
+//go:build integration
+
+// Graceful-shutdown test now runs under the `integration` tag because run()
+// applies migrations and bootstraps — it needs a real DATABASE_URL and
+// MARKET_DATA_DIR (see .env.example / Makefile).
 package main
 
 import (
@@ -15,7 +20,14 @@ func TestGracefulShutdown(t *testing.T) {
 	t.Setenv("APP_ENV", "test")
 	t.Setenv("HTTP_PORT", "18099")
 	t.Setenv("LOG_LEVEL", "error")
-	t.Setenv("DATABASE_URL", "postgres://u:p@127.0.0.1:1/none") // unreachable on purpose
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL unset — skipping integration test")
+	}
+	if os.Getenv("MARKET_DATA_DIR") == "" {
+		t.Skip("MARKET_DATA_DIR unset — skipping integration test")
+	}
+	t.Setenv("DATABASE_URL", dbURL)
 	t.Setenv("SHUTDOWN_TIMEOUT", "5s")
 
 	shutdown := make(chan os.Signal, 1)

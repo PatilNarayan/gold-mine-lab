@@ -87,6 +87,114 @@ func (p *CSVProvider) GetCandles(ctx context.Context, asset Asset, tf Timeframe,
 	return out, nil
 }
 
+// Range returns every candle in [from, to] plus up to `warmup` candles
+// immediately before `from` (for indicator warm-up — e.g. a 50-period EMA
+// needs history before the window start). Unlike load(), nothing is retained:
+// the file is streamed each call so arbitrary windows never exhaust memory.
+// Rows failing validation abort the load with the offending line number.
+func (p *CSVProvider) Range(asset Asset, tf Timeframe, from, to time.Time, warmup int) ([]Candle, error) {
+	suffix, ok := csvFileSuffix[tf]
+	if !ok {
+		return nil, fmt.Errorf("csv provider: unsupported timeframe %q", tf)
+	}
+	path := filepath.Join(p.dir, filePrefix(asset)+"_"+suffix+"_data.csv")
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("csv provider: open %s: %w", filepath.Base(path), err)
+	}
+	defer f.Close()
+
+	pre := make([]Candle, 0, warmup) // ring of the last `warmup` rows before `from`
+	prePos := 0
+	out := make([]Candle, 0, 1024)
+	var prev time.Time
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 256*1024), 256*1024)
+	line := 0
+	for sc.Scan() {
+		line++
+		c, err := parseCSVRow(sc.Text())
+		if err != nil {
+			if line == 1 {
+				continue // header row
+			}
+			return nil, fmt.Errorf("%s:%d: %w", filepath.Base(path), line, err)
+		}
+		if err := validateOHLC(c); err != nil {
+			return nil, fmt.Errorf("%s:%d: %w", filepath.Base(path), line, err)
+		}
+		if prev.IsZero() {
+			prev = c.Time
+		} else {
+			if c.Time.Equal(prev) {
+				return nil, fmt.Errorf("%s:%d: duplicate timestamp %s", filepath.Base(path), line, c.Time)
+			}
+			if c.Time.Before(prev) {
+				return nil, fmt.Errorf("%s:%d: unsorted timestamps (%s after %s)", filepath.Base(path), line, c.Time, prev)
+			}
+			prev = c.Time
+		}
+		if c.Time.After(to) {
+			break // file is ascending — everything beyond `to` is irrelevant
+		}
+		if c.Time.Before(from) {
+			if warmup > 0 {
+				if len(pre) < warmup {
+					pre = append(pre, c)
+				} else {
+					pre[prePos] = c
+					prePos = (prePos + 1) % warmup
+				}
+			}
+			continue
+		}
+		out = append(out, c)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("csv provider: read %s: %w", filepath.Base(path), err)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("csv provider: no %s %s candles in [%s, %s]", asset.Symbol, tf, from, to)
+	}
+
+	// Prepend the warmup ring in ascending order.
+	result := make([]Candle, 0, len(pre)+len(out))
+	if len(pre) == warmup && prePos > 0 {
+		result = append(result, pre[prePos:]...)
+		result = append(result, pre[:prePos]...)
+	} else {
+		result = append(result, pre...)
+	}
+	return append(result, out...), nil
+}
+
+// validateOHLC enforces price sanity; a bad row rejects the load rather than
+// silently corrupting results.
+func validateOHLC(c Candle) error {
+	if c.Time.IsZero() {
+		return fmt.Errorf("zero timestamp")
+	}
+	if c.Open <= 0 || c.High <= 0 || c.Low <= 0 || c.Close <= 0 {
+		return fmt.Errorf("non-positive OHLC value (o=%v h=%v l=%v c=%v)", c.Open, c.High, c.Low, c.Close)
+	}
+	if c.Volume < 0 {
+		return fmt.Errorf("negative volume %v", c.Volume)
+	}
+	hi := c.Open
+	if c.Close > hi {
+		hi = c.Close
+	}
+	lo := c.Open
+	if c.Close < lo {
+		lo = c.Close
+	}
+	if c.High < c.Low || c.High < hi || c.Low > lo {
+		return fmt.Errorf("invalid OHLC (o=%v h=%v l=%v c=%v)", c.Open, c.High, c.Low, c.Close)
+	}
+	return nil
+}
+
 // Tail returns the last n retained candles ending at or before asOf.
 func (p *CSVProvider) Tail(asset Asset, tf Timeframe, n int, asOf time.Time) ([]Candle, error) {
 	candles, err := p.load(asset, tf)
