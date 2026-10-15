@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/gold-mine-lab/backend/internal/market"
 	"github.com/gold-mine-lab/backend/internal/strategy"
+	"github.com/gold-mine-lab/backend/internal/strategygraph"
 )
 
 // This file defines the wire contract shared with the frontend: DTO types use
@@ -75,17 +77,17 @@ type StrategyListItem struct {
 
 // BacktestMetrics mirrors the planned backtest_metrics table.
 type BacktestMetrics struct {
-	NetPnl        float64 `json:"netPnl"`
-	ReturnPct     float64 `json:"returnPct"`
-	WinRate       float64 `json:"winRate"`
+	NetPnl        float64  `json:"netPnl"`
+	ReturnPct     float64  `json:"returnPct"`
+	WinRate       float64  `json:"winRate"`
 	ProfitFactor  *float64 `json:"profitFactor"`
-	MaxDrawdown   float64 `json:"maxDrawdown"`
-	TotalTrades   int     `json:"totalTrades"`
-	WinningTrades int     `json:"winningTrades"`
-	LosingTrades  int     `json:"losingTrades"`
-	AvgTradePnl   float64 `json:"avgTradePnl"`
-	GrossProfit   float64 `json:"grossProfit"`
-	GrossLoss     float64 `json:"grossLoss"`
+	MaxDrawdown   float64  `json:"maxDrawdown"`
+	TotalTrades   int      `json:"totalTrades"`
+	WinningTrades int      `json:"winningTrades"`
+	LosingTrades  int      `json:"losingTrades"`
+	AvgTradePnl   float64  `json:"avgTradePnl"`
+	GrossProfit   float64  `json:"grossProfit"`
+	GrossLoss     float64  `json:"grossLoss"`
 	// TotalCommissions is nil on legacy runs that predate the metric.
 	TotalCommissions *float64 `json:"totalCommissions"`
 	// Risk metrics (Phase 6a): nil when undefined — no qualifying trades,
@@ -391,4 +393,72 @@ type BacktestService interface {
 // TradeService returns filtered, paginated trades.
 type TradeService interface {
 	ListTrades(ctx context.Context, f TradeFilters) (PagedTrades, error)
+}
+
+// --- Strategy graphs ---------------------------------------------------------
+
+// StrategyGraph is a named container of immutable graph revisions.
+type StrategyGraph struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Status      string    `json:"status"`
+	Revisions   int       `json:"revisions"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// GraphRevision is one immutable saved definition.
+type GraphRevision struct {
+	GraphID        string                   `json:"graphId"`
+	Revision       int                      `json:"revision"`
+	Definition     strategygraph.Definition `json:"definition"`
+	DefinitionHash string                   `json:"definitionHash"`
+	CreatedAt      time.Time                `json:"createdAt"`
+}
+
+// CreateGraphRequest creates a graph with revision 1.
+type CreateGraphRequest struct {
+	Name        string                   `json:"name"`
+	Description string                   `json:"description"`
+	Definition  strategygraph.Definition `json:"definition"`
+}
+
+// CreateRevisionRequest saves a new immutable revision.
+type CreateRevisionRequest struct {
+	Definition strategygraph.Definition `json:"definition"`
+}
+
+// ValidateGraphRequest is the body of POST /api/strategy-graphs/validate.
+type ValidateGraphRequest struct {
+	Definition strategygraph.Definition `json:"definition"`
+}
+
+// ValidateGraphResponse reports every validation problem found.
+type ValidateGraphResponse struct {
+	Valid  bool                       `json:"valid"`
+	Errors []strategygraph.FieldError `json:"errors"`
+}
+
+// GraphBacktestRequest is the body of the graph backtest endpoint — run
+// configuration only; the graph itself always comes from the saved revision.
+type GraphBacktestRequest struct {
+	AssetID        string           `json:"assetId"`
+	Timeframe      market.Timeframe `json:"timeframe"`
+	StartDate      string           `json:"startDate"`
+	EndDate        string           `json:"endDate"`
+	InitialCapital float64          `json:"initialCapital"`
+	PositionSize   float64          `json:"positionSize"`
+	Commission     float64          `json:"commission"`
+	Slippage       float64          `json:"slippage"`
+}
+
+// StrategyGraphService manages graphs, revisions, validation and graph runs.
+type StrategyGraphService interface {
+	ListGraphs(ctx context.Context) ([]StrategyGraph, error)
+	ValidateGraph(ctx context.Context, req ValidateGraphRequest) (ValidateGraphResponse, error)
+	CreateGraph(ctx context.Context, req CreateGraphRequest) (StrategyGraph, error)
+	GetGraph(ctx context.Context, id string) (StrategyGraph, error)
+	ListRevisions(ctx context.Context, id string) ([]GraphRevision, error)
+	CreateRevision(ctx context.Context, id string, req CreateRevisionRequest) (GraphRevision, error)
+	ExecuteGraphBacktest(ctx context.Context, id string, revision int, req GraphBacktestRequest) (BacktestRun, error)
 }

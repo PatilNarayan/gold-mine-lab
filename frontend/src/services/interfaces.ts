@@ -16,6 +16,12 @@ import type {
   StrategyListItem,
   Timeframe,
   TradeFilters,
+  CreateGraphRequest,
+  GraphBacktestRequest,
+  GraphDefinition,
+  GraphRevision,
+  StrategyGraph,
+  ValidateGraphResponse,
 } from '@/types/domain';
 import type { HealthStatus } from '@/types/api';
 
@@ -65,4 +71,14 @@ export interface WalkForwardService {
 
 export interface HealthService {
   check(): Promise<HealthStatus>;
+}
+
+export interface GraphService {
+  list(): Promise<StrategyGraph[]>;
+  validate(definition: GraphDefinition): Promise<ValidateGraphResponse>;
+  create(request: CreateGraphRequest): Promise<StrategyGraph>;
+  get(id: string): Promise<StrategyGraph>;
+  listRevisions(id: string): Promise<GraphRevision[]>;
+  createRevision(id: string, definition: GraphDefinition): Promise<GraphRevision>;
+  runBacktest(id: string, revision: number, request: GraphBacktestRequest): Promise<BacktestRun>;
 }

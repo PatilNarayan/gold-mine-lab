@@ -247,13 +247,60 @@ maxDD = max((peak−equity)/peak) over the curve.
   engine/strategy versions); no version bump — historical runs are not
   recalculated.
 
+## Strategy graphs (Phase 6b)
+
+- **What:** `internal/strategygraph/` composes registered strategies with
+  explicit operators into a directed acyclic graph that produces ONE composite
+  signal per bar, fed into the SAME `Execute` engine (next-candle-open fills,
+  sizing, commissions, slippage, metrics, fingerprint — no separate simulator).
+  Declarative JSON definitions only — no generated or user-supplied code.
+- **Node types:** `strategy` (a source: registry strategy id + params; each
+  node owns an INDEPENDENT streaming state via `Streamer.NewStream()` — two
+  nodes of the same strategy with different params do not share state);
+  `and` (>=2 inputs: emits a direction only when EVERY input is non-NEUTRAL and
+  agrees, score = min of input scores); `or` (>=2 inputs: all NEUTRAL -> NEUTRAL;
+  a single actionable direction -> that direction, score = max; conflicting
+  directions -> NEUTRAL); `threshold` (exactly 1 input, t in [0,1]: pass
+  BUY/SELL when score >= t else NEUTRAL — score is signal STRENGTH, not a
+  probability of profit); `output` (exactly 1 input, exactly one per graph —
+  marks the composite signal; it does NOT execute trades).
+- **Validation (`Validate`)** rejects before anything is persisted: duplicate
+  node ids, unknown types/strategies/params, unsupported asset/timeframe,
+  missing/invalid/duplicate edges, cycles, zero or multiple outputs, arity
+  violations, disconnected or output-unreachable nodes, >32 nodes / >64 edges,
+  missing or non-finite thresholds. Errors are structured `{nodeId,message}`.
+  Topological order is deterministic (lexicographic ties), >=1 source required.
+- **Evaluation:** per-candle chronological; source streams configured once via
+  `Configurable`, evaluated in topo order; warm-up = max(source warm-ups);
+  deterministic — identical definition+data => identical signals; only
+  `Streamer` strategies may be sources (O(n) streaming, never future bars).
+  Composite signal metadata carries `{graphId, graphRevision}`.
+- **Persistence (migration 000005):** `strategy_graphs` (id, name, description,
+  status) + `strategy_graph_revisions` (graph_id, revision, definition jsonb,
+  definition_hash sha256). Revisions are IMMUTABLE — editing appends
+  `revision+1`; every run records the exact revision via strategy slug
+  `graph:<uuid>:v<n>`, so provenance/hash survive restarts (the adapter is
+  re-registered lazily on each graph backtest).
+- **API:** `GET /api/strategy-graphs` · `POST /api/strategy-graphs/validate` ·
+  `POST /api/strategy-graphs` · `GET /api/strategy-graphs/:id` ·
+  `GET /api/strategy-graphs/:id/versions` · `POST /api/strategy-graphs/:id/versions`
+  · `POST /api/strategy-graphs/:id/versions/:version/backtests` (definition
+  comes from the saved revision, never from the client body).
+- **Strategies list:** materialized graph revisions appear as `graph:…:v<n>`
+  rows — distinguishable from built-ins by the `graph:` prefix.
+- **Limits (MVP):** 5 node types only; single-asset/timeframe per run;
+  operators take the max of source warm-ups, not per-edge delays; a graph
+  result says nothing about profitability — it is one more hypothesis to test,
+  not a strategy that is "proven" because it is composed.
+
 ## Database schema
 
 `assets`, `strategies` (slugs, `supported_timeframes` jsonb), `strategy_signals`,
 `backtest_runs` (+`equity_curve` jsonb, `engine_version`, `strategy_version`,
 `dataset`), `backtest_trades` (+`gross_pnl`, `entry_commission`,
 `exit_commission`), `backtest_metrics` — see `migrations/000001` and
-`000002_accounting_consistency`. Indexes per access pattern:
+`000002_accounting_consistency`. Plus `strategy_graphs` +
+`strategy_graph_revisions` (`migrations/000005_strategy_graphs`). Indexes per access pattern:
 signals (strategy,asset,ts), runs (strategy,asset,created), trades (run_id),
 metrics (run_id).
 

@@ -217,6 +217,36 @@ type TradeRepository interface {
 	ListTradesFiltered(ctx context.Context, q TradeQuery) (rows []TradeRow, total int, err error)
 }
 
+// StrategyGraphRepository persists named graphs and their immutable
+// revisions. CreateRevision assigns revision = max(existing)+1 atomically.
+type StrategyGraphRepository interface {
+	ListGraphs(ctx context.Context) ([]StrategyGraphRow, error)
+	CreateGraph(ctx context.Context, name, description string) (StrategyGraphRow, error)
+	GetGraph(ctx context.Context, id string) (StrategyGraphRow, error)
+	ListRevisions(ctx context.Context, graphID string) ([]GraphRevisionRow, error)
+	GetRevision(ctx context.Context, graphID string, revision int) (GraphRevisionRow, error)
+	CreateRevision(ctx context.Context, graphID string, definition []byte, hash string) (GraphRevisionRow, error)
+}
+
+// StrategyGraphRow is a graph container.
+type StrategyGraphRow struct {
+	ID          string
+	Name        string
+	Description string
+	Status      string
+	CreatedAt   time.Time
+	Revisions   int
+}
+
+// GraphRevisionRow is one immutable revision of a graph definition.
+type GraphRevisionRow struct {
+	GraphID        string
+	Revision       int
+	Definition     []byte
+	DefinitionHash string
+	CreatedAt      time.Time
+}
+
 type MetricRepository interface {
 	GetMetrics(ctx context.Context, runID string) (map[string]float64, error)
 	// AggregateMetrics computes sums/means across completed runs.

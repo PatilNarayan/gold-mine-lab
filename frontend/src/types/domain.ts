@@ -411,3 +411,76 @@ export const walkForwardSchema = z.object({
   summaries: z.record(z.string(), walkForwardSummarySchema).nullable().optional(),
 });
 export type WalkForward = z.infer<typeof walkForwardSchema>;
+
+// --- Strategy graphs (Phase 6b) ----------------------------------------------
+
+export const graphNodeTypeSchema = z.enum(['strategy', 'and', 'or', 'threshold', 'output']);
+export type GraphNodeType = z.infer<typeof graphNodeTypeSchema>;
+
+export const graphNodeSchema = z.object({
+  id: z.string().min(1),
+  type: graphNodeTypeSchema,
+  strategyId: z.string().optional(),
+  parameters: z.record(z.string(), z.unknown()).optional(),
+  threshold: z.number().min(0).max(1).optional(),
+});
+export type GraphNode = z.infer<typeof graphNodeSchema>;
+
+export const graphEdgeSchema = z.object({ from: z.string(), to: z.string() });
+export type GraphEdge = z.infer<typeof graphEdgeSchema>;
+
+export const graphDefinitionSchema = z.object({
+  nodes: z.array(graphNodeSchema),
+  edges: z.array(graphEdgeSchema),
+});
+export type GraphDefinition = z.infer<typeof graphDefinitionSchema>;
+
+export const strategyGraphSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  status: z.string(),
+  revisions: z.number(),
+  createdAt: z.string(),
+});
+export type StrategyGraph = z.infer<typeof strategyGraphSchema>;
+
+export const graphRevisionSchema = z.object({
+  graphId: z.string(),
+  revision: z.number(),
+  definition: graphDefinitionSchema,
+  definitionHash: z.string(),
+  createdAt: z.string(),
+});
+export type GraphRevision = z.infer<typeof graphRevisionSchema>;
+
+export const graphFieldErrorSchema = z.object({
+  nodeId: z.string().optional(),
+  message: z.string(),
+});
+export type GraphFieldError = z.infer<typeof graphFieldErrorSchema>;
+
+export const validateGraphResponseSchema = z.object({
+  valid: z.boolean(),
+  errors: z.array(graphFieldErrorSchema),
+});
+export type ValidateGraphResponse = z.infer<typeof validateGraphResponseSchema>;
+
+export const createGraphRequestSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  definition: graphDefinitionSchema,
+});
+export type CreateGraphRequest = z.infer<typeof createGraphRequestSchema>;
+
+export const graphBacktestRequestSchema = z.object({
+  assetId: z.string(),
+  timeframe: timeframeSchema,
+  startDate: z.string(),
+  endDate: z.string(),
+  initialCapital: z.number(),
+  positionSize: z.number(),
+  commission: z.number(),
+  slippage: z.number(),
+});
+export type GraphBacktestRequest = z.infer<typeof graphBacktestRequestSchema>;

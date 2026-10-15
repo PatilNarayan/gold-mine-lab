@@ -250,3 +250,87 @@ func registerWalkForwardRoutes(g *gin.RouterGroup, svc WalkForwardService) {
 		c.JSON(http.StatusOK, out)
 	})
 }
+
+func registerStrategyGraphRoutes(g *gin.RouterGroup, svc StrategyGraphService) {
+	g.GET("/strategy-graphs", func(c *gin.Context) {
+		out, err := svc.ListGraphs(c.Request.Context())
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	g.POST("/strategy-graphs/validate", func(c *gin.Context) {
+		var req ValidateGraphRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			return
+		}
+		out, err := svc.ValidateGraph(c.Request.Context(), req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	g.POST("/strategy-graphs", func(c *gin.Context) {
+		var req CreateGraphRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			return
+		}
+		out, err := svc.CreateGraph(c.Request.Context(), req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, out)
+	})
+	g.GET("/strategy-graphs/:id", func(c *gin.Context) {
+		out, err := svc.GetGraph(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	g.GET("/strategy-graphs/:id/versions", func(c *gin.Context) {
+		out, err := svc.ListRevisions(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	g.POST("/strategy-graphs/:id/versions", func(c *gin.Context) {
+		var req CreateRevisionRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			return
+		}
+		out, err := svc.CreateRevision(c.Request.Context(), c.Param("id"), req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, out)
+	})
+	g.POST("/strategy-graphs/:id/versions/:version/backtests", func(c *gin.Context) {
+		rev, perr := strconv.Atoi(c.Param("version"))
+		if perr != nil || rev < 1 {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid revision number")
+			return
+		}
+		var req GraphBacktestRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			return
+		}
+		run, err := svc.ExecuteGraphBacktest(c.Request.Context(), c.Param("id"), rev, req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, run)
+	})
+}

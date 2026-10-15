@@ -21,6 +21,7 @@ type Deps struct {
 	Trades         TradeService
 	Comparisons    ComparisonService
 	WalkForwards   WalkForwardService
+	StrategyGraphs StrategyGraphService
 	AllowedOrigins []string
 	// Env is "dev" | "prod" | "test" — controls gin's mode.
 	Env string
@@ -71,6 +72,9 @@ func NewRouter(d Deps) *gin.Engine {
 	}
 	if d.WalkForwards != nil {
 		registerWalkForwardRoutes(v1, d.WalkForwards)
+	}
+	if d.StrategyGraphs != nil {
+		registerStrategyGraphRoutes(v1, d.StrategyGraphs)
 	}
 
 	return r
