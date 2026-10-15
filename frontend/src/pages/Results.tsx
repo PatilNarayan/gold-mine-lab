@@ -86,8 +86,9 @@ export default function Results() {
                 <MetricCard label="Win rate" value={formatPercent(detail.data.metrics.winRate)} />
                 <MetricCard
                   label="Profit factor"
-                  value={detail.data.metrics.profitFactor.toFixed(2)}
-                  tone={detail.data.metrics.profitFactor >= 1 ? 'buy' : 'sell'}
+                  value={detail.data.metrics.profitFactor != null ? detail.data.metrics.profitFactor.toFixed(2) : '—'}
+                  hint={detail.data.metrics.profitFactor == null ? 'No losing trades — undefined' : undefined}
+                  tone={detail.data.metrics.profitFactor != null ? (detail.data.metrics.profitFactor >= 1 ? 'buy' : 'sell') : 'default'}
                 />
                 <MetricCard
                   label="Max drawdown"

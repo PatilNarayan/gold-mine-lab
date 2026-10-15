@@ -178,7 +178,7 @@ function buildDetail(run: BacktestRun): BacktestDetail {
     netPnl,
     returnPct: round(netPnl / run.initialCapital, 4),
     winRate: closed.length ? round(wins.length / closed.length, 4) : 0,
-    profitFactor: grossLoss > 0 ? round(grossWin / grossLoss, 2) : wins.length ? 99 : 0,
+    profitFactor: grossLoss > 0 ? round(grossWin / grossLoss, 2) : null,
     maxDrawdown: round(maxDrawdown, 4),
     totalTrades: closed.length,
     winningTrades: wins.length,

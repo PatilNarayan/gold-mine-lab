@@ -218,7 +218,6 @@ func metricsDTO(m map[string]float64) api.BacktestMetrics {
 		NetPnl:        m["net_pnl"],
 		ReturnPct:     m["return_pct"],
 		WinRate:       m["win_rate"],
-		ProfitFactor:  m["profit_factor"],
 		MaxDrawdown:   m["max_drawdown"],
 		TotalTrades:   int(m["total_trades"]),
 		WinningTrades: int(m["winning_trades"]),
@@ -229,6 +228,15 @@ func metricsDTO(m map[string]float64) api.BacktestMetrics {
 	}
 	if v, ok := m["total_commissions"]; ok {
 		out.TotalCommissions = &v
+	}
+	// profit_factor is only meaningful when gross_loss is known to be >0:
+	// stored rows can't distinguish "no losers" (undefined) from a real 0,
+	// so without a positive gross_loss row it stays null rather than guessed.
+	if gl, ok := m["gross_loss"]; ok && gl > 0 {
+		if v, ok2 := m["profit_factor"]; ok2 {
+			v := v
+			out.ProfitFactor = &v
+		}
 	}
 	// Risk metrics — absent rows stay null (undefined or legacy).
 	for _, f := range []struct {

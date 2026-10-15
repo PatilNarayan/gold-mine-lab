@@ -228,12 +228,11 @@ func (s *store) buildDetail(run api.BacktestRun) api.BacktestDetail {
 		}
 	}
 	closed := wins + losses
-	pf := 0.0
+	var pf *float64
 	if grossLoss > 0 {
-		pf = round(grossWin/grossLoss, 2)
-	} else if wins > 0 {
-		pf = 99
-	}
+		v := round(grossWin/grossLoss, 2)
+		pf = &v
+	} // no losers → PF undefined, not infinity
 	winRate := 0.0
 	avgTrade := 0.0
 	if closed > 0 {

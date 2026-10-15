@@ -8,7 +8,7 @@
 //	avgTradePnl   = netPnl / totalTrades
 //	grossProfit   = Σ NET pnl over winning trades      (after commissions)
 //	grossLoss     = |Σ NET pnl over losing trades|     (after commissions)
-//	profitFactor  = grossProfit / grossLoss            (0 when no losses)
+//	profitFactor  = grossProfit / grossLoss            (absent when no losses — undefined, never Inf)
 //	totalCommissions = Σ (entryCommission + exitCommission)
 //
 // "gross" in grossProfit/grossLoss is the conventional trade-report name for
@@ -57,7 +57,7 @@ type Summary struct {
 	// TotalCommissions is Σ(entryCommission + exitCommission) across all
 	// trades — the total cost drag paid inside this run.
 	TotalCommissions float64
-	ProfitFactor     float64
+	ProfitFactor     *float64
 	MaxDrawdown      float64
 	// Risk metrics. Pointers are null when the metric is undefined (no
 	// qualifying trades or a zero denominator); nil is persisted as an
@@ -136,10 +136,10 @@ func Compute(res backtest.Result, initialCapital float64) Summary {
 		s.PayoffRatio = &v
 	}
 	if s.GrossLoss > 0 {
-		s.ProfitFactor = s.GrossProfit / s.GrossLoss
-	} else if s.GrossProfit > 0 {
-		s.ProfitFactor = 0 // no losses — PF is undefined, not infinity
+		v := s.GrossProfit / s.GrossLoss // valid 0 when grossProfit is 0
+		s.ProfitFactor = &v
 	}
+	// grossLoss == 0 → PF is undefined, not infinity — absent row → API null
 
 	peak := res.Equity[0].Equity
 	var maxDDAmount float64
@@ -182,7 +182,6 @@ func (s Summary) Rows() []repository.MetricValue {
 		{Name: "gross_profit", Value: s.GrossProfit},
 		{Name: "gross_loss", Value: s.GrossLoss},
 		{Name: "total_commissions", Value: s.TotalCommissions},
-		{Name: "profit_factor", Value: s.ProfitFactor},
 		{Name: "max_drawdown", Value: s.MaxDrawdown},
 		{Name: "max_consecutive_losses", Value: float64(s.MaxConsecutiveLosses)},
 		{Name: "bars_in_market", Value: float64(s.BarsInMarket)},
@@ -192,6 +191,7 @@ func (s Summary) Rows() []repository.MetricValue {
 		name string
 		val  *float64
 	}{
+		{"profit_factor", s.ProfitFactor},
 		{"avg_win", s.AvgWin},
 		{"avg_loss", s.AvgLoss},
 		{"payoff_ratio", s.PayoffRatio},

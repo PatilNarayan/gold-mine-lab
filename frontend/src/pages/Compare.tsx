@@ -396,8 +396,8 @@ function ComparisonDetail({ id }: { id: string }) {
     },
     {
       key: 'pf', header: 'Profit factor', align: 'right',
-      cell: (r) => <span className="tnum">{r.metrics ? r.metrics.profitFactor.toFixed(2) : '—'}</span>,
-      sortValue: (r) => r.metrics?.profitFactor ?? 0,
+      cell: (r) => <span className="tnum">{r.metrics?.profitFactor != null ? r.metrics.profitFactor.toFixed(2) : '—'}</span>,
+      sortValue: (r) => r.metrics?.profitFactor ?? -1, // undefined sorts below a valid 0
     },
     {
       key: 'dd', header: 'Max DD', align: 'right',

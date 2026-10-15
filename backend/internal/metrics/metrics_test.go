@@ -47,7 +47,7 @@ func TestCompute(t *testing.T) {
 	if !eq(s.GrossProfit, 1000) || !eq(s.GrossLoss, 400) {
 		t.Errorf("gross %v/%v", s.GrossProfit, s.GrossLoss)
 	}
-	if !eq(s.ProfitFactor, 2.5) {
+	if s.ProfitFactor == nil || !eq(*s.ProfitFactor, 2.5) {
 		t.Errorf("profitFactor %v", s.ProfitFactor)
 	}
 	if !eq(s.MaxDrawdown, 500.0/10500.0) {
@@ -61,7 +61,7 @@ func TestComputeNoTradesNoLosses(t *testing.T) {
 		Equity: []backtest.EquityPoint{{Equity: 10000}, {Equity: 10100}},
 	}
 	s := Compute(res, 10000)
-	if s.TotalTrades != 0 || s.WinRate != 0 || s.ProfitFactor != 0 {
+	if s.TotalTrades != 0 || s.WinRate != 0 || s.ProfitFactor != nil {
 		t.Errorf("empty run must produce zeros, got %+v", s)
 	}
 	if !eq(s.NetPnl, 100) {
@@ -152,8 +152,16 @@ func TestComputeRiskMetrics(t *testing.T) {
 		Trades: []backtest.Trade{{Status: "closed", Result: "win", Pnl: p(500)}},
 		Equity: []backtest.EquityPoint{{Equity: 10000}, {Equity: 10500}},
 	}, 10000)
-	if win.PayoffRatio != nil || win.AvgLoss != nil || win.AvgWin == nil {
-		t.Errorf("winners-only payoff must be nil: %+v", win)
+	if win.PayoffRatio != nil || win.AvgLoss != nil || win.AvgWin == nil || win.ProfitFactor != nil {
+		t.Errorf("winners-only payoff/PF must be nil: %+v", win)
+	}
+	// Losers only → PF is a valid 0 (zero profit over positive loss), not null.
+	lose := Compute(backtest.Result{
+		Trades: []backtest.Trade{{Status: "closed", Result: "loss", Pnl: p(-100)}},
+		Equity: []backtest.EquityPoint{{Equity: 10000}, {Equity: 9900}},
+	}, 10000)
+	if lose.ProfitFactor == nil || !eq(*lose.ProfitFactor, 0) {
+		t.Errorf("losers-only PF must be 0, got %v", lose.ProfitFactor)
 	}
 	// A net-loss trade is still a loss even if gross was positive —
 	// classification lives on Pnl (net), so the streak counts it.

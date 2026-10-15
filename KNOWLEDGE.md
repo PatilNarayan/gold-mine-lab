@@ -228,6 +228,11 @@ maxDD = max((peak−equity)/peak) over the curve.
     counts). It is NOT wall-clock time.
   - `recovery_factor` = net_pnl / max_drawdown_amount (currency ratio; may be
     negative). Max drawdown amount = peak-to-trough $ from the equity curve.
+- **`profit_factor` follows the same undefined rule**: gross_loss > 0 →
+  ratio (a valid 0 when there is zero profit); gross_loss == 0 → absent row →
+  API null (never Inf, never fake 0/99). The API only surfaces a stored
+  `profit_factor` when a positive `gross_loss` row confirms the ratio was
+  defined — pre-gross-metric legacy rows can't prove that, so they show null.
 - **Undefined = absent row = API null.** EAV `backtest_metrics` means no
   migration was needed; legacy runs simply lack the rows and the API/UI show
   null/"—" for them (never 0, never Inf/NaN).

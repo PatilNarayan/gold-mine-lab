@@ -78,7 +78,7 @@ type BacktestMetrics struct {
 	NetPnl        float64 `json:"netPnl"`
 	ReturnPct     float64 `json:"returnPct"`
 	WinRate       float64 `json:"winRate"`
-	ProfitFactor  float64 `json:"profitFactor"`
+	ProfitFactor  *float64 `json:"profitFactor"`
 	MaxDrawdown   float64 `json:"maxDrawdown"`
 	TotalTrades   int     `json:"totalTrades"`
 	WinningTrades int     `json:"winningTrades"`

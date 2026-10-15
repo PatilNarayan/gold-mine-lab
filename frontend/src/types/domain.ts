@@ -136,7 +136,7 @@ export const backtestMetricsSchema = z.object({
   netPnl: z.number(),
   returnPct: z.number(),
   winRate: z.number(),
-  profitFactor: z.number(),
+  profitFactor: z.number().nullable(),
   maxDrawdown: z.number(),
   totalTrades: z.number(),
   winningTrades: z.number(),
