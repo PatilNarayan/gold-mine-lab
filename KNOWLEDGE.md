@@ -416,23 +416,36 @@ study. No strategies, accounting, or engine semantics change.
   descriptive only — never an independence claim. Reported per cell: event /
   control / baseline counts, event+baseline mean & median, diff in means and
   medians (pp), positive-% for both, worst event return.
-- **Moving-block bootstrap (`mbb-v1`)** — the aligned chronological
+- **Moving-block bootstrap (`mbb-v2`)** — the aligned chronological
   observation sequence (event flag + return + regime labels, one record per
-  eligible bar) is resampled in blocks of `horizon+1` bars. Per replicate,
-  diff = mean(event) − mean(control); replicates missing either group are
-  skipped. 95% percentile interval over 1000 replicates (configurable in
-  `internal/eventbench`, not user-facing). Prefix sums keep each replicate
-  O(n/blockLen). Seed = fixed base `0x5eed11` × FNV-1a of
-  (strategyID, horizon, regime cell) — identical requests reproduce
-  identical intervals.
+  eligible bar) is resampled in blocks of `horizon+1` bars. Each block's
+  start is uniform over the n−blockLen+1 valid complete-block positions;
+  blocks are appended until the replicate covers n observations and only
+  the final block is truncated, so every replicate is exactly n long.
+  (v1 sampled starts anywhere and truncated every overhang block, giving
+  variable-length replicates; saved `mbb-v1` records keep their original
+  metadata + results.) Per replicate, diff = mean(event) − mean(control);
+  replicates missing either group are skipped. 95% percentile interval
+  over 1000 replicates. Prefix sums keep each block contribution O(1).
+  Seed = fixed base `0x5eed11` × FNV-1a of (strategyID, horizon, regime
+  cell) — identical requests reproduce identical intervals.
 - **Minimum-sample rules** — a CI is only computed when ≥10 events AND
   ≥50 controls AND ≥80% replicates are valid; otherwise `insufficient_data`
   (descriptives still returned, never a fabricated interval). An interval
   spanning zero is `inconclusive`; excluding zero is `available` — an
   exploratory difference only, never "profitable".
+- **Estimands** — `diffMean`/`diffMedian` = event − ALL-bar baseline
+  (descriptive; events ⊂ baseline). `diffMeanControl`/`diffMedianControl` =
+  event − non-event controls; this is the point estimate the CI describes.
+  `controlMean`/`controlMedian` are exposed separately. Old records lack
+  the control fields — they are added, never redefined.
 - **Regime-conditioned benchmark** — with regimeAnalysis on, each regime
   cell compares regime events to same-regime non-event controls
-  (regime at each bar's own close). Both dimensions, no cross-product.
+  (regime at each bar's own close). The bootstrap resamples the FULL
+  chronological sequence and applies the regime filter INSIDE each
+  replicate, so blocks keep true market-time adjacency (filtering first
+  would fabricate adjacency across regime gaps). Both dimensions, no
+  cross-product.
 - **Multiple-search caution** — repeated exploration over candidates ×
   horizons × regimes inflates evidence; the UI states this. No ranking,
   winner selection, or formal correction is performed.

@@ -606,6 +606,8 @@ export const signalHorizonBenchmarkSchema = z.object({
   eventMean: z.number().nullish(), eventMedian: z.number().nullish(),
   baselineMean: z.number().nullish(), baselineMedian: z.number().nullish(),
   diffMean: z.number().nullish(), diffMedian: z.number().nullish(),
+  controlMean: z.number().nullish(), controlMedian: z.number().nullish(),
+  diffMeanControl: z.number().nullish(), diffMedianControl: z.number().nullish(),
   eventPositivePct: z.number().nullish(), baselinePositivePct: z.number().nullish(),
   worstEventReturn: z.number().nullish(),
   ciStatus: z.string(),

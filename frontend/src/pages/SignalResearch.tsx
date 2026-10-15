@@ -220,9 +220,10 @@ function ResearchDetail({ id }: { id: string }) {
                 <th className="pr-3">Candidate</th><th className="pr-3 tnum">Horizon</th>
                 <th className="pr-3 tnum">Events</th><th className="pr-3 tnum">Excluded</th>
                 <th className="pr-3 tnum">Event mean %</th><th className="pr-3 tnum">Median %</th>
-                <th className="pr-3 tnum">Baseline mean %</th><th className="pr-3 tnum">Diff (pp)</th>
+                <th className="pr-3 tnum">Baseline mean %</th><th className="pr-3 tnum">Ev−base (pp)</th>
+                <th className="pr-3 tnum">Ev−ctl (pp)</th>
                 <th className="pr-3 tnum">Positive %</th><th className="pr-3 tnum">Worst %</th>
-                <th className="pr-3">95% CI (event−control)</th>
+                <th className="pr-3">95% CI of ev−ctl</th>
               </tr></thead>
               <tbody>
                 {(r.forward ?? []).flatMap((f) =>
@@ -236,6 +237,7 @@ function ResearchDetail({ id }: { id: string }) {
                       <td className="pr-3 tnum">{h.medianReturn != null ? h.medianReturn.toFixed(2) : '—'}</td>
                       <td className="pr-3 tnum">{h.benchmark?.baselineMean != null ? h.benchmark.baselineMean.toFixed(2) : '—'}</td>
                       <td className="pr-3 tnum">{h.benchmark?.diffMean != null ? h.benchmark.diffMean.toFixed(2) : '—'}</td>
+                      <td className="pr-3 tnum">{h.benchmark?.diffMeanControl != null ? h.benchmark.diffMeanControl.toFixed(2) : '—'}</td>
                       <td className="pr-3 tnum">{h.positivePct != null ? `${h.positivePct.toFixed(0)}%` : '—'}</td>
                       <td className="pr-3 tnum">{h.worstReturn != null ? h.worstReturn.toFixed(2) : '—'}</td>
                       <td className="pr-3">{ciLabel(h.benchmark)}</td>
@@ -251,9 +253,10 @@ function ResearchDetail({ id }: { id: string }) {
             historical price movements only; nothing here predicts future performance.
             {r.benchmarkMeta && (
               <>
-                {' '}Intervals: 95% moving-block bootstrap (block = horizon+1 bars,{' '}
-                {r.benchmarkMeta.replicates} replicates, deterministic seed) of mean event minus
-                mean non-event return — an exploratory uncertainty estimate, not a significance
+                {' '}Ev−base is descriptive (events are inside the baseline). Ev−ctl (event minus
+                non-event controls) is the estimate the interval describes: 95% moving-block
+                bootstrap (block = horizon+1 bars, {r.benchmarkMeta.replicates} replicates,
+                deterministic seed) — an exploratory uncertainty estimate, not a significance
                 test. `insufficient_data` when {'<'}10 events or {'<'}50 controls; `inconclusive`
                 when the interval spans zero. Repeatedly searching candidates × horizons ×
                 regimes can overstate evidence.
@@ -323,8 +326,8 @@ function ResearchDetail({ id }: { id: string }) {
                   <thead><tr className="text-content-3 text-left">
                     <th className="pr-3">Candidate</th><th className="pr-3">Regime</th><th className="pr-3 tnum">Horizon</th>
                     <th className="pr-3 tnum">Eligible</th><th className="pr-3 tnum">Excluded</th>
-                    <th className="pr-3 tnum">Mean %</th><th className="pr-3 tnum">Diff (pp)</th>
-                    <th className="pr-3 tnum">Positive %</th><th className="pr-3">95% CI</th>
+                    <th className="pr-3 tnum">Mean %</th><th className="pr-3 tnum">Ev−ctl (pp)</th>
+                    <th className="pr-3 tnum">Positive %</th><th className="pr-3">95% CI of ev−ctl</th>
                   </tr></thead>
                   <tbody>
                     {(r.forward ?? []).flatMap((f) =>
@@ -337,7 +340,7 @@ function ResearchDetail({ id }: { id: string }) {
                             <td className="pr-3 tnum">{h.eligible}</td>
                             <td className="pr-3 tnum">{h.excluded}</td>
                             <td className="pr-3 tnum">{h.meanReturn != null ? h.meanReturn.toFixed(2) : '—'}</td>
-                            <td className="pr-3 tnum">{h.benchmark?.diffMean != null ? h.benchmark.diffMean.toFixed(2) : '—'}</td>
+                            <td className="pr-3 tnum">{h.benchmark?.diffMeanControl != null ? h.benchmark.diffMeanControl.toFixed(2) : '—'}</td>
                             <td className="pr-3 tnum">{h.positivePct != null ? `${h.positivePct.toFixed(0)}%` : '—'}</td>
                             <td className="pr-3">{ciLabel(h.benchmark)}</td>
                           </tr>

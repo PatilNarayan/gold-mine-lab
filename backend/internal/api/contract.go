@@ -641,15 +641,23 @@ type SignalHorizonResult struct {
 // (candidate, horizon) or (candidate, horizon, regime) cell.
 // ciStatus: "available" | "inconclusive" | "insufficient_data".
 type SignalHorizonBenchmark struct {
-	EventCount       int      `json:"eventCount"`
-	ControlCount     int      `json:"controlCount"`
-	BaselineCount    int      `json:"baselineCount"`
-	EventMean        *float64 `json:"eventMean,omitempty"`
-	EventMedian      *float64 `json:"eventMedian,omitempty"`
-	BaselineMean     *float64 `json:"baselineMean,omitempty"`
-	BaselineMedian   *float64 `json:"baselineMedian,omitempty"`
-	DiffMean         *float64 `json:"diffMean,omitempty"`
-	DiffMedian       *float64 `json:"diffMedian,omitempty"`
+	EventCount     int      `json:"eventCount"`
+	ControlCount   int      `json:"controlCount"`
+	BaselineCount  int      `json:"baselineCount"`
+	EventMean      *float64 `json:"eventMean,omitempty"`
+	EventMedian    *float64 `json:"eventMedian,omitempty"`
+	BaselineMean   *float64 `json:"baselineMean,omitempty"`
+	BaselineMedian *float64 `json:"baselineMedian,omitempty"`
+	// diffMean/diffMedian: event − ALL-bar baseline (descriptive only —
+	// events are a subset of the baseline).
+	DiffMean   *float64 `json:"diffMean,omitempty"`
+	DiffMedian *float64 `json:"diffMedian,omitempty"`
+	// Non-event control statistics and the event−control difference —
+	// the point estimate ciLow/ciHigh describe.
+	ControlMean      *float64 `json:"controlMean,omitempty"`
+	ControlMedian    *float64 `json:"controlMedian,omitempty"`
+	DiffMeanControl  *float64 `json:"diffMeanControl,omitempty"`
+	DiffMedianCtl    *float64 `json:"diffMedianControl,omitempty"`
 	EventPositivePct *float64 `json:"eventPositivePct,omitempty"`
 	BaselinePosPct   *float64 `json:"baselinePositivePct,omitempty"`
 	WorstEventReturn *float64 `json:"worstEventReturn,omitempty"`

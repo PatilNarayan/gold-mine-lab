@@ -678,7 +678,12 @@ func srRegimeForward(labels []string, episodes []int, windowStart int, candles [
 				wr := minF(rets)
 				hr.MeanReturn, hr.MedianReturn, hr.PositivePct, hr.WorstReturn = &mn, &md, &pos, &wr
 			}
-			hr.Benchmark = srBenchDTO(eventbench.Summarize(m[r].obs[hi], h+1, eventbench.Replicates, srBenchSeed(stratID, h, r+dim+fmt.Sprint(ri))))
+			// Cell descriptives come from the regime's own observations; the
+			// bootstrap resamples the FULL chronological sequence and counts
+			// only observations whose own label matches this regime — blocks
+			// keep true time adjacency (mbb-v2).
+			match := func(o eventbench.Observation) bool { return labelOf(o) == r }
+			hr.Benchmark = srBenchDTO(eventbench.SummarizeMatch(m[r].obs[hi], obsByH[hi], match, h+1, eventbench.Replicates, srBenchSeed(stratID, h, r+dim+fmt.Sprint(ri))))
 			srf.Horizons = append(srf.Horizons, hr)
 		}
 		out = append(out, srf)
@@ -708,7 +713,9 @@ func srBenchDTO(s eventbench.Summary) *api.SignalHorizonBenchmark {
 		EventCount: s.EventCount, ControlCount: s.ControlCount, BaselineCount: s.BaselineCount,
 		EventMean: s.EventMean, EventMedian: s.EventMedian,
 		BaselineMean: s.BaselineMean, BaselineMedian: s.BaselineMedian,
-		DiffMean: s.DiffMean, DiffMedian: s.DiffMedian,
+		DiffMean: s.DiffMeanBaseline, DiffMedian: s.DiffMedianBaseline,
+		ControlMean: s.ControlMean, ControlMedian: s.ControlMedian,
+		DiffMeanControl: s.DiffMeanControl, DiffMedianCtl: s.DiffMedianControl,
 		EventPositivePct: s.EventPositivePct, BaselinePosPct: s.BaselinePosPct,
 		WorstEventReturn: s.WorstEventReturn,
 		CIStatus:         s.CIStatus, CILow: s.CILow, CIHigh: s.CIHigh,
