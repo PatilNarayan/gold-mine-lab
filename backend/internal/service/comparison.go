@@ -21,8 +21,9 @@ import (
 
 // ExecuteComparison validates the legs, persists the comparison row, then
 // runs each strategy synchronously (in-sample, then out-of-sample if given).
-// Status: completed (all legs ok), partial_failed (some failed), failed (all
-// failed or a leg was rejected by validation).
+// Status: completed (every member run ok), partial_failed (some ok, some
+// failed), failed (all failed). An invalid leg rejects the request (400)
+// before anything is persisted.
 func (s *Service) ExecuteComparison(ctx context.Context, req api.ComparisonRequest) (api.Comparison, error) {
 	verr := func(msg string) (api.Comparison, error) {
 		return api.Comparison{}, &api.ValidationError{Msg: msg}
@@ -68,6 +69,22 @@ func (s *Service) ExecuteComparison(ctx context.Context, req api.ComparisonReque
 		}
 	}
 
+	// Validate every leg×window up front so an invalid leg rejects the whole
+	// request (400) instead of producing a comparison with an untracked hole.
+	// Failures after this point are runtime failures and are recorded as
+	// failed member runs attached to the comparison.
+	for _, leg := range req.Legs {
+		for _, window := range s.comparisonWindows(req) {
+			if _, _, err := s.validateRequest(ctx, legRequest(req, leg, window, nil)); err != nil {
+				var ve *api.ValidationError
+				if errors.As(err, &ve) {
+					return verr(fmt.Sprintf("%s (%s): %s", leg.StrategyID, window.Sample, ve.Msg))
+				}
+				return api.Comparison{}, err
+			}
+		}
+	}
+
 	row := repository.ComparisonRow{
 		AssetID: req.AssetID, Timeframe: string(req.Timeframe),
 		StartDate: req.StartDate, EndDate: req.EndDate,
@@ -82,6 +99,9 @@ func (s *Service) ExecuteComparison(ctx context.Context, req api.ComparisonReque
 	}
 	row.ID = cmpID
 	s.log.Info("comparison started", "comparison_id", cmpID, "strategies", len(strategyIDs))
+	if err := s.repos.Comparisons.SetComparisonStatus(ctx, cmpID, "running", nil); err != nil {
+		return api.Comparison{}, fmt.Errorf("start comparison: %w", err)
+	}
 
 	// --- sequential leg execution ---------------------------------------------
 	total, failed := 0, 0
@@ -89,15 +109,7 @@ func (s *Service) ExecuteComparison(ctx context.Context, req api.ComparisonReque
 	for _, leg := range req.Legs {
 		for _, window := range s.comparisonWindows(req) {
 			total++
-			br := api.BacktestRequest{
-				StrategyID: leg.StrategyID, AssetID: req.AssetID, Timeframe: req.Timeframe,
-				StartDate: window.StartDate, EndDate: window.EndDate,
-				InitialCapital: req.InitialCapital, PositionSize: req.PositionSize,
-				Commission: req.Commission, Slippage: req.Slippage,
-				Parameters:   leg.Parameters,
-				ComparisonID: &cmpID, Sample: &window.Sample,
-			}
-			if _, err := s.Execute(ctx, br); err != nil {
+			if _, err := s.Execute(ctx, legRequest(req, leg, window, &cmpID)); err != nil {
 				failed++
 				if firstErr == "" {
 					firstErr = fmt.Sprintf("%s/%s: %s", leg.StrategyID, window.Sample, err.Error())
@@ -127,6 +139,20 @@ func (s *Service) ExecuteComparison(ctx context.Context, req api.ComparisonReque
 }
 
 type sampleWindow struct{ Sample, StartDate, EndDate string }
+
+// legRequest builds one member run's request: only the strategy, its
+// parameters and the sample window vary; every other assumption is shared.
+func legRequest(req api.ComparisonRequest, leg api.ComparisonLeg, w sampleWindow, cmpID *string) api.BacktestRequest {
+	sample := w.Sample
+	return api.BacktestRequest{
+		StrategyID: leg.StrategyID, AssetID: req.AssetID, Timeframe: req.Timeframe,
+		StartDate: w.StartDate, EndDate: w.EndDate,
+		InitialCapital: req.InitialCapital, PositionSize: req.PositionSize,
+		Commission: req.Commission, Slippage: req.Slippage,
+		Parameters:   leg.Parameters,
+		ComparisonID: cmpID, Sample: &sample,
+	}
+}
 
 func (s *Service) comparisonWindows(req api.ComparisonRequest) []sampleWindow {
 	w := []sampleWindow{{Sample: "in_sample", StartDate: req.StartDate, EndDate: req.EndDate}}

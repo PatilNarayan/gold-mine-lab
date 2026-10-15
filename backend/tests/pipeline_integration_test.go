@@ -51,7 +51,7 @@ func pipelineService(t *testing.T) (*service.Service, func()) {
 	}
 	svc := service.New(service.Repositories{
 		Assets: store, Strategies: store, Signals: store,
-		Runs: store, Trades: store, Metrics: store,
+		Runs: store, Trades: store, Metrics: store, Comparisons: store,
 	}, market.NewCSVProvider(dataDir, nil), reg, slog.Default())
 	return svc, pool.Close
 }
@@ -164,5 +164,59 @@ func TestExecuteValidation(t *testing.T) {
 	}
 	if _, err := svc.Execute(ctx, bad); err == nil {
 		t.Fatal("end<start must fail")
+	}
+}
+
+// Comparison legs: an invalid leg rejects the whole request before anything
+// is stored; an OOS window with no candle data fails only those member runs,
+// which stay attached to the comparison → partial_failed.
+func TestComparisonStatuses(t *testing.T) {
+	svc, cleanup := pipelineService(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := svc.Bootstrap(ctx); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	oosS, oosE := "2099-01-01", "2099-06-30" // beyond any dataset
+	req := api.ComparisonRequest{
+		Legs:    []api.ComparisonLeg{{StrategyID: "ema-cross"}, {StrategyID: "rsi-mean-reversion"}},
+		AssetID: "xauusd", Timeframe: "1d", StartDate: "2020-01-01", EndDate: "2022-12-31",
+		OutOfSampleStartDate: &oosS, OutOfSampleEndDate: &oosE,
+		InitialCapital: 10000, PositionSize: 10, Commission: 0.02, Slippage: 0.01,
+	}
+	c, err := svc.ExecuteComparison(ctx, req)
+	if err != nil {
+		t.Fatalf("comparison: %v", err)
+	}
+	if c.Status != "partial_failed" || len(c.Results) != 4 {
+		t.Fatalf("status=%s results=%d, want partial_failed/4", c.Status, len(c.Results))
+	}
+	var fp *string
+	for _, r := range c.Results {
+		switch r.Sample {
+		case "in_sample":
+			if r.Run.Status != "completed" || r.Metrics == nil {
+				t.Errorf("IS leg %s: status=%s", r.Run.StrategyID, r.Run.Status)
+			}
+			if fp != nil && r.Run.Dataset != nil && *fp != *r.Run.Dataset {
+				t.Errorf("fingerprint differs across legs")
+			}
+			fp = r.Run.Dataset
+		case "out_of_sample":
+			if r.Run.Status != "failed" || r.Run.Error == nil {
+				t.Errorf("OOS leg %s: status=%s, want failed with error", r.Run.StrategyID, r.Run.Status)
+			}
+		}
+	}
+
+	bad := req
+	bad.Legs = []api.ComparisonLeg{{StrategyID: "ema-cross"}, {StrategyID: "rsi-mean-reversion", Parameters: map[string]any{"rsi_period": -5.0}}}
+	before, _ := svc.ListComparisons(ctx)
+	if _, err := svc.ExecuteComparison(ctx, bad); err == nil {
+		t.Fatal("invalid leg parameters must be rejected")
+	}
+	after, _ := svc.ListComparisons(ctx)
+	if len(after) != len(before) {
+		t.Fatal("rejected comparison must not be persisted")
 	}
 }

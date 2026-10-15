@@ -6,9 +6,16 @@
 //	returnPct     = netPnl / initialCapital
 //	winRate       = winningTrades / totalTrades        (closed trades only)
 //	avgTradePnl   = netPnl / totalTrades
-//	grossProfit   = Σ pnl over winning trades
-//	grossLoss     = |Σ pnl over losing trades|
+//	grossProfit   = Σ NET pnl over winning trades      (after commissions)
+//	grossLoss     = |Σ NET pnl over losing trades|     (after commissions)
 //	profitFactor  = grossProfit / grossLoss            (0 when no losses)
+//	totalCommissions = Σ (entryCommission + exitCommission)
+//
+// "gross" in grossProfit/grossLoss is the conventional trade-report name for
+// the winners'/losers' totals; both are NET of commissions (a trade's
+// per-trade GrossPnl, before commissions, is a different quantity). Names
+// are kept for compatibility with stored backtest_metrics rows.
+//
 //	maxDrawdown   = max over equity curve of (peak - equity) / peak
 //
 // Sharpe ratio is intentionally not produced: the engine's equity series is

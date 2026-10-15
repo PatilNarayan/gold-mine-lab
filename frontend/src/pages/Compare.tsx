@@ -23,6 +23,11 @@ import { SkeletonRows } from '@/components/common/Skeleton';
 import { DataTable, type Column } from '@/components/tables/DataTable';
 import { ComparisonChart } from '@/components/charts/ComparisonChart';
 
+// Mirrors the API limit (ExecuteComparison): at most 4 strategies per
+// comparison; with an OOS window each strategy adds an in-sample and an
+// out-of-sample run.
+const MAX_COMPARISON_STRATEGIES = 4;
+
 /**
  * Research compare page: run 2+ strategies under IDENTICAL assumptions
  * (window, capital, sizing, costs, dataset) and inspect the results side by
@@ -83,6 +88,8 @@ function ComparisonWorkspace() {
 
   const validate = (): string | null => {
     if (selected.length < 2) return 'Select at least two strategies to compare.';
+    if (selected.length > MAX_COMPARISON_STRATEGIES)
+      return `A comparison supports at most ${MAX_COMPARISON_STRATEGIES} strategies.`;
     if (!commonTfs.includes(timeframe))
       return `Timeframe ${timeframe} is not supported by every selected strategy (${commonTfs.join(', ') || 'none'}).`;
     if (!(endDate >= startDate)) return 'End date must be on or after the start date.';
@@ -151,6 +158,7 @@ function ComparisonWorkspace() {
                     className="h-3.5 w-3.5 accent-[#c9a227]"
                     checked={on}
                     onChange={() => toggle(s.id)}
+                    disabled={!selected.includes(s.id) && selected.length >= MAX_COMPARISON_STRATEGIES}
                   />
                   {s.name}
                 </label>
@@ -402,7 +410,7 @@ function ComparisonDetail({ id }: { id: string }) {
       sortValue: (r) => r.metrics?.avgTradePnl ?? 0,
     },
     {
-      key: 'gp', header: 'Gross +/−', align: 'right',
+      key: 'gp', header: 'Winners / losers (net)', align: 'right',
       cell: (r) =>
         r.metrics ? (
           <span className="tnum">{formatCurrency(r.metrics.grossProfit)} / {formatCurrency(r.metrics.grossLoss)}</span>
@@ -466,7 +474,7 @@ function ComparisonDetail({ id }: { id: string }) {
         <p className="mt-2 text-2xs text-content-3">
           Net P&amp;L and returns are after commission and adverse slippage on
           each leg&apos;s own account — legs are independent experiments, not
-          one portfolio. Profit factor = gross profit ÷ gross loss (0 when no
+          one portfolio. Profit factor = winners' net P&amp;L ÷ losers' net P&amp;L (0 when no
           losing trades). Past performance does not predict future results.
         </p>
       </section>

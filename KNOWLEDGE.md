@@ -124,6 +124,14 @@ Never Handler→SQL, never Strategy→I/O.
   leg's trades/metrics belong only to its own window (warm-up may precede
   it). Results carry per-run fingerprint + engine/strategy versions; no
   combined portfolio curve; <30-trade legs trigger a small-sample warning.
+  Every leg×window is validated before anything is stored (an invalid leg →
+  400, nothing persisted). Status: `completed` = every member run completed;
+  `partial_failed` = some completed, some failed (failed runs stay attached
+  with their error); `failed` = all failed. Max 4 strategies (8 runs with
+  OOS). Warm-up bars before a window feed indicators only: signals before
+  `WindowStart` are dropped and the OOS run starts flat in its own engine
+  run. `gross_profit`/`gross_loss` are Σ NET P&L of winners/losers (after
+  commissions); `total_commissions` is null on runs that predate it.
 - **rsi-mean-reversion v1.0.0.** BUY = RSI crosses UP through oversold;
   SELL = RSI crosses DOWN through overbought (exit only, long-only). A cross
   fires once — staying beyond a threshold does not re-signal. Params:

@@ -288,3 +288,35 @@ func TestEngineValidation(t *testing.T) {
 		t.Fatal("non-ascending candles must fail")
 	}
 }
+
+// Warm-up bars feed indicators but never trade: a BUY emitted before
+// WindowStart is dropped, and a BUY on the final window bar cannot fill
+// because there is no later bar inside the window.
+func TestEngineWarmupAndWindowEdges(t *testing.T) {
+	in := baseInput()
+	in.WindowStart = 4
+	in.Strategy = &scripted{sigs: map[int]strategy.Action{
+		3: strategy.ActionBuy, // last warm-up bar → must be ignored
+		9: strategy.ActionBuy, // last bar → no next-open inside the window
+	}}
+	res, err := NewEngine().Run(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 0 {
+		t.Fatalf("got %d trades, want 0 (warm-up/last-bar signals must not fill)", len(res.Trades))
+	}
+	if len(res.Equity) != 6 || !res.Equity[0].Time.Equal(in.Candles[4].Time) {
+		t.Fatalf("equity must cover window bars only: len=%d first=%v", len(res.Equity), res.Equity[0].Time)
+	}
+
+	// A BUY on the first window bar fills at the next bar's open, in-window.
+	in.Strategy = &scripted{sigs: map[int]strategy.Action{4: strategy.ActionBuy}}
+	res, err = NewEngine().Run(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 || !res.Trades[0].EntryTime.Equal(in.Candles[5].Time) {
+		t.Fatalf("want 1 trade entering at bar 5, got %+v", res.Trades)
+	}
+}
