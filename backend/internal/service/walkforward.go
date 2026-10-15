@@ -207,6 +207,12 @@ func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardReq
 		return api.WalkForward{}, fmt.Errorf("create experiment: %w", err)
 	}
 	if err := s.repos.WalkForwards.SetExperimentStatus(ctx, expID, "running", nil); err != nil {
+		// Don't leave the row permanently "pending" without a trace: try to
+		// record the failure while the DB may still be reachable.
+		msg := fmt.Sprintf("failed to start: %v", err)
+		if ferr := s.repos.WalkForwards.SetExperimentStatus(ctx, expID, "failed", &msg); ferr != nil {
+			s.log.Error("walk-forward start transition also failed", "experiment_id", expID, "error", ferr.Error())
+		}
 		return api.WalkForward{}, fmt.Errorf("start experiment: %w", err)
 	}
 	s.log.Info("walk-forward started", "experiment_id", expID, "folds", len(folds), "strategies", len(req.Legs))
@@ -223,6 +229,10 @@ func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardReq
 				OosStart: oosS.Format("2006-01-02"), OosEnd: oosE.Format("2006-01-02"),
 			})
 			if err != nil {
+				// A persisted experiment must not stay "running" forever with
+				// pending folds: mark it and any already-created folds failed.
+				msg := fmt.Sprintf("create fold %d %s: %v", f.Index, leg.StrategyID, err)
+				s.failWalkForwardSetup(ctx, expID, foldIDs, msg)
 				return api.WalkForward{}, fmt.Errorf("create fold %d %s: %w", f.Index, leg.StrategyID, err)
 			}
 			foldIDs[fmt.Sprintf("%d|%s", f.Index, leg.StrategyID)] = fid
@@ -312,6 +322,24 @@ func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardReq
 	return s.GetWalkForward(ctx, expID)
 }
 
+// failWalkForwardSetup best-effort marks an experiment failed when setup
+// broke after the experiment row was persisted, and marks every fold row
+// already created as failed so none stays "pending" forever. Persistence
+// failures here are logged, not propagated — the caller already has the
+// original, more meaningful error.
+func (s *Service) failWalkForwardSetup(ctx context.Context, expID string, foldIDs map[string]string, msg string) {
+	for key, fid := range foldIDs {
+		errCopy := "interrupted: " + msg
+		if err := s.repos.WalkForwards.SetFoldResult(ctx, fid, "failed", nil, nil, &errCopy); err != nil {
+			s.log.Error("walk-forward fold interruption not recorded", "experiment_id", expID,
+				"fold_key", key, "error", err.Error())
+		}
+	}
+	if err := s.repos.WalkForwards.SetExperimentStatus(ctx, expID, "failed", &msg); err != nil {
+		s.log.Error("walk-forward failure transition not persisted", "experiment_id", expID, "error", err.Error())
+	}
+}
+
 // ListWalkForwards returns saved experiments newest-first.
 func (s *Service) ListWalkForwards(ctx context.Context) ([]api.WalkForward, error) {
 	rows, err := s.repos.WalkForwards.ListExperiments(ctx)
@@ -348,15 +376,23 @@ func (s *Service) GetWalkForward(ctx context.Context, id string) (api.WalkForwar
 			IsStart: fr.IsStart, IsEnd: fr.IsEnd, OosStart: fr.OosStart, OosEnd: fr.OosEnd,
 			Status: fr.Status, Error: fr.Error,
 		}
+		// A fold-referenced run must be retrievable — a missing or unreadable
+		// member run is a data-integrity problem, not an optional result.
 		if fr.IsRunID != nil {
-			if res, err := s.comparisonResult(ctx, *fr.IsRunID); err == nil {
-				f.IsResult = &res
+			res, err := s.comparisonResult(ctx, *fr.IsRunID)
+			if err != nil {
+				return api.WalkForward{}, fmt.Errorf("fold %d %s in-sample run %s: %w",
+					fr.FoldIndex, fr.StrategyID, *fr.IsRunID, err)
 			}
+			f.IsResult = &res
 		}
 		if fr.OosRunID != nil {
-			if res, err := s.comparisonResult(ctx, *fr.OosRunID); err == nil {
-				f.OosResult = &res
+			res, err := s.comparisonResult(ctx, *fr.OosRunID)
+			if err != nil {
+				return api.WalkForward{}, fmt.Errorf("fold %d %s out-of-sample run %s: %w",
+					fr.FoldIndex, fr.StrategyID, *fr.OosRunID, err)
 			}
+			f.OosResult = &res
 		}
 		folds = append(folds, f)
 
@@ -413,10 +449,15 @@ func (s *Service) comparisonResult(ctx context.Context, runID string) (api.Compa
 		res.Sample = *r.Sample
 	}
 	if r.Status == "completed" {
-		if m, err := s.repos.Metrics.GetMetrics(ctx, r.ID); err == nil {
-			mm := metricsDTO(m)
-			res.Metrics = &mm
+		// Every completed run writes a metrics row; a completed run without
+		// one means the run/metrics write was interrupted — report it rather
+		// than returning a "successful" result with silently absent metrics.
+		m, err := s.repos.Metrics.GetMetrics(ctx, r.ID)
+		if err != nil {
+			return api.ComparisonResult{}, fmt.Errorf("completed run missing metrics: %w", err)
 		}
+		mm := metricsDTO(m)
+		res.Metrics = &mm
 		for _, p := range r.EquityCurve {
 			res.Equity = append(res.Equity, api.EquityPoint{
 				Time: p.Time.UTC().Format("2006-01-02T15:04:05Z"), Equity: p.Equity, Drawdown: p.Drawdown,
