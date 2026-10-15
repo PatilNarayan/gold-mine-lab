@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gold-mine-lab/backend/internal/api"
+	"github.com/gold-mine-lab/backend/internal/eventbench"
 	"github.com/gold-mine-lab/backend/internal/market"
 	"github.com/gold-mine-lab/backend/internal/regime"
 	"github.com/gold-mine-lab/backend/internal/repository"
@@ -291,8 +292,36 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 	var forward []api.SignalForwardResult
 	if req.EventStudy {
 		for i := range streams {
+			// Aligned per-bar observation records (event flag + return +
+			// regime labels) — built once per (candidate,horizon) and shared
+			// by the descriptive study, the matched baseline, and the
+			// block-bootstrap interval.
+			eventSet := map[int]bool{}
+			for _, ev := range buyEpisodes[i] {
+				eventSet[ev] = true
+			}
+			obsByH := make([][]eventbench.Observation, len(srHorizons))
+			for wi := 0; wi < evalBars; wi++ {
+				gi := windowStart + wi
+				for hi, h := range srHorizons {
+					entryIdx, exitIdx := gi+1, gi+h
+					if exitIdx >= len(candles) || entryIdx >= len(candles) {
+						continue
+					}
+					entry, exit := candles[entryIdx].Open, candles[exitIdx].Close
+					if entry <= 0 || math.IsNaN(entry) || math.IsNaN(exit) {
+						continue
+					}
+					o := eventbench.Observation{Event: eventSet[wi], Ret: (exit - entry) / entry * 100}
+					if req.RegimeAnalysis {
+						o.Trend, o.Vol = trendLbls[wi], volLbls[wi]
+					}
+					obsByH[hi] = append(obsByH[hi], o)
+				}
+			}
+
 			fr := api.SignalForwardResult{StrategyID: defs[i].ID}
-			for _, h := range srHorizons {
+			for hi, h := range srHorizons {
 				hr := api.SignalHorizonResult{Horizon: h, StrategyID: defs[i].ID}
 				var rets []float64
 				for _, ev := range buyEpisodes[i] {
@@ -317,11 +346,12 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 					wr := minF(rets)
 					hr.MeanReturn, hr.MedianReturn, hr.PositivePct, hr.WorstReturn = &mn, &md, &pos, &wr
 				}
+				hr.Benchmark = srBenchDTO(eventbench.Summarize(obsByH[hi], h+1, eventbench.Replicates, srBenchSeed(defs[i].ID, h, "")))
 				fr.Horizons = append(fr.Horizons, hr)
 			}
 			if req.RegimeAnalysis {
-				fr.ByTrend = srRegimeForward(trendLbls, buyEpisodes[i], windowStart, candles, trendOrder)
-				fr.ByVolatility = srRegimeForward(volLbls, buyEpisodes[i], windowStart, candles, volOrder)
+				fr.ByTrend = srRegimeForward(trendLbls, buyEpisodes[i], windowStart, candles, obsByH, "trend", trendOrder, defs[i].ID)
+				fr.ByVolatility = srRegimeForward(volLbls, buyEpisodes[i], windowStart, candles, obsByH, "vol", volOrder, defs[i].ID)
 			}
 			forward = append(forward, fr)
 		}
@@ -339,6 +369,19 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 		out.StrategyIDs = append(out.StrategyIDs, l.StrategyID)
 	}
 	out.Dataset = &fp
+	if req.EventStudy {
+		out.BenchmarkMeta = &api.SignalBenchmarkMeta{
+			EventStudyVersion: eventbench.StudyVersion,
+			BaselineVersion:   eventbench.BaselineVersion,
+			BootstrapVersion:  eventbench.BootstrapVersion,
+			BlockLengthRule:   "horizon+1",
+			Replicates:        eventbench.Replicates,
+			Seed:              srSeedBase,
+			MinEvents:         eventbench.MinEvents,
+			MinControls:       eventbench.MinControls,
+			MinReplicateRate:  eventbench.MinValidRate,
+		}
+	}
 	if req.RegimeAnalysis {
 		rv := regime.DefinitionVersion
 		out.RegimeVersion = &rv
@@ -580,15 +623,24 @@ func srRegimeAgreement(labels []string, actA, actB []strategy.Action, order []st
 
 // srRegimeForward groups the BUY-episode forward study by the regime at each
 // episode's signal candle (the regime never changes after the fact, even
-// though outcomes read later candles).
-func srRegimeForward(labels []string, episodes []int, windowStart int, candles []market.Candle, order []string) []api.SignalRegimeForward {
+// though outcomes read later candles). The benchmark compares regime events
+// against eligible non-event candles of the SAME regime.
+func srRegimeForward(labels []string, episodes []int, windowStart int, candles []market.Candle,
+	obsByH [][]eventbench.Observation, dim string, order []string, stratID string) []api.SignalRegimeForward {
+	labelOf := func(o eventbench.Observation) string {
+		if dim == "trend" {
+			return o.Trend
+		}
+		return o.Vol
+	}
 	type bucket struct {
 		rets map[int][]float64
 		excl map[int]int
+		obs  [][]eventbench.Observation // per horizon, filtered to this regime
 	}
 	m := map[string]*bucket{}
 	for _, r := range order {
-		m[r] = &bucket{rets: map[int][]float64{}, excl: map[int]int{}}
+		m[r] = &bucket{rets: map[int][]float64{}, excl: map[int]int{}, obs: make([][]eventbench.Observation, len(srHorizons))}
 	}
 	for _, ev := range episodes {
 		b := m[labels[ev]]
@@ -607,10 +659,16 @@ func srRegimeForward(labels []string, episodes []int, windowStart int, candles [
 			b.rets[h] = append(b.rets[h], (exit-entry)/entry*100)
 		}
 	}
+	for hi := range obsByH {
+		for _, o := range obsByH[hi] {
+			b := m[labelOf(o)]
+			b.obs[hi] = append(b.obs[hi], o)
+		}
+	}
 	out := make([]api.SignalRegimeForward, 0, len(order))
-	for _, r := range order {
+	for ri, r := range order {
 		srf := api.SignalRegimeForward{Regime: r}
-		for _, h := range srHorizons {
+		for hi, h := range srHorizons {
 			rets := m[r].rets[h]
 			hr := api.SignalHorizonResult{Horizon: h, Eligible: len(rets), Excluded: m[r].excl[h]}
 			if len(rets) > 0 {
@@ -620,9 +678,40 @@ func srRegimeForward(labels []string, episodes []int, windowStart int, candles [
 				wr := minF(rets)
 				hr.MeanReturn, hr.MedianReturn, hr.PositivePct, hr.WorstReturn = &mn, &md, &pos, &wr
 			}
+			hr.Benchmark = srBenchDTO(eventbench.Summarize(m[r].obs[hi], h+1, eventbench.Replicates, srBenchSeed(stratID, h, r+dim+fmt.Sprint(ri))))
 			srf.Horizons = append(srf.Horizons, hr)
 		}
 		out = append(out, srf)
 	}
 	return out
+}
+
+// Benchmark seeds: deterministic per (strategy, horizon, regime) — a fixed
+// base plus an FNV-1a mix of the cell identity, so the same request always
+// yields identical intervals.
+const srSeedBase = 0x5eed11
+
+func srBenchSeed(stratID string, horizon int, cell string) uint64 {
+	h := uint64(srSeedBase)
+	mix := func(b byte) { h ^= uint64(b); h *= 1099511628211 }
+	for i := 0; i < len(stratID); i++ {
+		mix(stratID[i])
+	}
+	for i := 0; i < len(cell); i++ {
+		mix(cell[i])
+	}
+	return h ^ uint64(horizon)*0x9e3779b97f4a7c15
+}
+
+func srBenchDTO(s eventbench.Summary) *api.SignalHorizonBenchmark {
+	return &api.SignalHorizonBenchmark{
+		EventCount: s.EventCount, ControlCount: s.ControlCount, BaselineCount: s.BaselineCount,
+		EventMean: s.EventMean, EventMedian: s.EventMedian,
+		BaselineMean: s.BaselineMean, BaselineMedian: s.BaselineMedian,
+		DiffMean: s.DiffMean, DiffMedian: s.DiffMedian,
+		EventPositivePct: s.EventPositivePct, BaselinePosPct: s.BaselinePosPct,
+		WorstEventReturn: s.WorstEventReturn,
+		CIStatus:         s.CIStatus, CILow: s.CILow, CIHigh: s.CIHigh,
+		ValidReplicates: s.ValidReplicates, BlockLength: s.BlockLength,
+	}
 }

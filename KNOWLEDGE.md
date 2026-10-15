@@ -403,3 +403,40 @@ Cross-strategy signal research (`service/signalresearch.go`, `api/routes.go` reg
 - **Per-regime outputs**: `candidates[].byTrend/byVolatility` (same stats incl. episodes over each bucket's chronological subsequence), `pairs[].byTrend/byVolatility` (same agreement definitions; pct null when no co-actionable bars), `forward[].byTrend/byVolatility` (regime at the EPISODE'S signal bar; same entry/exit/exclusion rules). No trend×volatility matrix — two independent dimensions.
 - Frontend: builder checkbox "Enable Market Regime Analysis"; detail adds Strategy-by-regime, Agreement-by-regime, Forward-outcomes-by-regime tables + regime definitions version in provenance.
 - Hardening also in this commit: `strategyIds` now marshals `[]` not `null` for result-less rows (old failed rows previously broke the list schema).
+
+## Statistical validation in signal research (Phase 11)
+
+Adds a matched-baseline + block-bootstrap layer to the Signal Research forward
+study. No strategies, accounting, or engine semantics change.
+
+- **Baseline (`baseline-v1`)** — for each (candidate, horizon), the SAME gross
+  forward return formula (next-open entry, close-h exit) is computed on EVERY
+  eligible evaluation bar. "Baseline" = all eligible bars (events ∪ controls);
+  events are a subset of the baseline, so event-vs-baseline differences are
+  descriptive only — never an independence claim. Reported per cell: event /
+  control / baseline counts, event+baseline mean & median, diff in means and
+  medians (pp), positive-% for both, worst event return.
+- **Moving-block bootstrap (`mbb-v1`)** — the aligned chronological
+  observation sequence (event flag + return + regime labels, one record per
+  eligible bar) is resampled in blocks of `horizon+1` bars. Per replicate,
+  diff = mean(event) − mean(control); replicates missing either group are
+  skipped. 95% percentile interval over 1000 replicates (configurable in
+  `internal/eventbench`, not user-facing). Prefix sums keep each replicate
+  O(n/blockLen). Seed = fixed base `0x5eed11` × FNV-1a of
+  (strategyID, horizon, regime cell) — identical requests reproduce
+  identical intervals.
+- **Minimum-sample rules** — a CI is only computed when ≥10 events AND
+  ≥50 controls AND ≥80% replicates are valid; otherwise `insufficient_data`
+  (descriptives still returned, never a fabricated interval). An interval
+  spanning zero is `inconclusive`; excluding zero is `available` — an
+  exploratory difference only, never "profitable".
+- **Regime-conditioned benchmark** — with regimeAnalysis on, each regime
+  cell compares regime events to same-regime non-event controls
+  (regime at each bar's own close). Both dimensions, no cross-product.
+- **Multiple-search caution** — repeated exploration over candidates ×
+  horizons × regimes inflates evidence; the UI states this. No ranking,
+  winner selection, or formal correction is performed.
+- **Provenance** — `benchmarkMeta` on the response records
+  eventStudyVersion / baselineVersion / bootstrapVersion / blockLengthRule /
+  replicates / seed / minimums. Stored inside the existing `signal_research`
+  JSONB; pre-P11 records simply lack the field.

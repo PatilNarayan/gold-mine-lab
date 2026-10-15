@@ -4,7 +4,7 @@ import { DemoBanner } from '@/components/common/DemoBanner';
 import { SkeletonRows } from '@/components/common/Skeleton';
 import { useSignalResearchList, useSignalResearch, useRunSignalResearch } from '@/hooks/useSignalResearch';
 import { useStrategies } from '@/hooks/useStrategies';
-import type { SignalRegimeStats, SignalResearch as SR, Timeframe } from '@/types/domain';
+import type { SignalHorizonBenchmark, SignalRegimeStats, SignalResearch as SR, Timeframe } from '@/types/domain';
 import { formatDateTime } from '@/lib/formatters';
 
 const MAX_LEGS = 8;
@@ -210,16 +210,19 @@ function ResearchDetail({ id }: { id: string }) {
       {r.eventStudy && (r.forward ?? []).length > 0 && (
         <section className="card space-y-2" aria-label="Forward price study">
           <h3 className="section-label">
-            FORWARD PRICE STUDY — gross price move after each BUY episode's first signal
-            (next-open entry, h-bar-later close). NOT P&L: no costs, sizing, or management.
+            FORWARD PRICE STUDY + BASELINE — gross price move after each BUY episode's first
+            signal (next-open entry, h-bar-later close) vs the same return on EVERY eligible
+            bar. NOT P&L: no costs, sizing, or management.
           </h3>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead><tr className="text-content-3 text-left">
                 <th className="pr-3">Candidate</th><th className="pr-3 tnum">Horizon</th>
-                <th className="pr-3 tnum">Eligible</th><th className="pr-3 tnum">Excluded</th>
-                <th className="pr-3 tnum">Mean %</th><th className="pr-3 tnum">Median %</th>
+                <th className="pr-3 tnum">Events</th><th className="pr-3 tnum">Excluded</th>
+                <th className="pr-3 tnum">Event mean %</th><th className="pr-3 tnum">Median %</th>
+                <th className="pr-3 tnum">Baseline mean %</th><th className="pr-3 tnum">Diff (pp)</th>
                 <th className="pr-3 tnum">Positive %</th><th className="pr-3 tnum">Worst %</th>
+                <th className="pr-3">95% CI (event−control)</th>
               </tr></thead>
               <tbody>
                 {(r.forward ?? []).flatMap((f) =>
@@ -231,8 +234,11 @@ function ResearchDetail({ id }: { id: string }) {
                       <td className="pr-3 tnum">{h.excluded}</td>
                       <td className="pr-3 tnum">{h.meanReturn != null ? h.meanReturn.toFixed(2) : '—'}</td>
                       <td className="pr-3 tnum">{h.medianReturn != null ? h.medianReturn.toFixed(2) : '—'}</td>
+                      <td className="pr-3 tnum">{h.benchmark?.baselineMean != null ? h.benchmark.baselineMean.toFixed(2) : '—'}</td>
+                      <td className="pr-3 tnum">{h.benchmark?.diffMean != null ? h.benchmark.diffMean.toFixed(2) : '—'}</td>
                       <td className="pr-3 tnum">{h.positivePct != null ? `${h.positivePct.toFixed(0)}%` : '—'}</td>
                       <td className="pr-3 tnum">{h.worstReturn != null ? h.worstReturn.toFixed(2) : '—'}</td>
+                      <td className="pr-3">{ciLabel(h.benchmark)}</td>
                     </tr>
                   )),
                 )}
@@ -243,6 +249,16 @@ function ResearchDetail({ id }: { id: string }) {
             Overlapping forward horizons share candles and are NOT independent samples. SELL signals
             are long-exit signals, not short entries — no forward SELL study is computed. Gross
             historical price movements only; nothing here predicts future performance.
+            {r.benchmarkMeta && (
+              <>
+                {' '}Intervals: 95% moving-block bootstrap (block = horizon+1 bars,{' '}
+                {r.benchmarkMeta.replicates} replicates, deterministic seed) of mean event minus
+                mean non-event return — an exploratory uncertainty estimate, not a significance
+                test. `insufficient_data` when {'<'}10 events or {'<'}50 controls; `inconclusive`
+                when the interval spans zero. Repeatedly searching candidates × horizons ×
+                regimes can overstate evidence.
+              </>
+            )}
           </p>
         </section>
       )}
@@ -307,7 +323,8 @@ function ResearchDetail({ id }: { id: string }) {
                   <thead><tr className="text-content-3 text-left">
                     <th className="pr-3">Candidate</th><th className="pr-3">Regime</th><th className="pr-3 tnum">Horizon</th>
                     <th className="pr-3 tnum">Eligible</th><th className="pr-3 tnum">Excluded</th>
-                    <th className="pr-3 tnum">Mean %</th><th className="pr-3 tnum">Positive %</th>
+                    <th className="pr-3 tnum">Mean %</th><th className="pr-3 tnum">Diff (pp)</th>
+                    <th className="pr-3 tnum">Positive %</th><th className="pr-3">95% CI</th>
                   </tr></thead>
                   <tbody>
                     {(r.forward ?? []).flatMap((f) =>
@@ -320,7 +337,9 @@ function ResearchDetail({ id }: { id: string }) {
                             <td className="pr-3 tnum">{h.eligible}</td>
                             <td className="pr-3 tnum">{h.excluded}</td>
                             <td className="pr-3 tnum">{h.meanReturn != null ? h.meanReturn.toFixed(2) : '—'}</td>
+                            <td className="pr-3 tnum">{h.benchmark?.diffMean != null ? h.benchmark.diffMean.toFixed(2) : '—'}</td>
                             <td className="pr-3 tnum">{h.positivePct != null ? `${h.positivePct.toFixed(0)}%` : '—'}</td>
+                            <td className="pr-3">{ciLabel(h.benchmark)}</td>
                           </tr>
                         )),
                       ),
@@ -360,4 +379,13 @@ function RegimeStatRow({ dim, b }: { dim: string; b: SignalRegimeStats }) {
       <td className="pr-3 tnum">{b.sellEpisodes}</td>
     </tr>
   );
+}
+
+function ciLabel(b: SignalHorizonBenchmark | null | undefined) {
+  if (!b) return '—';
+  if (b.ciStatus === 'insufficient_data') return <span className="text-content-3">insufficient_data ({b.eventCount}/{b.controlCount} ev/ctl)</span>;
+  if (b.ciLow == null || b.ciHigh == null) return <span className="text-content-3">unavailable</span>;
+  const txt = `[${b.ciLow.toFixed(2)}, ${b.ciHigh.toFixed(2)}]`;
+  if (b.ciStatus === 'inconclusive') return <span className="text-yellow-400">{txt} inconclusive</span>;
+  return <span className="text-buy">{txt}</span>;
 }

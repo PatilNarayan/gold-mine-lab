@@ -632,6 +632,46 @@ type SignalHorizonResult struct {
 	MedianReturn *float64 `json:"medianReturn,omitempty"`
 	PositivePct  *float64 `json:"positivePct,omitempty"`
 	WorstReturn  *float64 `json:"worstReturn,omitempty"`
+	// Benchmark compares this horizon's event returns against the matched
+	// historical baseline + a block-bootstrap interval (Phase 11).
+	Benchmark *SignalHorizonBenchmark `json:"benchmark,omitempty"`
+}
+
+// SignalHorizonBenchmark is the matched-baseline comparison for one
+// (candidate, horizon) or (candidate, horizon, regime) cell.
+// ciStatus: "available" | "inconclusive" | "insufficient_data".
+type SignalHorizonBenchmark struct {
+	EventCount       int      `json:"eventCount"`
+	ControlCount     int      `json:"controlCount"`
+	BaselineCount    int      `json:"baselineCount"`
+	EventMean        *float64 `json:"eventMean,omitempty"`
+	EventMedian      *float64 `json:"eventMedian,omitempty"`
+	BaselineMean     *float64 `json:"baselineMean,omitempty"`
+	BaselineMedian   *float64 `json:"baselineMedian,omitempty"`
+	DiffMean         *float64 `json:"diffMean,omitempty"`
+	DiffMedian       *float64 `json:"diffMedian,omitempty"`
+	EventPositivePct *float64 `json:"eventPositivePct,omitempty"`
+	BaselinePosPct   *float64 `json:"baselinePositivePct,omitempty"`
+	WorstEventReturn *float64 `json:"worstEventReturn,omitempty"`
+	CIStatus         string   `json:"ciStatus"`
+	CILow            *float64 `json:"ciLow,omitempty"`
+	CIHigh           *float64 `json:"ciHigh,omitempty"`
+	ValidReplicates  int      `json:"validReplicates"`
+	BlockLength      int      `json:"blockLength"`
+}
+
+// SignalBenchmarkMeta records how the benchmark was produced so saved
+// analyses stay reproducible.
+type SignalBenchmarkMeta struct {
+	EventStudyVersion string  `json:"eventStudyVersion"`
+	BaselineVersion   string  `json:"baselineVersion"`
+	BootstrapVersion  string  `json:"bootstrapVersion"`
+	BlockLengthRule   string  `json:"blockLengthRule"`
+	Replicates        int     `json:"replicates"`
+	Seed              uint64  `json:"seed"`
+	MinEvents         int     `json:"minEvents"`
+	MinControls       int     `json:"minControls"`
+	MinReplicateRate  float64 `json:"minReplicateRate"`
 }
 
 // SignalForwardResult groups horizons per candidate.
@@ -671,7 +711,10 @@ type SignalResearch struct {
 	// RegimeVersion records which label definitions produced ByTrend/
 	// ByVolatility results, so saved analyses stay reproducible.
 	RegimeVersion *string `json:"regimeVersion,omitempty"`
-	CreatedAt     string  `json:"createdAt"`
+	// BenchmarkMeta records baseline/bootstrap conventions + seed when the
+	// benchmark layer ran (always alongside eventStudy).
+	BenchmarkMeta *SignalBenchmarkMeta `json:"benchmarkMeta,omitempty"`
+	CreatedAt     string               `json:"createdAt"`
 }
 
 // SignalResearchService runs and serves cross-strategy signal analyses.

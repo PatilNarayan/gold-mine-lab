@@ -601,11 +601,29 @@ export const signalPairAgreementSchema = z.object({
   byTrend: z.array(signalRegimeAgreementSchema).nullish(),
   byVolatility: z.array(signalRegimeAgreementSchema).nullish(),
 });
+export const signalHorizonBenchmarkSchema = z.object({
+  eventCount: z.number(), controlCount: z.number(), baselineCount: z.number(),
+  eventMean: z.number().nullish(), eventMedian: z.number().nullish(),
+  baselineMean: z.number().nullish(), baselineMedian: z.number().nullish(),
+  diffMean: z.number().nullish(), diffMedian: z.number().nullish(),
+  eventPositivePct: z.number().nullish(), baselinePositivePct: z.number().nullish(),
+  worstEventReturn: z.number().nullish(),
+  ciStatus: z.string(),
+  ciLow: z.number().nullish(), ciHigh: z.number().nullish(),
+  validReplicates: z.number(), blockLength: z.number(),
+});
 export const signalHorizonResultSchema = z.object({
   horizon: z.number(), strategyId: z.string(),
   eligible: z.number(), excluded: z.number(),
   meanReturn: z.number().nullish(), medianReturn: z.number().nullish(),
   positivePct: z.number().nullish(), worstReturn: z.number().nullish(),
+  benchmark: signalHorizonBenchmarkSchema.nullish(),
+});
+export const signalBenchmarkMetaSchema = z.object({
+  eventStudyVersion: z.string(), baselineVersion: z.string(),
+  bootstrapVersion: z.string(), blockLengthRule: z.string(),
+  replicates: z.number(), seed: z.number(),
+  minEvents: z.number(), minControls: z.number(), minReplicateRate: z.number(),
 });
 export const signalRegimeForwardSchema = z.object({
   regime: z.string(),
@@ -628,6 +646,7 @@ export const signalResearchSchema = z.object({
   pairs: z.array(signalPairAgreementSchema).nullish(),
   forward: z.array(signalForwardResultSchema).nullish(),
   regimeVersion: z.string().nullish(),
+  benchmarkMeta: signalBenchmarkMetaSchema.nullish(),
   error: z.string().nullish(),
   createdAt: z.string(),
 });
@@ -639,5 +658,7 @@ export type SignalHorizonResult = z.infer<typeof signalHorizonResultSchema>;
 export type SignalRegimeStats = z.infer<typeof signalRegimeStatsSchema>;
 export type SignalRegimeAgreement = z.infer<typeof signalRegimeAgreementSchema>;
 export type SignalRegimeForward = z.infer<typeof signalRegimeForwardSchema>;
+export type SignalHorizonBenchmark = z.infer<typeof signalHorizonBenchmarkSchema>;
+export type SignalBenchmarkMeta = z.infer<typeof signalBenchmarkMetaSchema>;
 export type SignalForwardResult = z.infer<typeof signalForwardResultSchema>;
 export type SignalResearch = z.infer<typeof signalResearchSchema>;
