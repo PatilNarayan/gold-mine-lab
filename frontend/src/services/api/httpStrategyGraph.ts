@@ -1,9 +1,11 @@
 import { apiClient } from './client';
 import {
-  createGraphRequestSchema, graphBacktestRequestSchema, graphDefinitionSchema,
+  createGraphRequestSchema, graphBacktestRequestSchema, graphDefinitionSchema, graphDiagnosticsRequestSchema,
+  graphDiagnosticsSchema,
   graphRevisionSchema, strategyGraphSchema, validateGraphResponseSchema,
   backtestRunSchema,
   type CreateGraphRequest, type GraphBacktestRequest, type GraphDefinition,
+  type GraphDiagnostics, type GraphDiagnosticsRequest,
   type GraphRevision, type StrategyGraph, type ValidateGraphResponse,
 } from '@/types/domain';
 import type { BacktestRun } from '@/types/domain';
@@ -33,5 +35,9 @@ export const httpGraphService: GraphService = {
   runBacktest(id: string, revision: number, request: GraphBacktestRequest): Promise<BacktestRun> {
     return apiClient.post(`/api/strategy-graphs/${id}/versions/${revision}/backtests`,
       graphBacktestRequestSchema.parse(request), backtestRunSchema);
+  },
+  diagnostics(id: string, revision: number, request: GraphDiagnosticsRequest): Promise<GraphDiagnostics> {
+    return apiClient.post(`/api/strategy-graphs/${id}/versions/${revision}/diagnostics`,
+      graphDiagnosticsRequestSchema.parse(request), graphDiagnosticsSchema);
   },
 };

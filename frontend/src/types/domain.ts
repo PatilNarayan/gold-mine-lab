@@ -484,3 +484,61 @@ export const graphBacktestRequestSchema = z.object({
   slippage: z.number(),
 });
 export type GraphBacktestRequest = z.infer<typeof graphBacktestRequestSchema>;
+
+// --- Graph diagnostics (Phase 7 signal inspector) ----------------------------
+
+export const graphDiagnosticsRequestSchema = z.object({
+  assetId: z.string(),
+  timeframe: timeframeSchema,
+  startDate: z.string(),
+  endDate: z.string(),
+  traceLimit: z.number().int().min(0).max(2000).optional(),
+});
+export type GraphDiagnosticsRequest = z.infer<typeof graphDiagnosticsRequestSchema>;
+
+export const reasonCountSchema = z.object({ reason: z.string(), count: z.number() });
+
+export const graphNodeSummarySchema = z.object({
+  nodeId: z.string(),
+  nodeType: graphNodeTypeSchema,
+  evaluatedBars: z.number(),
+  buy: z.number(),
+  sell: z.number(),
+  neutral: z.number(),
+  actionablePct: z.number(),
+  avgScore: z.number().nullable().optional(),
+  topReasons: z.array(reasonCountSchema),
+});
+export type GraphNodeSummary = z.infer<typeof graphNodeSummarySchema>;
+
+export const graphTraceEntrySchema = z.object({
+  nodeId: z.string(),
+  action: signalActionSchema,
+  score: z.number(),
+  reason: z.string(),
+});
+
+export const graphTraceRowSchema = z.object({
+  timestamp: z.string(),
+  nodes: z.array(graphTraceEntrySchema),
+});
+export type GraphTraceRow = z.infer<typeof graphTraceRowSchema>;
+
+export const graphDiagnosticsSchema = z.object({
+  graphId: z.string(),
+  revision: z.number(),
+  hash: z.string(),
+  assetId: z.string(),
+  timeframe: timeframeSchema,
+  startDate: z.string(),
+  endDate: z.string(),
+  evaluatedBars: z.number(),
+  warmupBars: z.number(),
+  dataset: z.string().nullable().optional(),
+  lastCandle: z.string().nullable().optional(),
+  traceLimit: z.number(),
+  truncated: z.boolean(),
+  nodes: z.array(graphNodeSummarySchema),
+  traces: z.array(graphTraceRowSchema),
+});
+export type GraphDiagnostics = z.infer<typeof graphDiagnosticsSchema>;

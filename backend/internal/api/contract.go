@@ -461,4 +461,67 @@ type StrategyGraphService interface {
 	ListRevisions(ctx context.Context, id string) ([]GraphRevision, error)
 	CreateRevision(ctx context.Context, id string, req CreateRevisionRequest) (GraphRevision, error)
 	ExecuteGraphBacktest(ctx context.Context, id string, revision int, req GraphBacktestRequest) (BacktestRun, error)
+	GraphDiagnostics(ctx context.Context, id string, revision int, req GraphDiagnosticsRequest) (GraphDiagnostics, error)
+}
+
+// GraphDiagnosticsRequest asks for a read-only signal inspection of a saved
+// graph revision — no run is created and no trades are simulated.
+type GraphDiagnosticsRequest struct {
+	AssetID    string           `json:"assetId"`
+	Timeframe  market.Timeframe `json:"timeframe"`
+	StartDate  string           `json:"startDate"`
+	EndDate    string           `json:"endDate"`
+	TraceLimit int              `json:"traceLimit,omitempty"`
+}
+
+// GraphNodeSummary aggregates one node's outputs across the evaluation
+// window (warm-up candles are never counted).
+type GraphNodeSummary struct {
+	NodeID        string        `json:"nodeId"`
+	NodeType      string        `json:"nodeType"`
+	EvaluatedBars int           `json:"evaluatedBars"`
+	Buy           int           `json:"buy"`
+	Sell          int           `json:"sell"`
+	Neutral       int           `json:"neutral"`
+	ActionablePct float64       `json:"actionablePct"`
+	AvgScore      *float64      `json:"avgScore,omitempty"`
+	TopReasons    []ReasonCount `json:"topReasons"`
+}
+
+type ReasonCount struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
+// GraphTraceRow is one candle's full node-level trace.
+type GraphTraceRow struct {
+	Timestamp string            `json:"timestamp"`
+	Nodes     []GraphTraceEntry `json:"nodes"`
+}
+
+type GraphTraceEntry struct {
+	NodeID string  `json:"nodeId"`
+	Action string  `json:"action"`
+	Score  float64 `json:"score"`
+	Reason string  `json:"reason"`
+}
+
+// GraphDiagnostics is the read-only inspector response: per-node summaries
+// over the whole window plus a bounded sample of candle-level traces.
+type GraphDiagnostics struct {
+	GraphID       string             `json:"graphId"`
+	Revision      int                `json:"revision"`
+	Hash          string             `json:"hash"`
+	AssetID       string             `json:"assetId"`
+	Timeframe     market.Timeframe   `json:"timeframe"`
+	StartDate     string             `json:"startDate"`
+	EndDate       string             `json:"endDate"`
+	EvaluatedBars int                `json:"evaluatedBars"`
+	WarmupBars    int                `json:"warmupBars"`
+	Dataset       *string            `json:"dataset,omitempty"`
+	LastCandle    *string            `json:"lastCandle,omitempty"`
+	TraceLimit    int                `json:"traceLimit"`
+	Truncated     bool               `json:"truncated"`
+	Nodes         []GraphNodeSummary `json:"nodes"`
+	Traces        []GraphTraceRow    `json:"traces"`
 }

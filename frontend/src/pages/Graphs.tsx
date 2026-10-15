@@ -5,7 +5,7 @@ import { ReactFlow, Background, Controls, addEdge, applyNodeChanges, applyEdgeCh
 import '@xyflow/react/dist/style.css';
 import { DemoBanner } from '@/components/common/DemoBanner';
 import { useGraphs, useGraph, useGraphRevisions, useCreateGraph, useCreateRevision,
-  useValidateGraph, useRunGraphBacktest } from '@/hooks/useGraphs';
+  useValidateGraph, useRunGraphBacktest, useGraphDiagnostics } from '@/hooks/useGraphs';
 import { useStrategies } from '@/hooks/useStrategies';
 import type { GraphDefinition, GraphEdge, GraphNode } from '@/types/domain';
 import { formatDateTime } from '@/lib/formatters';
@@ -326,10 +326,125 @@ function GraphDetail({ id }: { id: string }) {
         {run.isError && <p className="text-xs text-red-400">{(run.error as Error).message}</p>}
       </section>
 
+      <InspectSignals graphId={id} revision={current?.revision} assetId="xauusd" />
+
       <p className="text-xs text-content-3">
         Scores measure signal strength, not the probability of profit. Each saved revision is immutable;
         every run records the exact graph revision it used. Historical results do not predict future performance.
       </p>
     </div>
+  );
+}
+
+/** Read-only signal inspector: replays the saved revision over historical
+ *  candles and reports what each node emitted. Signals are not trades — the
+ *  engine decides entries/exits; this panel only explains node behavior. */
+function InspectSignals({ graphId, revision, assetId }: { graphId: string; revision?: number; assetId: string }) {
+  const diag = useGraphDiagnostics(graphId, revision);
+  const [form, setForm] = useState({ timeframe: '1d', startDate: '2020-01-01', endDate: '2021-06-30', traceLimit: 200 });
+  const [sel, setSel] = useState(0);
+  const d = diag.data;
+  const nodeIds = d?.nodes.map((n) => n.nodeId) ?? [];
+  return (
+    <section className="card space-y-3" aria-label="Inspect signals">
+      <h3 className="section-label">INSPECT SIGNALS — revision {revision} (historical, read-only)</h3>
+      <div className="flex flex-wrap items-end gap-3 text-xs">
+        <label>TF <select className="bg-surface-2 border border-line px-1" value={form.timeframe}
+          onChange={(e) => setForm({ ...form, timeframe: e.target.value })}>
+          {['15m', '1h', '4h', '1d'].map((t) => <option key={t}>{t}</option>)}</select></label>
+        <label>Start <input type="date" className="bg-surface-2 border border-line px-1" value={form.startDate}
+          onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></label>
+        <label>End <input type="date" className="bg-surface-2 border border-line px-1" value={form.endDate}
+          onChange={(e) => setForm({ ...form, endDate: e.target.value })} /></label>
+        <label>Trace limit <input type="number" className="w-20 bg-surface-2 border border-line px-1 tnum" value={form.traceLimit}
+          onChange={(e) => setForm({ ...form, traceLimit: Number(e.target.value) })} /></label>
+        <button className="btn" disabled={diag.isPending || !revision}
+          onClick={() => { setSel(0); diag.mutate({ assetId, timeframe: form.timeframe as never,
+            startDate: form.startDate, endDate: form.endDate, traceLimit: form.traceLimit }); }}>
+          {diag.isPending ? 'Inspecting…' : 'Inspect signals'}
+        </button>
+      </div>
+      {diag.isError && <p className="text-xs text-red-400">{(diag.error as Error).message}</p>}
+      {d && (
+        <>
+          <p className="text-xs text-content-3">
+            {d.evaluatedBars} bars evaluated · warm-up {d.warmupBars} (never counted) · dataset{' '}
+            <span className="tnum">{d.dataset}</span> · last candle {d.lastCandle}
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="text-content-3 text-left">
+                <th className="pr-3">Node</th><th className="pr-3">Type</th><th className="pr-3 tnum">BUY</th>
+                <th className="pr-3 tnum">SELL</th><th className="pr-3 tnum">NEUTRAL</th>
+                <th className="pr-3 tnum">Actionable %</th><th className="pr-3 tnum">Avg score</th><th>Top reasons</th>
+              </tr></thead>
+              <tbody>
+                {d.nodes.map((n) => (
+                  <tr key={n.nodeId} className="border-t border-line">
+                    <td className="pr-3 py-1">{n.nodeId}</td>
+                    <td className="pr-3 text-content-3">{n.nodeType}</td>
+                    <td className="pr-3 tnum">{n.buy}</td>
+                    <td className="pr-3 tnum">{n.sell}</td>
+                    <td className="pr-3 tnum">{n.neutral}</td>
+                    <td className="pr-3 tnum">{n.actionablePct.toFixed(1)}%</td>
+                    <td className="pr-3 tnum">{n.avgScore != null ? n.avgScore.toFixed(3) : '—'}</td>
+                    <td className="text-content-3">{n.topReasons.map((r) => `${r.reason} (${r.count})`).join(' · ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {d.traces.length > 0 && (
+            <div>
+              <p className="section-label">
+                EVENT TRACE — {d.traces.length} of {d.evaluatedBars} candles{d.truncated ? ' (truncated)' : ''} · click a row to inspect node outputs
+              </p>
+              <div className="max-h-56 overflow-y-auto border border-line">
+                <table className="w-full text-xs">
+                  <thead><tr className="text-content-3 text-left">
+                    <th className="pr-3">Timestamp</th>
+                    {nodeIds.map((nid) => <th key={nid} className="pr-3">{nid}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {d.traces.slice(0, 300).map((row, i) => (
+                      <tr key={i} onClick={() => setSel(i)}
+                        className={`border-t border-line cursor-pointer ${i === sel ? 'bg-surface-2' : ''}`}>
+                        <td className="pr-3 py-0.5 tnum">{formatDateTime(row.timestamp)}</td>
+                        {nodeIds.map((nid) => {
+                          const e = row.nodes.find((x) => x.nodeId === nid);
+                          return (
+                            <td key={nid} className="pr-3">
+                              {e ? <span className={e.action === 'BUY' ? 'text-buy' : e.action === 'SELL' ? 'text-sell' : 'text-content-3'}>
+                                {e.action}{e.action !== 'NEUTRAL' ? ` ${e.score.toFixed(2)}` : ''}</span> : '—'}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {d.traces[sel] && (
+                <div className="text-xs space-y-0.5 border-t border-line pt-2">
+                  <p className="section-label">SELECTED — {formatDateTime(d.traces[sel].timestamp)}</p>
+                  {d.traces[sel].nodes.map((e) => (
+                    <p key={e.nodeId}>
+                      <span className="text-content-3">{e.nodeId}:</span>{' '}
+                      <span className={e.action === 'BUY' ? 'text-buy' : e.action === 'SELL' ? 'text-sell' : 'text-content-3'}>
+                        {e.action} {e.score.toFixed(2)}</span>{' '}
+                      <span className="text-content-3">{e.reason}</span>
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <p className="text-xs text-content-3">
+            Signals are not trades — a backtest may open fewer positions than signals emitted.
+            Node scores are signal strength, not profit probability.
+          </p>
+        </>
+      )}
+    </section>
   );
 }

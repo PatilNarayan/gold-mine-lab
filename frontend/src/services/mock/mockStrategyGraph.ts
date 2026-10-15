@@ -3,6 +3,7 @@ import { ApiError } from '@/types/api';
 import type {
   CreateGraphRequest, GraphBacktestRequest, GraphDefinition, GraphFieldError,
   GraphRevision, StrategyGraph, ValidateGraphResponse, BacktestRun,
+  GraphDiagnostics, GraphDiagnosticsRequest, GraphNodeSummary, GraphTraceRow,
 } from '@/types/domain';
 import type { GraphService } from '../interfaces';
 
@@ -127,5 +128,54 @@ export const mockGraphService: GraphService = {
     run.strategyId = `graph:${id}:v${revision}`;
     run.parameters = { graphId: id, graphRevision: revision };
     return run;
+  },
+  async diagnostics(id, revision, req: GraphDiagnosticsRequest): Promise<GraphDiagnostics> {
+    seed();
+    const g = graphs.get(id);
+    const rev = g?.defs.find((r) => r.revision === revision);
+    if (!g || !rev) throw new ApiError('not_found', 'Unknown graph revision', 'mock');
+    // Deterministic synthetic replay mirroring the real inspector's shape:
+    // every source leans neutral, operators inherit their combine reasons.
+    const days = Math.max(1, Math.round((Date.parse(req.endDate) - Date.parse(req.startDate)) / 86400000));
+    const limit = req.traceLimit && req.traceLimit > 0 ? Math.min(req.traceLimit, 2000) : 200;
+    const mkCounts = (i: number) => {
+      const buy = Math.floor(days * 0.01 * (i + 1));
+      const sell = Math.floor(days * 0.008 * (i + 1));
+      return { buy, sell, neutral: days - buy - sell };
+    };
+    const nodes: GraphNodeSummary[] = rev.definition.nodes.map((n, i) => {
+      const c = mkCounts(i % 3);
+      const actionable = c.buy + c.sell;
+      const actionablePct = days > 0 ? (actionable / days) * 100 : 0;
+      const reasons =
+        n.type === 'and' ? [{ reason: 'and: input neutral', count: c.neutral }]
+        : n.type === 'or' ? [{ reason: 'or: all inputs neutral', count: c.neutral }]
+        : n.type === 'threshold' ? [{ reason: 'threshold: input neutral', count: c.neutral }]
+        : n.type === 'output' ? [{ reason: 'and: input neutral', count: c.neutral }]
+        : [{ reason: 'no crossover', count: c.neutral }, { reason: 'EMA12 crossed above EMA26', count: c.buy }];
+      return {
+        nodeId: n.id, nodeType: n.type, evaluatedBars: days,
+        buy: c.buy, sell: c.sell, neutral: c.neutral, actionablePct,
+        avgScore: actionable > 0 ? 0.5 : null, topReasons: reasons,
+      };
+    });
+    const rows = Math.min(limit, 10);
+    const traces: GraphTraceRow[] = Array.from({ length: rows }, (_, k) => ({
+      timestamp: new Date(Date.parse(req.startDate) + k * 86400000).toISOString(),
+      nodes: rev.definition.nodes.map((n, i) => ({
+        nodeId: n.id,
+        action: (k === 1 && i === 0 ? 'BUY' : 'NEUTRAL') as 'BUY' | 'NEUTRAL',
+        score: k === 1 && i === 0 ? 0.6 : 0,
+        reason: n.type === 'strategy' ? 'no crossover' : 'and: input neutral',
+      })),
+    }));
+    return {
+      graphId: id, revision, hash: rev.definitionHash,
+      assetId: req.assetId, timeframe: req.timeframe,
+      startDate: req.startDate, endDate: req.endDate,
+      evaluatedBars: days, warmupBars: 60,
+      dataset: 'mock:dataset@sha256:deadbeef', lastCandle: new Date(Date.parse(req.endDate)).toISOString(),
+      traceLimit: limit, truncated: days > limit, nodes, traces,
+    };
   },
 };

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { services } from '@/services';
-import type { CreateGraphRequest, GraphBacktestRequest, GraphDefinition } from '@/types/domain';
+import type { CreateGraphRequest, GraphBacktestRequest, GraphDefinition, GraphDiagnosticsRequest } from '@/types/domain';
 
 export function useGraphs() {
   return useQuery({ queryKey: ['graphs'], queryFn: () => services.graph.list(), staleTime: 15_000 });
@@ -43,5 +43,14 @@ export function useRunGraphBacktest(id: string, revision: number) {
   return useMutation({
     mutationFn: (req: GraphBacktestRequest) => services.graph.runBacktest(id, revision, req),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['backtestRuns'] }),
+  });
+}
+
+export function useGraphDiagnostics(id: string | undefined, revision: number | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: GraphDiagnosticsRequest) =>
+      services.graph.diagnostics(id!, revision!, req),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['graphs'] }); },
   });
 }

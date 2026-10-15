@@ -177,3 +177,50 @@ func TestParseSlug(t *testing.T) {
 		}
 	}
 }
+
+func TestTraceMatchesUntraced(t *testing.T) {
+	g, err := New(reg(), emaRSIAnd(), "g1", "test", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts, ok := g.NewStream().(TraceStreamer)
+	if !ok {
+		t.Fatal("stream does not implement TraceStreamer")
+	}
+	plain := g.NewStream()
+	for _, c := range candles(200, true) {
+		got, trace := ts.NextWithTrace(c)
+		want := plain.Next(c)
+		if got.Action != want.Action || got.Score != want.Score {
+			t.Fatalf("traced %v/%v != untraced %v/%v at %v", got.Action, got.Score, want.Action, want.Score, c.Time)
+		}
+		if len(trace) != len(g.Order()) {
+			t.Fatalf("trace len %d != node count %d", len(trace), len(g.Order()))
+		}
+		for i, id := range g.Order() {
+			if trace[i].NodeID != id {
+				t.Fatalf("trace order mismatch at %d: %s != %s", i, trace[i].NodeID, id)
+			}
+		}
+		if trace[len(trace)-1].Action != string(got.Action) {
+			t.Fatalf("output trace %s != composite %s", trace[len(trace)-1].Action, got.Action)
+		}
+	}
+}
+
+func TestThresholdReasonSplit(t *testing.T) {
+	th := Node{ID: "th", Type: NodeThreshold, Threshold: f(0.5)}
+	c := market.Candle{Time: candles(1, true)[0].Time, Close: 10}
+	out := map[string]strategy.Signal{
+		"a": {Action: strategy.ActionNeutral, Score: 0},
+	}
+	got := combine(th, []Edge{{"a", "th"}}, out, c)
+	if got.Reason != "threshold: input neutral" {
+		t.Fatalf("neutral input reason: %q", got.Reason)
+	}
+	out["a"] = strategy.Signal{Action: strategy.ActionBuy, Score: 0.3}
+	got = combine(th, []Edge{{"a", "th"}}, out, c)
+	if got.Reason != "threshold: BUY score 0.30 below 0.50" {
+		t.Fatalf("below-threshold reason: %q", got.Reason)
+	}
+}

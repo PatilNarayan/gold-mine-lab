@@ -288,6 +288,19 @@ maxDD = max((peak−equity)/peak) over the curve.
   comes from the saved revision, never from the client body).
 - **Strategies list:** materialized graph revisions appear as `graph:…:v<n>`
   rows — distinguishable from built-ins by the `graph:` prefix.
+- **Signal inspector (Phase 7):** `POST /api/strategy-graphs/:id/versions/:version/diagnostics`
+  replays the saved revision's own streams over `[startDate,endDate]` and
+  reports, per node, BUY/SELL/NEUTRAL counts, actionable %, avg score for
+  actionable outputs, and top reasons — plus a bounded candle-level trace
+  (`traceLimit` default 200, max 2000; evaluated-window cap 250k bars).
+  Read-only: no backtest_runs, no trades, no persistence. Tracing uses the
+  SAME evaluation path (`TraceStreamer.NextWithTrace` on graphStream) so
+  traced and untraced outputs are identical by construction. Warm-up candles
+  feed sources but are never counted. Operator reasons are stable strings —
+  `and: input neutral` vs `and: inputs disagree`, `or: all inputs neutral` vs
+  `or: conflicting directions`, `threshold: input neutral` vs
+  `threshold: <ACTION> score <x> below <t>`. Response carries dataset
+  fingerprint + last candle for reproducibility.
 - **Research integration (Phase 6c):** `resolveStrategy` resolves ANY engine
   strategy id — registry hit first, else a strict `graph:<uuid>:v<n>` slug is
   lazily rebuilt from its immutable saved revision (`ensureGraphStrategy`), so

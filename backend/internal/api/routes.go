@@ -315,6 +315,24 @@ func registerStrategyGraphRoutes(g *gin.RouterGroup, svc StrategyGraphService) {
 		}
 		c.JSON(http.StatusCreated, out)
 	})
+	g.POST("/strategy-graphs/:id/versions/:version/diagnostics", func(c *gin.Context) {
+		rev, perr := strconv.Atoi(c.Param("version"))
+		if perr != nil || rev < 1 {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid revision number")
+			return
+		}
+		var req GraphDiagnosticsRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			return
+		}
+		out, err := svc.GraphDiagnostics(c.Request.Context(), c.Param("id"), rev, req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
 	g.POST("/strategy-graphs/:id/versions/:version/backtests", func(c *gin.Context) {
 		rev, perr := strconv.Atoi(c.Param("version"))
 		if perr != nil || rev < 1 {

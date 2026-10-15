@@ -19,7 +19,7 @@ import type {
   CreateGraphRequest,
   GraphBacktestRequest,
   GraphDefinition,
-  GraphRevision,
+	GraphDiagnostics, GraphDiagnosticsRequest, GraphRevision,
   StrategyGraph,
   ValidateGraphResponse,
 } from '@/types/domain';
@@ -81,4 +81,5 @@ export interface GraphService {
   listRevisions(id: string): Promise<GraphRevision[]>;
   createRevision(id: string, definition: GraphDefinition): Promise<GraphRevision>;
   runBacktest(id: string, revision: number, request: GraphBacktestRequest): Promise<BacktestRun>;
+  diagnostics(id: string, revision: number, request: GraphDiagnosticsRequest): Promise<GraphDiagnostics>;
 }

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/gold-mine-lab/backend/internal/market"
 	"github.com/gold-mine-lab/backend/internal/strategy"
@@ -159,6 +160,10 @@ func (g *GraphStrategy) Timeframe() market.Timeframe {
 func (g *GraphStrategy) Parameters() []strategy.ParameterSpec { return []strategy.ParameterSpec{} }
 func (g *GraphStrategy) WarmupBars() int                      { return g.warmup }
 
+// Order exposes the deterministic topological node order (diagnostics use it
+// to report nodes in evaluation order).
+func (g *GraphStrategy) Order() []string { return append([]string(nil), g.order...) }
+
 // Describe exposes capabilities so the service-layer timeframe check sees
 // the sources' intersection.
 func (g *GraphStrategy) Describe() strategy.Definition {
@@ -198,10 +203,41 @@ type graphStream struct {
 	streams map[string]strategy.Stream
 }
 
+// NodeTrace records one node's output for one candle during a traced replay —
+// read-only diagnostics; it carries no trading semantics of its own.
+type NodeTrace struct {
+	NodeID   string
+	NodeType string
+	Action   string
+	Score    float64
+	Reason   string
+	Time     time.Time
+}
+
+// TraceStreamer is a Stream that additionally reports every node's output for
+// each candle, in deterministic topological order. The plain Next path shares
+// the same internal evaluation — tracing never changes trading semantics.
+type TraceStreamer interface {
+	strategy.Stream
+	NextWithTrace(c market.Candle) (strategy.Signal, []NodeTrace)
+}
+
 // Next evaluates every node once per candle in topological order.
 func (st *graphStream) Next(c market.Candle) strategy.Signal {
+	sig, _ := st.step(c, false)
+	return sig
+}
+
+// NextWithTrace is Next plus a per-node trace. Same evaluation, same result —
+// the trace only observes intermediate outputs and cannot feed back into them.
+func (st *graphStream) NextWithTrace(c market.Candle) (strategy.Signal, []NodeTrace) {
+	return st.step(c, true)
+}
+
+func (st *graphStream) step(c market.Candle, trace bool) (strategy.Signal, []NodeTrace) {
 	out := map[string]strategy.Signal{}
 	var final strategy.Signal
+	var traces []NodeTrace
 	for _, id := range st.g.order {
 		n := nodeByID(st.g.def, id)
 		var sig strategy.Signal
@@ -213,6 +249,12 @@ func (st *graphStream) Next(c market.Candle) strategy.Signal {
 		}
 		sig.StrategyID = st.g.ID()
 		out[id] = sig
+		if trace {
+			traces = append(traces, NodeTrace{
+				NodeID: id, NodeType: n.Type, Action: string(sig.Action),
+				Score: sig.Score, Reason: sig.Reason, Time: c.Time,
+			})
+		}
 		if n.Type == NodeOutput {
 			final = sig
 		}
@@ -222,7 +264,7 @@ func (st *graphStream) Next(c market.Candle) strategy.Signal {
 	}
 	final.Metadata["graphId"] = st.g.graphID
 	final.Metadata["graphRevision"] = st.g.revision
-	return final
+	return final, traces
 }
 
 func nodeByID(d Definition, id string) Node {
@@ -293,7 +335,10 @@ func combine(n Node, in []Edge, out map[string]strategy.Signal, c market.Candle)
 			return strategy.Signal{Action: s.Action, Score: s.Score, Price: c.Close, Timestamp: c.Time,
 				Reason: fmt.Sprintf("threshold: %s score %.2f >= %.2f", s.Action, s.Score, *n.Threshold)}
 		}
-		return neutral("threshold: below signal-strength threshold or neutral input")
+		if s.Action == strategy.ActionNeutral {
+			return neutral("threshold: input neutral")
+		}
+		return neutral(fmt.Sprintf("threshold: %s score %.2f below %.2f", s.Action, s.Score, *n.Threshold))
 	case NodeOutput:
 		s := ins[0]
 		return strategy.Signal{Action: s.Action, Score: s.Score, Price: c.Close, Timestamp: c.Time, Reason: s.Reason}
