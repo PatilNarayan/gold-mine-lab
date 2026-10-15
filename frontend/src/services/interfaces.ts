@@ -6,6 +6,8 @@ import type {
   CandleSeries,
   Comparison,
   ComparisonRequest,
+  WalkForward,
+  WalkForwardRequest,
   DashboardSummary,
   MarketSummary,
   PagedTrades,
@@ -52,6 +54,13 @@ export interface ComparisonService {
   run(request: ComparisonRequest): Promise<Comparison>;
   list(): Promise<Comparison[]>;
   get(id: string): Promise<Comparison>;
+}
+
+export interface WalkForwardService {
+  preview(request: WalkForwardRequest): Promise<WalkForward>;
+  run(request: WalkForwardRequest): Promise<WalkForward>;
+  list(): Promise<WalkForward[]>;
+  get(id: string): Promise<WalkForward>;
 }
 
 export interface HealthService {

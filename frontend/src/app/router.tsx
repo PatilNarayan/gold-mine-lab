@@ -5,6 +5,7 @@ import NotFound from '@/pages/NotFound';
 
 // Route components are lazy-loaded; chart libraries stay out of the initial
 // bundle because they are only imported by lazily-loaded pages.
+import { WalkForwardPage } from '@/pages/WalkForward';
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const Market = lazy(() => import('@/pages/Market'));
 const Strategies = lazy(() => import('@/pages/Strategies'));
@@ -27,6 +28,8 @@ export const router = createBrowserRouter([
       { path: '/backtests', element: <Backtests /> },
       { path: '/compare', element: <Compare /> },
       { path: '/compare/:id', element: <Compare /> },
+      { path: '/walkforward', element: <WalkForwardPage /> },
+      { path: '/walkforward/:id', element: <WalkForwardPage /> },
       { path: '/results', element: <ResultsRedirect /> },
       { path: '/results/:runId', element: <Results /> },
       { path: '/trades', element: <Trades /> },

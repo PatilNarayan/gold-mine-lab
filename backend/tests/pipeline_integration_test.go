@@ -51,7 +51,7 @@ func pipelineService(t *testing.T) (*service.Service, func()) {
 	}
 	svc := service.New(service.Repositories{
 		Assets: store, Strategies: store, Signals: store,
-		Runs: store, Trades: store, Metrics: store, Comparisons: store,
+		Runs: store, Trades: store, Metrics: store, Comparisons: store, WalkForwards: store,
 	}, market.NewCSVProvider(dataDir, nil), reg, slog.Default())
 	return svc, pool.Close
 }
@@ -218,5 +218,67 @@ func TestComparisonStatuses(t *testing.T) {
 	after, _ := svc.ListComparisons(ctx)
 	if len(after) != len(before) {
 		t.Fatal("rejected comparison must not be persisted")
+	}
+}
+
+// Walk-forward: fold boundaries are rolling and non-overlapping; a fold whose
+// OOS window has no data fails that leg while the rest complete →
+// partial_failed; every member run carries the experiment provenance.
+func TestWalkForwardStatuses(t *testing.T) {
+	svc, cleanup := pipelineService(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := svc.Bootstrap(ctx); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	req := api.WalkForwardRequest{
+		Legs:    []api.ComparisonLeg{{StrategyID: "ema-cross"}, {StrategyID: "rsi-mean-reversion"}},
+		AssetID: "xauusd", Timeframe: "1d", StartDate: "2018-01-01", EndDate: "2022-01-01",
+		InSampleMonths: 24, OosMonths: 12, // step defaults to OOS length
+		InitialCapital: 10000, PositionSize: 10, Commission: 0.02, Slippage: 0.01,
+	}
+	w, err := svc.ExecuteWalkForward(ctx, req)
+	if err != nil {
+		t.Fatalf("walk-forward: %v", err)
+	}
+	if w.Status != "completed" || len(w.Folds) != 4 { // 1 fold fits × 2 legs
+		t.Fatalf("status=%s folds=%d", w.Status, len(w.Folds))
+	}
+	prevOosEnd := map[string]time.Time{} // per strategy
+	for i, f := range w.Folds {
+		if f.IsResult == nil || f.OosResult == nil || f.OosResult.Metrics == nil {
+			t.Fatalf("fold %d missing results", i)
+		}
+		ie, _ := time.Parse("2006-01-02", f.IsEnd)
+		os_, _ := time.Parse("2006-01-02", f.OosStart)
+		if !os_.Equal(ie) {
+			t.Errorf("fold %d OOS not adjacent to IS", i)
+		}
+		oe, _ := time.Parse("2006-01-02", f.OosEnd)
+		if p, ok := prevOosEnd[f.StrategyID]; ok && os_.Before(p) {
+			t.Errorf("fold %d %s OOS overlaps previous", i, f.StrategyID)
+		}
+		prevOosEnd[f.StrategyID] = oe
+	}
+	if w.Summaries == nil || w.Summaries["ema-cross"] == nil || w.Summaries["rsi-mean-reversion"] == nil {
+		t.Fatal("per-strategy OOS summaries missing")
+	}
+
+	// Invalid leg rejected before anything is persisted.
+	before, _ := svc.ListWalkForwards(ctx)
+	bad := req
+	bad.Legs = []api.ComparisonLeg{{StrategyID: "ema-cross"}, {StrategyID: "rsi-mean-reversion", Parameters: map[string]any{"rsi_period": -5.0}}}
+	if _, err := svc.ExecuteWalkForward(ctx, bad); err == nil {
+		t.Fatal("invalid leg must be rejected")
+	}
+	after, _ := svc.ListWalkForwards(ctx)
+	if len(after) != len(before) {
+		t.Fatal("rejected experiment must not be persisted")
+	}
+	// step < OOS length rejected (OOS windows would overlap).
+	bad2 := req
+	bad2.StepMonths = 6
+	if _, err := svc.ExecuteWalkForward(ctx, bad2); err == nil {
+		t.Fatal("step < oos must be rejected")
 	}
 }

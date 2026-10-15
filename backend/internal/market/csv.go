@@ -65,7 +65,7 @@ func NewCSVProvider(dir string, tailKeep map[Timeframe]int) *CSVProvider {
 }
 
 // Fingerprint returns a stable content identity for the file backing
-// asset/tf — "xauusd:1d@sha256:<hex16>" — computed once per file and cached
+// asset/tf — "xauusd:1d@sha256:<hex64>" — computed once per file and cached
 // under the caller mutex (a 350 MB file is hashed at most once per process).
 // No local filesystem paths are exposed in the identifier.
 func (p *CSVProvider) Fingerprint(asset Asset, tf Timeframe) (string, error) {
@@ -84,7 +84,7 @@ func (p *CSVProvider) Fingerprint(asset Asset, tf Timeframe) (string, error) {
 	if _, err := io.Copy(h, f); err != nil {
 		return "", fmt.Errorf("fingerprint %s: %w", name, err)
 	}
-	fp := fmt.Sprintf("%s:%s@sha256:%x", asset.ID, tf, h.Sum(nil)[:8])
+	fp := fmt.Sprintf("%s:%s@sha256:%x", asset.ID, tf, h.Sum(nil))
 	p.fps[name] = fp
 	return fp, nil
 }

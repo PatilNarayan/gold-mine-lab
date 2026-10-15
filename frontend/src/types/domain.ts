@@ -326,3 +326,71 @@ export const pagedTradesSchema = z.object({
   pageSize: z.number(),
 });
 export type PagedTrades = z.infer<typeof pagedTradesSchema>;
+
+/** POST /api/walkforwards — fixed-config walk-forward: identical assumptions
+ * across legs and folds; per-leg params stay constant (no optimization). */
+export const walkForwardRequestSchema = z.object({
+  legs: z.array(comparisonLegSchema).min(1),
+  assetId: z.string(),
+  timeframe: timeframeSchema,
+  startDate: z.string(), // overall research range
+  endDate: z.string(),
+  inSampleMonths: z.number().int().min(1),
+  oosMonths: z.number().int().min(1),
+  stepMonths: z.number().int().min(0), // 0 → defaults to oosMonths
+  initialCapital: z.number(),
+  positionSize: z.number(),
+  commission: z.number(),
+  slippage: z.number(),
+});
+export type WalkForwardRequest = z.infer<typeof walkForwardRequestSchema>;
+
+export const walkForwardFoldSchema = z.object({
+  foldIndex: z.number().int(),
+  strategyId: z.string(),
+  isStart: z.string(),
+  isEnd: z.string(),
+  oosStart: z.string(),
+  oosEnd: z.string(),
+  status: z.enum(['pending', 'completed', 'failed']),
+  error: z.string().nullable().optional(),
+  isResult: comparisonResultSchema.nullable().optional(),
+  oosResult: comparisonResultSchema.nullable().optional(),
+});
+export type WalkForwardFold = z.infer<typeof walkForwardFoldSchema>;
+
+export const walkForwardSummarySchema = z.object({
+  completedFolds: z.number().int(),
+  failedFolds: z.number().int(),
+  positiveFolds: z.number().int(),
+  medianReturnPct: z.number(),
+  worstReturnPct: z.number(),
+  worstMaxDrawdown: z.number(),
+  totalTrades: z.number().int(),
+  lowTradeFolds: z.number().int(),
+  inconclusive: z.boolean(),
+});
+export type WalkForwardSummary = z.infer<typeof walkForwardSummarySchema>;
+
+export const walkForwardSchema = z.object({
+  id: z.string(),
+  status: comparisonStatusSchema,
+  assetId: z.string(),
+  timeframe: z.string(),
+  startDate: z.string(),
+  endDate: z.string(),
+  inSampleMonths: z.number(),
+  oosMonths: z.number(),
+  stepMonths: z.number(),
+  initialCapital: z.number(),
+  positionSize: z.number(),
+  commission: z.number(),
+  slippage: z.number(),
+  strategyIds: z.array(z.string()).optional(),
+  error: z.string().nullable(),
+  createdAt: z.string().optional(),
+  completedAt: z.string().nullable().optional(),
+  folds: z.array(walkForwardFoldSchema).optional(),
+  summaries: z.record(z.string(), walkForwardSummarySchema).nullable().optional(),
+});
+export type WalkForward = z.infer<typeof walkForwardSchema>;

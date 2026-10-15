@@ -40,8 +40,10 @@ type RunRow struct {
 	// Comparison grouping (migration 000003). nil = standalone run.
 	ComparisonID *string
 	Sample       *string // "in_sample" | "out_of_sample"
-	CreatedAt    time.Time
-	CompletedAt  *time.Time
+	// Walk-forward membership (migration 000004). nil = not a fold run.
+	WalkForwardID *string
+	CreatedAt     time.Time
+	CompletedAt   *time.Time
 }
 
 // ComparisonRow mirrors the comparisons table.
@@ -154,6 +156,55 @@ type ComparisonRepository interface {
 	SetComparisonStatus(ctx context.Context, id, status string, errMsg *string) error
 	GetComparison(ctx context.Context, id string) (ComparisonRow, error)
 	ListComparisons(ctx context.Context) ([]ComparisonRow, error)
+}
+
+// WalkForwardExperimentRow is one saved walk-forward experiment.
+type WalkForwardExperimentRow struct {
+	ID             string
+	AssetID        string
+	Timeframe      string
+	RangeStart     string
+	RangeEnd       string
+	IsMonths       int
+	OosMonths      int
+	StepMonths     int
+	InitialCapital float64
+	PositionSize   float64
+	Commission     float64
+	Slippage       float64
+	StrategyIDs    []string
+	Status         string
+	Error          *string
+	CreatedAt      time.Time
+	CompletedAt    *time.Time
+}
+
+// WalkForwardFoldRow is one (fold, strategy) member: boundaries are fixed at
+// creation and run IDs are filled as legs execute.
+type WalkForwardFoldRow struct {
+	ID           string
+	ExperimentID string
+	FoldIndex    int
+	StrategyID   string
+	IsStart      string
+	IsEnd        string
+	OosStart     string
+	OosEnd       string
+	IsRunID      *string
+	OosRunID     *string
+	Status       string
+	Error        *string
+}
+
+// WalkForwardRepository persists walk-forward experiments and their folds.
+type WalkForwardRepository interface {
+	CreateExperiment(ctx context.Context, e WalkForwardExperimentRow) (string, error)
+	SetExperimentStatus(ctx context.Context, id, status string, errMsg *string) error
+	GetExperiment(ctx context.Context, id string) (WalkForwardExperimentRow, error)
+	ListExperiments(ctx context.Context) ([]WalkForwardExperimentRow, error)
+	CreateFold(ctx context.Context, f WalkForwardFoldRow) (string, error)
+	SetFoldResult(ctx context.Context, id, status string, isRunID, oosRunID, errMsg *string) error
+	ListFolds(ctx context.Context, experimentID string) ([]WalkForwardFoldRow, error)
 }
 
 type TradeRepository interface {

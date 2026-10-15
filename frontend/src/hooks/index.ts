@@ -11,3 +11,4 @@ export {
 export { useTrades } from './useTrades';
 export { useHealth } from './useHealth';
 export { useComparisons, useComparison, useRunComparison } from './useComparisons';
+export { useWalkForwards, useWalkForward, usePreviewWalkForward, useRunWalkForward } from './useWalkForward';

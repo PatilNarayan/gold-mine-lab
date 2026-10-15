@@ -73,7 +73,7 @@ func run(shutdown <-chan os.Signal) error {
 	store := postgres.New(pool.Pool)
 	svc := service.New(service.Repositories{
 		Assets: store, Strategies: store, Signals: store,
-		Runs: store, Trades: store, Metrics: store, Comparisons: store,
+		Runs: store, Trades: store, Metrics: store, Comparisons: store, WalkForwards: store,
 	}, data, reg, log)
 
 	// Seed asset/strategies, generate real signals, run seed backtests on an
@@ -90,6 +90,7 @@ func run(shutdown <-chan os.Signal) error {
 		Backtests:      svc,
 		Trades:         svc,
 		Comparisons:    svc,
+		WalkForwards:   svc,
 		AllowedOrigins: cfg.HTTP.AllowedOrigins,
 		Env:            cfg.Env,
 	})

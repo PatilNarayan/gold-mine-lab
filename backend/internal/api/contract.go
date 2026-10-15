@@ -112,6 +112,10 @@ type BacktestRun struct {
 	EngineVersion   *string `json:"engineVersion"`
 	StrategyVersion *string `json:"strategyVersion"`
 	Dataset         *string `json:"dataset"`
+	// Experiment membership: comparison (000003) or walk-forward (000004).
+	ComparisonID  *string `json:"comparisonId,omitempty"`
+	WalkForwardID *string `json:"walkForwardId,omitempty"`
+	Sample        *string `json:"sample,omitempty"`
 }
 
 // BacktestTrade mirrors the planned backtest_trades table.
@@ -227,6 +231,85 @@ type ComparisonService interface {
 	GetComparison(ctx context.Context, id string) (Comparison, error)
 }
 
+// WalkForwardRequest is the body of POST /api/walkforwards. Every leg keeps
+// a FIXED parameter set across all folds — identical experiment conditions;
+// there is no optimization in this version.
+type WalkForwardRequest struct {
+	Legs           []ComparisonLeg  `json:"legs"`
+	AssetID        string           `json:"assetId"`
+	Timeframe      market.Timeframe `json:"timeframe"`
+	StartDate      string           `json:"startDate"` // overall research range
+	EndDate        string           `json:"endDate"`
+	InSampleMonths int              `json:"inSampleMonths"`
+	OosMonths      int              `json:"oosMonths"`
+	StepMonths     int              `json:"stepMonths"` // 0 → defaults to oosMonths
+	InitialCapital float64          `json:"initialCapital"`
+	PositionSize   float64          `json:"positionSize"`
+	Commission     float64          `json:"commission"`
+	Slippage       float64          `json:"slippage"`
+}
+
+// WalkForwardFold is one (fold index, strategy) member with its boundaries
+// and per-window results.
+type WalkForwardFold struct {
+	FoldIndex  int               `json:"foldIndex"`
+	StrategyID string            `json:"strategyId"`
+	IsStart    string            `json:"isStart"`
+	IsEnd      string            `json:"isEnd"`
+	OosStart   string            `json:"oosStart"`
+	OosEnd     string            `json:"oosEnd"`
+	Status     string            `json:"status"` // pending|completed|failed
+	Error      *string           `json:"error,omitempty"`
+	IsResult   *ComparisonResult `json:"isResult,omitempty"`
+	OosResult  *ComparisonResult `json:"oosResult,omitempty"`
+}
+
+// WalkForwardSummary aggregates ONLY the out-of-sample folds for one
+// strategy — robustness evidence, never a combined portfolio.
+type WalkForwardSummary struct {
+	CompletedFolds   int     `json:"completedFolds"`
+	FailedFolds      int     `json:"failedFolds"`
+	PositiveFolds    int     `json:"positiveFolds"`
+	MedianReturnPct  float64 `json:"medianReturnPct"`
+	WorstReturnPct   float64 `json:"worstReturnPct"`
+	WorstMaxDrawdown float64 `json:"worstMaxDrawdown"`
+	TotalTrades      int     `json:"totalTrades"`
+	LowTradeFolds    int     `json:"lowTradeFolds"` // <30 trades
+	Inconclusive     bool    `json:"inconclusive"`  // most folds under the trade threshold
+}
+
+// WalkForward is a saved experiment (summary in list, folds on GET).
+type WalkForward struct {
+	ID             string                         `json:"id"`
+	Status         string                         `json:"status"` // pending|running|completed|partial_failed|failed
+	AssetID        string                         `json:"assetId"`
+	Timeframe      string                         `json:"timeframe"`
+	StartDate      string                         `json:"startDate"`
+	EndDate        string                         `json:"endDate"`
+	InSampleMonths int                            `json:"inSampleMonths"`
+	OosMonths      int                            `json:"oosMonths"`
+	StepMonths     int                            `json:"stepMonths"`
+	InitialCapital float64                        `json:"initialCapital"`
+	PositionSize   float64                        `json:"positionSize"`
+	Commission     float64                        `json:"commission"`
+	Slippage       float64                        `json:"slippage"`
+	StrategyIDs    []string                       `json:"strategyIds"`
+	Error          *string                        `json:"error"`
+	CreatedAt      string                         `json:"createdAt"`
+	CompletedAt    *string                        `json:"completedAt"`
+	Folds          []WalkForwardFold              `json:"folds,omitempty"`
+	Summaries      map[string]*WalkForwardSummary `json:"summaries,omitempty"` // per strategy, OOS only
+}
+
+// WalkForwardService runs and serves fixed-configuration walk-forward
+// experiments.
+type WalkForwardService interface {
+	ExecuteWalkForward(ctx context.Context, req WalkForwardRequest) (WalkForward, error)
+	PreviewWalkForward(ctx context.Context, req WalkForwardRequest) (WalkForward, error)
+	ListWalkForwards(ctx context.Context) ([]WalkForward, error)
+	GetWalkForward(ctx context.Context, id string) (WalkForward, error)
+}
+
 // BacktestRequest is the body of POST /api/backtests.
 type BacktestRequest struct {
 	AssetID        string           `json:"assetId"`
@@ -241,8 +324,9 @@ type BacktestRequest struct {
 	Parameters     map[string]any   `json:"parameters"`
 	// ComparisonID/Sample are set internally by the comparison runner — the
 	// public POST endpoint leaves them nil.
-	ComparisonID *string `json:"-"`
-	Sample       *string `json:"-"`
+	ComparisonID  *string `json:"-"`
+	WalkForwardID *string `json:"-"`
+	Sample        *string `json:"-"`
 }
 
 // TradeFilters mirrors the frontend's query-param filter set.

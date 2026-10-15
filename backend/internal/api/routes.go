@@ -205,3 +205,48 @@ func registerTradeRoutes(g *gin.RouterGroup, svc TradeService) {
 		c.JSON(http.StatusOK, out)
 	})
 }
+
+func registerWalkForwardRoutes(g *gin.RouterGroup, svc WalkForwardService) {
+	g.POST("/walkforwards", func(c *gin.Context) {
+		var req WalkForwardRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			return
+		}
+		out, err := svc.ExecuteWalkForward(c.Request.Context(), req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, out)
+	})
+	g.POST("/walkforwards/preview", func(c *gin.Context) {
+		var req WalkForwardRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			return
+		}
+		out, err := svc.PreviewWalkForward(c.Request.Context(), req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	g.GET("/walkforwards", func(c *gin.Context) {
+		out, err := svc.ListWalkForwards(c.Request.Context())
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	g.GET("/walkforwards/:id", func(c *gin.Context) {
+		out, err := svc.GetWalkForward(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+}

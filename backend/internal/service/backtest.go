@@ -244,6 +244,7 @@ func (s *Service) validateRequest(ctx context.Context, req api.BacktestRequest) 
 		EngineVersion:   &engineVersion,
 		StrategyVersion: ptr(strat.Version()), // captured at execution time
 		ComparisonID:    req.ComparisonID,
+		WalkForwardID:   req.WalkForwardID,
 		Sample:          req.Sample,
 	}, strat, nil
 }
@@ -328,6 +329,7 @@ func runDTO(r repository.RunRow) api.BacktestRun {
 		Status: r.Status, CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 		CompletedAt: completedAt, Error: r.Error,
 		EngineVersion: r.EngineVersion, StrategyVersion: r.StrategyVersion, Dataset: r.Dataset,
+		ComparisonID: r.ComparisonID, WalkForwardID: r.WalkForwardID, Sample: r.Sample,
 	}
 }
 
