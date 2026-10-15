@@ -111,9 +111,13 @@ Never Handler→SQL, never Strategy→I/O.
   incomparable runs. Comparable-strategy analysis is a separate future
   research feature.
 - **Dataset provenance.** Every run records `dataset` as
-  `<asset>:<tf>@sha256:<16-hex>` — a content fingerprint of the exact CSV
-  used, cached per file per process (`CSVProvider.Fingerprint`). Old runs
-  keep their recorded identity; nothing is rewritten.
+  `<asset>:<tf>@sha256:<64-hex>` — the full SHA-256 of the exact CSV
+  used, cached per file per process (`CSVProvider.Fingerprint`). Runs
+  before 000004 keep their recorded 16-hex identity; nothing is
+  rewritten. Source caveat: timestamps are naive date-only values stored
+  under the project's UTC convention — the upstream broker timezone is
+  NOT independently established (data came via a HuggingFace mirror of
+  the Kaggle MetaTrader XAUUSD history, assumed equivalent, not proven).
 - **RSI (Wilder).** `indicators.RSI` / `RSIState`: seed = SMA of first
   `period` changes, then `avg = (prevAvg·(p−1)+x)/p`. Undefined (NaN) for
   index < period; avgLoss==0 → 100 (avgGain>0) or 50 (both zero = constant
@@ -132,6 +136,28 @@ Never Handler→SQL, never Strategy→I/O.
   `WindowStart` are dropped and the OOS run starts flat in its own engine
   run. `gross_profit`/`gross_loss` are Σ NET P&L of winners/losers (after
   commissions); `total_commissions` is null on runs that predate it.
+- **Walk-Forward.** `/walkforward` replays each leg's FIXED params over
+  rolling folds (IS window, then OOS window, advanced by step; default
+  step = OOS length; `step < oos` rejected so OOS windows never
+  overlap). Fold boundaries are half-open internally `[start, end)`:
+  OOS starts the day after IS ends — the windows never share a candle
+  date (persisted/displayed dates are inclusive, `isEnd` = last IS
+  day). Months add via `addMonthsUTC` anchored on the ORIGINAL range
+  start with month-end clamping (Jan 31 + 1m → Feb 28/29) — no day
+  drift. Fit check compares exclusive ends against `endDate+1d`; a
+  partial tail fold is dropped, never shortened. Member runs are
+  ordinary `backtest_runs` rows with `walk_forward_id` + `sample`,
+  linked via `walk_forward_folds`. Statuses mirror comparisons, plus:
+  a failed `SetFoldResult` write is logged and forces
+  `partial_failed`/`failed` — never "completed" with unsaved fold
+  records — and a mid-setup failure (status transition or fold insert)
+  best-effort marks experiment + created folds `failed` ("interrupted")
+  so nothing stays pending/running. A fold's referenced run must load
+  and a completed run must have metrics, else GET errors instead of a
+  misleading partial response. Per-strategy OOS summaries only:
+  completed/failed/positive fold counts, median + worst return, worst
+  maxDD, total trades, <30-trade folds, `inconclusive` when most folds
+  are thin; fold curves shown independently, never merged.
 - **rsi-mean-reversion v1.0.0.** BUY = RSI crosses UP through oversold;
   SELL = RSI crosses DOWN through overbought (exit only, long-only). A cross
   fires once — staying beyond a threshold does not re-signal. Params:
