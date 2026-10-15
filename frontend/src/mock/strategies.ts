@@ -45,6 +45,21 @@ export const MOCK_STRATEGIES: Strategy[] = [
     ],
   },
   {
+    // Mirrors the real backend strategy (donchian-breakout v1.0.0).
+    id: 'donchian-breakout',
+    name: 'Donchian Breakout',
+    version: '1.0.0',
+    description:
+      'Long-only breakout: buys when the close exceeds the highest high of the preceding N candles, exits when it breaks the lowest low of the preceding N.',
+    supportedAssets: ['xauusd'],
+    timeframe: '1d',
+    supportedTimeframes: ['15m', '1h', '4h', '1d'],
+    status: 'active',
+    parameters: [
+      { name: 'lookback_period', label: 'Lookback Period', type: 'number', default: 20, min: 5, max: 200, step: 1 },
+    ],
+  },
+  {
     id: 'atr-breakout',
     name: 'ATR Breakout',
     version: '0.9.0',

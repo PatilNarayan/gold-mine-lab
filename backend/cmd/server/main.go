@@ -69,6 +69,9 @@ func run(shutdown <-chan os.Signal) error {
 	if err := reg.Register(strategy.NewRSIMeanReversion()); err != nil {
 		return fmt.Errorf("register strategy: %w", err)
 	}
+	if err := reg.Register(strategy.NewDonchianBreakout()); err != nil {
+		return fmt.Errorf("register strategy: %w", err)
+	}
 
 	store := postgres.New(pool.Pool)
 	svc := service.New(service.Repositories{

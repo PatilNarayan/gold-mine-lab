@@ -26,7 +26,7 @@ type Signal struct {
 	StrategyID string         `json:"strategyId"`
 	AssetID    string         `json:"assetId"`
 	Action     Action         `json:"action"`
-	Score      float64        `json:"score"` // 0..1 confidence
+	Score      float64        `json:"score"` // 0..1 signal-strength heuristic, strategy-specific — NOT a probability of profit
 	Price      float64        `json:"price"` // price the signal refers to
 	Timestamp  time.Time      `json:"timestamp"`
 	Reason     string         `json:"reason"`

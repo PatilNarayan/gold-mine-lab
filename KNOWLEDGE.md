@@ -288,6 +288,20 @@ maxDD = max((peak−equity)/peak) over the curve.
   comes from the saved revision, never from the client body).
 - **Strategies list:** materialized graph revisions appear as `graph:…:v<n>`
   rows — distinguishable from built-ins by the `graph:` prefix.
+- **Donchian breakout (Phase 8):** `donchian-breakout` v1.0.0 — long-only
+  channel breakout. BUY when close > highest high of the PRECEDING N candles,
+  SELL when close < lowest low of preceding N (exit only, never opens a
+  short; engine is long-only anyway). `lookback_period` default 20, int,
+  [5,200]. The current candle's own high/low never enters its channel.
+  A breakout is a continuing condition — repeated BUY/SELL while new
+  extremes persist, NOT a one-time cross. Score = breakoutDistance /
+  (channelWidth + breakoutDistance) in [0,1) — a heuristic of how far the
+  close cleared the channel, NOT profit probability; zero-width channel +
+  real breakout → 1. Stream path uses a monotonic-deque rolling extrema
+  (amortized O(1)/bar); batch Evaluate recomputes the window — equivalent
+  by test. Warm-up = lookback bars. Works as a graph source node, in
+  comparisons, walk-forward, and the signal inspector (metadata carries
+  upper/lower/width/lookback/close).
 - **Signal inspector (Phase 7):** `POST /api/strategy-graphs/:id/versions/:version/diagnostics`
   replays the saved revision's own streams over `[startDate,endDate]` and
   reports, per node, BUY/SELL/NEUTRAL counts, actionable %, avg score for
