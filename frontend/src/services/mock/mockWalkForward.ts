@@ -91,6 +91,13 @@ export function executeWalkForward(req: WalkForwardRequest): WalkForward {
       totalTrades: oos.reduce((a, f) => a + f.oosResult!.metrics!.totalTrades, 0),
       lowTradeFolds: low,
       inconclusive: oos.length === 0 || low * 2 > oos.length,
+      // Fold-level risk aggregates — same conventions as the backend.
+      medianExpectancy: rets.length && oos.every((f) => f.oosResult!.metrics!.expectancy != null)
+        ? (() => { const v = oos.map((f) => f.oosResult!.metrics!.expectancy!).sort((a, b) => a - b); return v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2; })()
+        : (() => { const v = oos.map((f) => f.oosResult!.metrics!.expectancy).filter((x): x is number => x != null).sort((a, b) => a - b); return v.length ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null; })(),
+      medianTimeInMarketPct: (() => { const v = oos.map((f) => f.oosResult!.metrics!.timeInMarketPct).filter((x): x is number => x != null).sort((a, b) => a - b); return v.length ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null; })(),
+      worstConsecutiveLosses: oos.length ? Math.max(0, ...oos.map((f) => f.oosResult!.metrics!.maxConsecutiveLosses ?? 0)) : null,
+      missingMetricFolds: oos.filter((f) => f.oosResult!.metrics!.expectancy == null && f.oosResult!.metrics!.avgWin == null && f.oosResult!.metrics!.barsInMarket == null).length,
     };
   }
   const wf: WalkForward = {

@@ -410,6 +410,41 @@ function ComparisonDetail({ id }: { id: string }) {
       sortValue: (r) => r.metrics?.avgTradePnl ?? 0,
     },
     {
+      key: 'avgWin', header: 'Avg win', align: 'right',
+      cell: (r) => <span className="tnum text-buy">{r.metrics?.avgWin != null ? formatSignedCurrency(r.metrics.avgWin) : '—'}</span>,
+      sortValue: (r) => r.metrics?.avgWin ?? 0,
+    },
+    {
+      key: 'avgLoss', header: 'Avg loss', align: 'right',
+      cell: (r) => <span className="tnum text-sell">{r.metrics?.avgLoss != null ? `-${formatCurrency(r.metrics.avgLoss)}` : '—'}</span>,
+      sortValue: (r) => r.metrics?.avgLoss ?? 0,
+    },
+    {
+      key: 'payoff', header: 'Payoff', align: 'right',
+      cell: (r) => <span className="tnum">{r.metrics?.payoffRatio != null ? r.metrics.payoffRatio.toFixed(2) : '—'}</span>,
+      sortValue: (r) => r.metrics?.payoffRatio ?? 0,
+    },
+    {
+      key: 'exp', header: 'Expectancy', align: 'right',
+      cell: (r) => <span className={`tnum ${pnlTone(r.metrics?.expectancy ?? undefined)}`}>{r.metrics?.expectancy != null ? formatSignedCurrency(r.metrics.expectancy) : '—'}</span>,
+      sortValue: (r) => r.metrics?.expectancy ?? 0,
+    },
+    {
+      key: 'mcl', header: 'Cons. losses', align: 'right',
+      cell: (r) => <span className="tnum">{r.metrics?.maxConsecutiveLosses ?? '—'}</span>,
+      sortValue: (r) => r.metrics?.maxConsecutiveLosses ?? 0,
+    },
+    {
+      key: 'tim', header: 'In market', align: 'right',
+      cell: (r) => <span className="tnum">{r.metrics?.timeInMarketPct != null ? `${r.metrics.timeInMarketPct.toFixed(1)}%` : '—'}</span>,
+      sortValue: (r) => r.metrics?.timeInMarketPct ?? 0,
+    },
+    {
+      key: 'rec', header: 'Recovery', align: 'right',
+      cell: (r) => <span className="tnum">{r.metrics?.recoveryFactor != null ? r.metrics.recoveryFactor.toFixed(2) : '—'}</span>,
+      sortValue: (r) => r.metrics?.recoveryFactor ?? 0,
+    },
+    {
       key: 'gp', header: 'Winners / losers (net)', align: 'right',
       cell: (r) =>
         r.metrics ? (

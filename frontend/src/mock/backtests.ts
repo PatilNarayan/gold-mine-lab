@@ -159,6 +159,21 @@ function buildDetail(run: BacktestRun): BacktestDetail {
   const losses = closed.filter((t) => (t.pnl ?? 0) <= 0);
   const grossWin = wins.reduce((s, t) => s + (t.pnl ?? 0), 0);
   const grossLoss = Math.abs(losses.reduce((s, t) => s + (t.pnl ?? 0), 0));
+  // Risk-metric inputs, backend-equivalent conventions.
+  let streak = 0, maxStreak = 0;
+  for (const t of closed) {
+    if ((t.pnl ?? 0) < 0) { streak++; if (streak > maxStreak) maxStreak = streak; } else { streak = 0; }
+  }
+  const spans = closed.filter((t) => t.exitTime).map((t) => [Date.parse(t.entryTime), Date.parse(t.exitTime as string)] as const);
+  const barsInMarket = equity.filter((p) => {
+    const t = Date.parse(p.time);
+    return spans.some(([a, b]) => t >= a && t < b);
+  }).length;
+  let runPeak = equity.length ? equity[0].equity : 0, maxDDAmount = 0;
+  for (const p of equity) {
+    runPeak = Math.max(runPeak, p.equity);
+    maxDDAmount = Math.max(maxDDAmount, runPeak - p.equity);
+  }
   const metrics: BacktestMetrics = {
     netPnl,
     returnPct: round(netPnl / run.initialCapital, 4),
@@ -175,6 +190,17 @@ function buildDetail(run: BacktestRun): BacktestDetail {
       closed.reduce((s, t) => s + (t.entryCommission ?? 0) + (t.exitCommission ?? 0), 0),
       2,
     ),
+    // Risk metrics — same conventions as the backend (null when undefined).
+    avgWin: wins.length ? round(grossWin / wins.length, 2) : null,
+    avgLoss: losses.length ? round(grossLoss / losses.length, 2) : null,
+    payoffRatio:
+      wins.length && losses.length ? round(grossWin / wins.length / (grossLoss / losses.length), 2) : null,
+    expectancy: closed.length ? round(netPnl / closed.length, 2) : null,
+    recoveryFactor: maxDDAmount > 0 ? round(netPnl / maxDDAmount, 4) : null,
+    timeInMarketPct: equity.length ? round(100 * barsInMarket / equity.length, 2) : null,
+    maxConsecutiveLosses: maxStreak,
+    barsInMarket,
+    eligibleBars: equity.length,
   };
 
   return { run, strategy, metrics, equity, trades };

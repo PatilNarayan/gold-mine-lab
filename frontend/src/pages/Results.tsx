@@ -103,6 +103,52 @@ export default function Results() {
               </section>
             ) : null}
 
+            {detail.data.metrics ? (
+              <section
+                aria-label="Risk metrics"
+                className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7"
+              >
+                <MetricCard
+                  label="Avg win"
+                  hint="Average NET P&L of winning trades"
+                  value={detail.data.metrics.avgWin != null ? formatSignedCurrency(detail.data.metrics.avgWin) : '—'}
+                  tone="buy"
+                />
+                <MetricCard
+                  label="Avg loss"
+                  hint="Average NET loss, shown as a positive magnitude"
+                  value={detail.data.metrics.avgLoss != null ? `-${formatCurrency(detail.data.metrics.avgLoss)}` : '—'}
+                  tone="sell"
+                />
+                <MetricCard
+                  label="Payoff"
+                  hint="Average win magnitude vs average loss magnitude"
+                  value={detail.data.metrics.payoffRatio != null ? detail.data.metrics.payoffRatio.toFixed(2) : '—'}
+                />
+                <MetricCard
+                  label="Expectancy"
+                  hint="Average NET P&L per closed trade"
+                  value={detail.data.metrics.expectancy != null ? formatSignedCurrency(detail.data.metrics.expectancy) : '—'}
+                  tone={detail.data.metrics.expectancy != null && detail.data.metrics.expectancy >= 0 ? 'buy' : 'sell'}
+                />
+                <MetricCard
+                  label="Max cons. losses"
+                  hint="Longest streak of net-losing trades"
+                  value={detail.data.metrics.maxConsecutiveLosses != null ? formatInteger(detail.data.metrics.maxConsecutiveLosses) : '—'}
+                />
+                <MetricCard
+                  label="Time in market"
+                  hint="Share of evaluation-window bars with an open position (bar-based, not wall-clock hours)"
+                  value={detail.data.metrics.timeInMarketPct != null ? `${detail.data.metrics.timeInMarketPct.toFixed(1)}%` : '—'}
+                />
+                <MetricCard
+                  label="Recovery factor"
+                  hint="Net P&L relative to the maximum drawdown amount"
+                  value={detail.data.metrics.recoveryFactor != null ? detail.data.metrics.recoveryFactor.toFixed(2) : '—'}
+                />
+              </section>
+            ) : null}
+
             <div className="grid gap-3 xl:grid-cols-2">
               <section className="border border-line bg-surface-1 p-3" aria-label="Equity curve">
                 <h2 className="section-label mb-2">Equity curve</h2>

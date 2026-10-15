@@ -230,6 +230,36 @@ func metricsDTO(m map[string]float64) api.BacktestMetrics {
 	if v, ok := m["total_commissions"]; ok {
 		out.TotalCommissions = &v
 	}
+	// Risk metrics — absent rows stay null (undefined or legacy).
+	for _, f := range []struct {
+		name string
+		dst  **float64
+	}{
+		{"avg_win", &out.AvgWin},
+		{"avg_loss", &out.AvgLoss},
+		{"payoff_ratio", &out.PayoffRatio},
+		{"expectancy", &out.Expectancy},
+		{"recovery_factor", &out.RecoveryFactor},
+		{"time_in_market_pct", &out.TimeInMarketPct},
+	} {
+		if v, ok := m[f.name]; ok {
+			v := v
+			*f.dst = &v
+		}
+	}
+	for _, f := range []struct {
+		name string
+		dst  **int
+	}{
+		{"max_consecutive_losses", &out.MaxConsecutiveLosses},
+		{"bars_in_market", &out.BarsInMarket},
+		{"eligible_eval_bars", &out.EligibleBars},
+	} {
+		if v, ok := m[f.name]; ok {
+			n := int(v)
+			*f.dst = &n
+		}
+	}
 	return out
 }
 

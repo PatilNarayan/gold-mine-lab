@@ -370,6 +370,8 @@ func (s *Service) GetWalkForward(ctx context.Context, id string) (api.WalkForwar
 	folds := make([]api.WalkForwardFold, 0, len(foldRows))
 	sums := map[string]*api.WalkForwardSummary{}
 	rets := map[string][]float64{}
+	exps := map[string][]float64{}
+	tims := map[string][]float64{}
 	for _, fr := range foldRows {
 		f := api.WalkForwardFold{
 			FoldIndex: fr.FoldIndex, StrategyID: fr.StrategyID,
@@ -420,17 +422,41 @@ func (s *Service) GetWalkForward(ctx context.Context, id string) (api.WalkForwar
 			if m.MaxDrawdown > sum.WorstMaxDrawdown {
 				sum.WorstMaxDrawdown = m.MaxDrawdown
 			}
-		}
-	}
-	for sid, sum := range sums {
-		if v := rets[sid]; len(v) > 0 {
-			sort.Float64s(v)
-			n := len(v)
-			sum.MedianReturnPct = v[n/2]
-			if n%2 == 0 {
-				sum.MedianReturnPct = (v[n/2-1] + v[n/2]) / 2
+			// Fold risk aggregates — per-fold values collected, never pooled.
+			if m.Expectancy != nil {
+				exps[fr.StrategyID] = append(exps[fr.StrategyID], *m.Expectancy)
+			}
+			if m.TimeInMarketPct != nil {
+				tims[fr.StrategyID] = append(tims[fr.StrategyID], *m.TimeInMarketPct)
+			}
+			if m.MaxConsecutiveLosses != nil &&
+				(sum.WorstConsecutiveLosses == nil || *m.MaxConsecutiveLosses > *sum.WorstConsecutiveLosses) {
+				v := *m.MaxConsecutiveLosses
+				sum.WorstConsecutiveLosses = &v
+			}
+			if m.Expectancy == nil && m.AvgWin == nil && m.BarsInMarket == nil {
+				sum.MissingMetricFolds++ // completed fold predating risk metrics
 			}
 		}
+	}
+	median := func(v []float64) *float64 {
+		if len(v) == 0 {
+			return nil
+		}
+		sort.Float64s(v)
+		n := len(v)
+		m := v[n/2]
+		if n%2 == 0 {
+			m = (v[n/2-1] + v[n/2]) / 2
+		}
+		return &m
+	}
+	for sid, sum := range sums {
+		if v := median(rets[sid]); v != nil {
+			sum.MedianReturnPct = *v
+		}
+		sum.MedianExpectancy = median(exps[sid])
+		sum.MedianTimeInMarketPct = median(tims[sid])
 		// Inconclusive when most completed OOS folds are below the 30-trade
 		// evidence threshold.
 		sum.Inconclusive = sum.CompletedFolds == 0 || sum.LowTradeFolds*2 > sum.CompletedFolds

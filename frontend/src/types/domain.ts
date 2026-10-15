@@ -145,6 +145,17 @@ export const backtestMetricsSchema = z.object({
   grossProfit: z.number(),
   grossLoss: z.number(),
   totalCommissions: z.number().nullable(), // null on legacy runs
+  // Risk metrics (Phase 6a): null when undefined — no qualifying trades,
+  // a zero denominator, or a legacy run lacking the metric row.
+  avgWin: z.number().nullable(),             // avg NET pnl of winning trades
+  avgLoss: z.number().nullable(),            // avg NET loss, positive magnitude
+  payoffRatio: z.number().nullable(),        // avgWin / avgLoss
+  expectancy: z.number().nullable(),         // net pnl per closed trade
+  recoveryFactor: z.number().nullable(),     // netPnl / max DD amount
+  timeInMarketPct: z.number().nullable(),    // % of eval-window bars in-market
+  maxConsecutiveLosses: z.number().nullable(),
+  barsInMarket: z.number().nullable(),
+  eligibleBars: z.number().nullable(),
 });
 export type BacktestMetrics = z.infer<typeof backtestMetricsSchema>;
 
@@ -369,6 +380,12 @@ export const walkForwardSummarySchema = z.object({
   totalTrades: z.number().int(),
   lowTradeFolds: z.number().int(),
   inconclusive: z.boolean(),
+  // Fold-level risk aggregates over eligible OOS folds (Phase 6a) —
+  // transparent stats, never pooled trades.
+  medianExpectancy: z.number().nullable(),
+  medianTimeInMarketPct: z.number().nullable(),
+  worstConsecutiveLosses: z.number().nullable(),
+  missingMetricFolds: z.number().int(),
 });
 export type WalkForwardSummary = z.infer<typeof walkForwardSummarySchema>;
 

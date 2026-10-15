@@ -211,6 +211,37 @@ maxDD = max((peak−equity)/peak) over the curve.
 - `EMA` seeds at the first close, `k = 2/(n+1)`; warm-up = `3× slow_period`
   fetched pre-window; first `slow` streamed bars emit NEUTRAL only.
 
+## Risk & research metrics (Phase 6a)
+
+- **All risk metrics are computed on NET trade P&L** (after commissions and
+  slippage), in `internal/metrics/metrics.go`, from the deterministic
+  chronological trade order — no DB access in calculation.
+- **Conventions:**
+  - `avg_win` = mean of net winners; `avg_loss` = mean net-loser magnitude
+    (positive). `payoff_ratio` = avg_win / avg_loss (magnitude comparison).
+  - `expectancy` = net_pnl / closed-trade count (currency, equals avg trade).
+  - `max_consecutive_losses` = longest streak of net < 0 trades in exit order;
+    break-even trades reset the streak; terminal liquidation counts.
+  - `bars_in_market` / `eligible_eval_bars` / `time_in_market_pct` — bar-based
+    exposure: position open on the bar within the evaluation window only
+    (no warm-up bars, entry bar counts, exit bar doesn't, liquidation bar
+    counts). It is NOT wall-clock time.
+  - `recovery_factor` = net_pnl / max_drawdown_amount (currency ratio; may be
+    negative). Max drawdown amount = peak-to-trough $ from the equity curve.
+- **Undefined = absent row = API null.** EAV `backtest_metrics` means no
+  migration was needed; legacy runs simply lack the rows and the API/UI show
+  null/"—" for them (never 0, never Inf/NaN).
+- **Walk-forward summary aggregation (no pooling):** median OOS expectancy,
+  median OOS time-in-market %, worst OOS consecutive-loss count across folds,
+  `missing_metric_folds` (folds where all risk metrics are unavailable, i.e.
+  pre-6a runs), `<30-trade folds` still flags thin evidence. Inconclusive
+  verdict rules unchanged.
+- **Sharpe/Sortino deliberately absent:** return frequency and annualization
+  are not yet defined.
+- Derived metrics share the run's provenance (dataset fingerprint,
+  engine/strategy versions); no version bump — historical runs are not
+  recalculated.
+
 ## Database schema
 
 `assets`, `strategies` (slugs, `supported_timeframes` jsonb), `strategy_signals`,

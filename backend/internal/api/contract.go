@@ -88,6 +88,17 @@ type BacktestMetrics struct {
 	GrossLoss     float64 `json:"grossLoss"`
 	// TotalCommissions is nil on legacy runs that predate the metric.
 	TotalCommissions *float64 `json:"totalCommissions"`
+	// Risk metrics (Phase 6a): nil when undefined — no qualifying trades,
+	// a zero denominator, or a legacy run that lacks the metric row.
+	AvgWin               *float64 `json:"avgWin"`          // avg NET pnl of winners
+	AvgLoss              *float64 `json:"avgLoss"`         // avg NET loss, positive magnitude
+	PayoffRatio          *float64 `json:"payoffRatio"`     // avgWin / avgLoss
+	Expectancy           *float64 `json:"expectancy"`      // net pnl per closed trade
+	RecoveryFactor       *float64 `json:"recoveryFactor"`  // netPnl / max DD amount
+	TimeInMarketPct      *float64 `json:"timeInMarketPct"` // % of eval bars in-market
+	MaxConsecutiveLosses *int     `json:"maxConsecutiveLosses"`
+	BarsInMarket         *int     `json:"barsInMarket"`
+	EligibleBars         *int     `json:"eligibleBars"`
 }
 
 // BacktestRun mirrors the planned backtest_runs table.
@@ -276,6 +287,12 @@ type WalkForwardSummary struct {
 	TotalTrades      int     `json:"totalTrades"`
 	LowTradeFolds    int     `json:"lowTradeFolds"` // <30 trades
 	Inconclusive     bool    `json:"inconclusive"`  // most folds under the trade threshold
+	// Fold-level risk aggregates over eligible OOS folds — fold trades are
+	// never pooled into one account; these are transparent summary stats.
+	MedianExpectancy       *float64 `json:"medianExpectancy"`       // across folds with expectancy
+	MedianTimeInMarketPct  *float64 `json:"medianTimeInMarketPct"`  // across folds with the metric
+	WorstConsecutiveLosses *int     `json:"worstConsecutiveLosses"` // worst single-fold streak
+	MissingMetricFolds     int      `json:"missingMetricFolds"`     // completed folds lacking risk metrics
 }
 
 // WalkForward is a saved experiment (summary in list, folds on GET).

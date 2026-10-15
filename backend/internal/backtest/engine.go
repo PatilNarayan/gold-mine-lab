@@ -80,9 +80,16 @@ type EquityPoint struct {
 }
 
 // Result is what the engine produced.
+// BarsInMarket / EligibleBars support bar-based time-in-market: a bar counts
+// as in-market when a position was held DURING it — the entry bar (filled at
+// its open) counts, the exit bar (closed at its open) does not, and the
+// end-of-window liquidation bar counts. EligibleBars = evaluation-window
+// bars only; warm-up bars never count either way.
 type Result struct {
-	Trades []Trade
-	Equity []EquityPoint
+	Trades       []Trade
+	Equity       []EquityPoint
+	BarsInMarket int
+	EligibleBars int
 }
 
 // Validate guards against nonsensical inputs before a run starts.
@@ -167,6 +174,10 @@ func (e *Engine) Run(ctx context.Context, in Input) (Result, error) {
 		}
 		pending = strategy.ActionNeutral
 
+		// Position held during this bar: entry filled at the open counts,
+		// an exit at the open does not (position already closed).
+		inMarketThisBar := pos != nil
+
 		// Evaluate this bar (close). Streaming evaluators see only this bar;
 		// prefix evaluation sees candles[:i+1] — never the future.
 		var sig strategy.Signal
@@ -196,6 +207,10 @@ func (e *Engine) Run(ctx context.Context, in Input) (Result, error) {
 
 		// Mark-to-market equity at this bar's close (window bars only).
 		if i >= in.WindowStart {
+			res.EligibleBars++
+			if inMarketThisBar {
+				res.BarsInMarket++
+			}
 			mtm := equity
 			if pos != nil {
 				mtm += (c.Close - pos.EntryPrice) * pos.Quantity

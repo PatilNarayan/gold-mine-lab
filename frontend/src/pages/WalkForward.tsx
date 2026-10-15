@@ -257,7 +257,7 @@ function ExperimentDetail({ w, nameOf }: { w: WalkForward; nameOf: (s: string) =
         <h3 className="section-label">OOS ROBUSTNESS (per strategy, OOS folds only)</h3>
         <table className="w-full text-sm">
           <thead><tr className="text-left text-xs text-content-3">
-            {['Strategy', 'Folds', 'Positive', 'Median ret', 'Worst ret', 'Worst DD', 'OOS trades', '<30-trade folds', 'Verdict'].map((h) => <th key={h} className="py-1 pr-3">{h}</th>)}
+            {['Strategy', 'Folds', 'Positive', 'Median ret', 'Worst ret', 'Worst DD', 'OOS trades', 'Median expectancy', 'Median in-mkt', 'Worst streak', 'Missing metrics', '<30-trade folds', 'Verdict'].map((h) => <th key={h} className="py-1 pr-3">{h}</th>)}
           </tr></thead>
           <tbody>
             {Object.entries(summaries).map(([sid, s]) => (
@@ -269,6 +269,10 @@ function ExperimentDetail({ w, nameOf }: { w: WalkForward; nameOf: (s: string) =
                 <td className="tnum">{formatPercent(s.worstReturnPct)}</td>
                 <td className="tnum">{formatPercent(-s.worstMaxDrawdown)}</td>
                 <td className="tnum">{s.totalTrades}</td>
+                <td className="tnum">{s.medianExpectancy != null ? formatSignedCurrency(s.medianExpectancy) : '—'}</td>
+                <td className="tnum">{s.medianTimeInMarketPct != null ? `${s.medianTimeInMarketPct.toFixed(1)}%` : '—'}</td>
+                <td className="tnum">{s.worstConsecutiveLosses ?? '—'}</td>
+                <td className="tnum">{s.missingMetricFolds || '—'}</td>
                 <td className="tnum">{s.lowTradeFolds}</td>
                 <td className={s.inconclusive ? 'text-amber-400' : 'text-green-400'}>{s.inconclusive ? 'inconclusive' : 'usable evidence'}</td>
               </tr>
@@ -300,7 +304,7 @@ function ExperimentDetail({ w, nameOf }: { w: WalkForward; nameOf: (s: string) =
               {openFold === fi && (
                 <table className="mt-2 w-full text-xs">
                   <thead><tr className="text-left text-content-3">
-                    {['Strategy', 'Sample', 'Status', 'Net P&L', 'Trades', 'Win rate', 'PF', 'Max DD', 'Commissions'].map((h) => <th key={h} className="py-1 pr-2">{h}</th>)}
+                    {['Strategy', 'Sample', 'Status', 'Net P&L', 'Trades', 'Win rate', 'PF', 'Max DD', 'Avg win', 'Avg loss', 'Payoff', 'Expectancy', 'Cons. losses', 'In market', 'Recovery', 'Commissions'].map((h) => <th key={h} className="py-1 pr-2">{h}</th>)}
                   </tr></thead>
                   <tbody>
                     {rows.map((f) => <FoldRows key={f.strategyId} f={f} nameOf={nameOf} />)}
@@ -341,6 +345,13 @@ function FoldRows({ f, nameOf }: { f: WalkForwardFold; nameOf: (s: string) => st
             <td className="tnum">{m ? formatPercent(m.winRate) : '—'}</td>
             <td className="tnum">{m?.profitFactor?.toFixed(2) ?? '—'}</td>
             <td className="tnum">{m ? formatPercent(-m.maxDrawdown) : '—'}</td>
+            <td className="tnum">{m?.avgWin != null ? formatSignedCurrency(m.avgWin) : '—'}</td>
+            <td className="tnum">{m?.avgLoss != null ? `-${formatCurrency(m.avgLoss)}` : '—'}</td>
+            <td className="tnum">{m?.payoffRatio != null ? m.payoffRatio.toFixed(2) : '—'}</td>
+            <td className="tnum">{m?.expectancy != null ? formatSignedCurrency(m.expectancy) : '—'}</td>
+            <td className="tnum">{m?.maxConsecutiveLosses ?? '—'}</td>
+            <td className="tnum">{m?.timeInMarketPct != null ? `${m.timeInMarketPct.toFixed(1)}%` : '—'}</td>
+            <td className="tnum">{m?.recoveryFactor != null ? m.recoveryFactor.toFixed(2) : '—'}</td>
             <td className="tnum">{m?.totalCommissions != null ? formatCurrency(m.totalCommissions) : '—'}</td>
           </tr>
         );
