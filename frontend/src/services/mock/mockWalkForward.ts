@@ -23,15 +23,26 @@ function addMonths(iso: string, months: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+function addDays(iso: string, days: number): string {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// Same half-open semantics as the backend: folds live in [start, end+1day),
+// every boundary is anchored on the ORIGINAL start date, and the stored
+// isEnd/oosEnd are the inclusive evaluated dates (OOS starts the day after
+// IS ends — no shared candle, no gap).
 function foldsFor(req: WalkForwardRequest): { isStart: string; isEnd: string; oosStart: string; oosEnd: string }[] {
   const step = req.stepMonths || req.oosMonths;
+  const endExcl = addDays(req.endDate, 1);
   const out = [];
   for (let i = 0; ; i++) {
     const isStart = addMonths(req.startDate, i * step);
-    const isEnd = addMonths(isStart, req.inSampleMonths);
-    const oosEnd = addMonths(isEnd, req.oosMonths);
-    if (oosEnd > req.endDate) break;
-    out.push({ isStart, isEnd, oosStart: isEnd, oosEnd });
+    const isEndEx = addMonths(req.startDate, i * step + req.inSampleMonths);
+    const oosEndEx = addMonths(req.startDate, i * step + req.inSampleMonths + req.oosMonths);
+    if (oosEndEx > endExcl) break;
+    out.push({ isStart, isEnd: addDays(isEndEx, -1), oosStart: isEndEx, oosEnd: addDays(oosEndEx, -1) });
   }
   return out;
 }

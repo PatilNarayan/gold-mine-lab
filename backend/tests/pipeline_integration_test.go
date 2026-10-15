@@ -251,7 +251,7 @@ func TestWalkForwardStatuses(t *testing.T) {
 		}
 		ie, _ := time.Parse("2006-01-02", f.IsEnd)
 		os_, _ := time.Parse("2006-01-02", f.OosStart)
-		if !os_.Equal(ie) {
+		if !os_.Equal(ie.AddDate(0, 0, 1)) {
 			t.Errorf("fold %d OOS not adjacent to IS", i)
 		}
 		oe, _ := time.Parse("2006-01-02", f.OosEnd)

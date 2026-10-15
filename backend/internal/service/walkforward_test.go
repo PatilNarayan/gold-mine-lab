@@ -12,44 +12,84 @@ func d(s string) time.Time {
 	return t
 }
 
+func TestAddMonthsUTCClamps(t *testing.T) {
+	cases := map[string]string{
+		"2010-01-31+1": "2010-02-28", // non-leap year
+		"2012-01-31+1": "2012-02-29", // leap year
+		"2010-01-31+2": "2010-03-31", // anchored, no drift through February
+		"2010-08-31+1": "2010-09-30",
+		"2010-01-31+0": "2010-01-31",
+		"2010-03-15+1": "2010-04-15", // interior day preserved
+	}
+	months := map[string]int{
+		"2010-01-31+1": 1, "2012-01-31+1": 1, "2010-01-31+2": 2,
+		"2010-08-31+1": 1, "2010-01-31+0": 0, "2010-03-15+1": 1,
+	}
+	starts := map[string]string{
+		"2010-01-31+1": "2010-01-31", "2012-01-31+1": "2012-01-31",
+		"2010-01-31+2": "2010-01-31", "2010-08-31+1": "2010-08-31",
+		"2010-01-31+0": "2010-01-31", "2010-03-15+1": "2010-03-15",
+	}
+	for k, want := range cases {
+		if got := addMonthsUTC(d(starts[k]), months[k]).Format("2006-01-02"); got != want {
+			t.Errorf("%s: got %s, want %s", k, got, want)
+		}
+	}
+}
+
 func TestGenerateFolds(t *testing.T) {
 	// 7y range, 2y IS + 1y OOS, step=OOS: fold i needs i*12+36 ≤ 84 months
-	// → folds starting 2010..2014 = 5.
-	folds := generateFolds(d("2010-01-01"), d("2017-01-01"), 24, 12, 12)
+	// → folds starting 2010..2014 = 5. endExcl = inclusive end + 1 day.
+	folds := generateFolds(d("2010-01-01"), d("2017-01-02"), 24, 12, 12)
 	if len(folds) != 5 {
 		t.Fatalf("got %d folds, want 5", len(folds))
 	}
 	f0 := folds[0]
-	if f0.IsStart != d("2010-01-01") || f0.IsEnd != d("2012-01-01") ||
-		f0.OosStart != d("2012-01-01") || f0.OosEnd != d("2013-01-01") {
+	if f0.IsStart != d("2010-01-01") || f0.IsEndEx != d("2012-01-01") || f0.OosEndEx != d("2013-01-01") {
 		t.Errorf("fold0 boundaries wrong: %+v", f0)
 	}
 	f1 := folds[1]
-	if f1.OosStart != d("2013-01-01") || f1.OosEnd != d("2014-01-01") {
+	if f1.IsEndEx != d("2013-01-01") || f1.OosEndEx != d("2014-01-01") {
 		t.Errorf("fold1 OOS wrong: %+v", f1)
 	}
 	// OOS never overlaps: next fold's OOS starts at/after previous OOS end.
 	for i := 1; i < len(folds); i++ {
-		if folds[i].OosStart.Before(folds[i-1].OosEnd) {
+		if folds[i].IsEndEx.Before(folds[i-1].OosEndEx) {
 			t.Fatalf("OOS windows overlap: %v vs %v", folds[i-1], folds[i])
+		}
+	}
+	// Inclusive conversion: IS and OOS share no candle date, no gap.
+	for _, f := range folds {
+		isS, isE, oosS, oosE := foldDates(f)
+		if !isE.AddDate(0, 0, 1).Equal(oosS) {
+			t.Errorf("IS/OOS not adjacent: %+v", f)
+		}
+		if isE.Before(isS) || oosE.Before(oosS) {
+			t.Errorf("empty window: %+v", f)
 		}
 	}
 	// A partial tail is dropped, not silently shortened: range through
 	// mid-2016 fits 4 folds (last OOS ends 2016-01); the 5th's OOS
 	// (ending 2017-01) doesn't fit.
-	folds = generateFolds(d("2010-01-01"), d("2016-06-30"), 24, 12, 12)
+	folds = generateFolds(d("2010-01-01"), d("2016-07-01"), 24, 12, 12)
 	if len(folds) != 4 {
 		t.Fatalf("partial tail must be dropped, got %d folds", len(folds))
 	}
+	// A fold whose OOS end lands exactly on the exclusive range end fits:
+	// inclusive end 2012-12-31 → endExcl 2013-01-01 = fold0 OosEndEx.
+	folds = generateFolds(d("2010-01-01"), d("2013-01-01"), 24, 12, 12)
+	if len(folds) != 1 || !folds[0].OosEndEx.Equal(d("2013-01-01")) {
+		t.Fatalf("fold ending on exclusive end must fit, got %+v", folds)
+	}
 	// Range shorter than one full fold → empty (rejected by validation).
-	if got := generateFolds(d("2020-01-01"), d("2021-06-01"), 12, 12, 12); len(got) != 0 {
+	if got := generateFolds(d("2020-01-01"), d("2021-06-02"), 12, 12, 12); len(got) != 0 {
 		t.Fatalf("expected 0 folds, got %d", len(got))
 	}
-	// Every OOS window is strictly after its IS window by construction.
-	for _, f := range folds {
-		if !f.OosStart.Equal(f.IsEnd) || !f.OosEnd.After(f.OosStart) {
-			t.Errorf("bad OOS adjacency: %+v", f)
-		}
+	// Anchored month math: starting Jan 31 steps stay month-end (no drift
+	// to mid-month dates through February).
+	folds = generateFolds(d("2010-01-31"), d("2015-01-01"), 1, 1, 1)
+	if folds[1].IsStart != d("2010-02-28") || folds[2].IsStart != d("2010-03-31") {
+		t.Fatalf("anchored month-end boundaries wrong: %+v", folds[:3])
 	}
 }
 

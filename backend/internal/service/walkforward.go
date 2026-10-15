@@ -18,29 +18,61 @@ import (
 // no parameters are fitted, nothing learns from OOS results, and each fold
 // is an independent engine run through the standard Execute path.
 
+// foldWindow holds HALF-OPEN fold boundaries: the in-sample window covers
+// [IsStart, IsEndEx) and the out-of-sample window covers [IsEndEx, OosEndEx),
+// so no candle date can belong to both windows and adjacent windows have no
+// gap. The public backtest API takes inclusive end dates — convert with
+// excl.AddDate(0, 0, -1) at the boundary (see foldDates).
 type foldWindow struct {
 	Index    int
-	IsStart  time.Time
-	IsEnd    time.Time
-	OosStart time.Time
-	OosEnd   time.Time
+	IsStart  time.Time // inclusive
+	IsEndEx  time.Time // exclusive — also the OOS start
+	OosEndEx time.Time // exclusive
+}
+
+// addMonthsUTC adds whole calendar months anchored at d: the day of month is
+// preserved when it exists in the target month and clamped to its last day
+// otherwise (Jan 31 + 1m → Feb 28/29, Aug 31 + 1m → Sep 30). Boundaries are
+// UTC date-only; chained folds anchor on the ORIGINAL start date so clamping
+// can never accumulate drift.
+func addMonthsUTC(d time.Time, months int) time.Time {
+	y, m, _ := d.Date()
+	total := (int(m) - 1) + months
+	if total < 0 {
+		total = 0
+	}
+	day := d.Day()
+	last := time.Date(y+total/12, time.Month(total%12+2), 0, 0, 0, 0, 0, time.UTC).Day()
+	if day > last {
+		day = last
+	}
+	return time.Date(y+total/12, time.Month(total%12+1), day, 0, 0, 0, 0, time.UTC)
 }
 
 // generateFolds rolls (isMonths, oosMonths) windows forward by stepMonths
-// over [start, end]. OOS windows never overlap when step >= oos (enforced);
-// a fold is emitted only while its OOS window fits inside the range.
-func generateFolds(start, end time.Time, isMonths, oosMonths, stepMonths int) []foldWindow {
+// over [start, endExcl). A fold is emitted only while its whole OOS window
+// fits inside the range — an incomplete tail fold is dropped, never
+// shortened. OOS windows never overlap when step >= oos (enforced).
+func generateFolds(start, endExcl time.Time, isMonths, oosMonths, stepMonths int) []foldWindow {
 	var folds []foldWindow
 	for i := 0; ; i++ {
-		isStart := start.AddDate(0, i*stepMonths, 0)
-		isEnd := isStart.AddDate(0, isMonths, 0)
-		oosEnd := isEnd.AddDate(0, oosMonths, 0)
-		if oosEnd.After(end) {
+		isStart := addMonthsUTC(start, i*stepMonths)
+		isEndEx := addMonthsUTC(start, i*stepMonths+isMonths)
+		oosEndEx := addMonthsUTC(start, i*stepMonths+isMonths+oosMonths)
+		if oosEndEx.After(endExcl) {
 			break
 		}
-		folds = append(folds, foldWindow{Index: i, IsStart: isStart, IsEnd: isEnd, OosStart: isEnd, OosEnd: oosEnd})
+		folds = append(folds, foldWindow{Index: i, IsStart: isStart, IsEndEx: isEndEx, OosEndEx: oosEndEx})
 	}
 	return folds
+}
+
+// foldDates converts a fold's half-open boundaries into the inclusive
+// start/end dates the backtest API (and persisted fold rows) use: isEnd is
+// the last in-sample date and oosStart is the first OOS date — the two
+// windows share no candle date.
+func foldDates(f foldWindow) (isStart, isEnd, oosStart, oosEnd time.Time) {
+	return f.IsStart, f.IsEndEx.AddDate(0, 0, -1), f.IsEndEx, f.OosEndEx.AddDate(0, 0, -1)
 }
 
 func (s *Service) validateWalkForward(req api.WalkForwardRequest) ([]foldWindow, error) {
@@ -75,7 +107,10 @@ func (s *Service) validateWalkForward(req api.WalkForwardRequest) ([]foldWindow,
 	if step < req.OosMonths {
 		return verr("step must be >= OOS length so OOS windows never overlap")
 	}
-	folds := generateFolds(start, end, req.InSampleMonths, req.OosMonths, step)
+	// The public range is inclusive; internally folds live in the half-open
+	// interval [start, end+1day) so a fold's OOS end may equal the day after
+	// the requested end without exceeding it.
+	folds := generateFolds(start, end.AddDate(0, 0, 1), req.InSampleMonths, req.OosMonths, step)
 	if len(folds) == 0 {
 		return verr("range too short: no complete in-sample + OOS fold fits")
 	}
@@ -111,11 +146,12 @@ func (s *Service) PreviewWalkForward(ctx context.Context, req api.WalkForwardReq
 		Commission: req.Commission, Slippage: req.Slippage,
 	}
 	for _, f := range folds {
+		isS, isE, oosS, oosE := foldDates(f)
 		for _, l := range req.Legs {
 			out.Folds = append(out.Folds, api.WalkForwardFold{
 				FoldIndex: f.Index, StrategyID: l.StrategyID,
-				IsStart: f.IsStart.Format("2006-01-02"), IsEnd: f.IsEnd.Format("2006-01-02"),
-				OosStart: f.OosStart.Format("2006-01-02"), OosEnd: f.OosEnd.Format("2006-01-02"),
+				IsStart: isS.Format("2006-01-02"), IsEnd: isE.Format("2006-01-02"),
+				OosStart: oosS.Format("2006-01-02"), OosEnd: oosE.Format("2006-01-02"),
 				Status: "pending",
 			})
 		}
@@ -139,7 +175,8 @@ func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardReq
 	// request the engine would reject anyway.
 	for _, leg := range req.Legs {
 		for _, f := range folds {
-			for _, w := range [][2]time.Time{{f.IsStart, f.IsEnd}, {f.OosStart, f.OosEnd}} {
+			isS, isE, oosS, oosE := foldDates(f)
+			for _, w := range [][2]time.Time{{isS, isE}, {oosS, oosE}} {
 				if _, _, err := s.validateRequest(ctx, s.wfLegRequest(req, leg, w[0], w[1], nil, "")); err != nil {
 					var ve *api.ValidationError
 					if errors.As(err, &ve) {
@@ -178,11 +215,12 @@ func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardReq
 	// even while/in case it fails partway.
 	foldIDs := map[string]string{} // "foldIdx|strategy" → fold row id
 	for _, f := range folds {
+		isS, isE, oosS, oosE := foldDates(f)
 		for _, leg := range req.Legs {
 			fid, err := s.repos.WalkForwards.CreateFold(ctx, repository.WalkForwardFoldRow{
 				ExperimentID: expID, FoldIndex: f.Index, StrategyID: leg.StrategyID,
-				IsStart: f.IsStart.Format("2006-01-02"), IsEnd: f.IsEnd.Format("2006-01-02"),
-				OosStart: f.OosStart.Format("2006-01-02"), OosEnd: f.OosEnd.Format("2006-01-02"),
+				IsStart: isS.Format("2006-01-02"), IsEnd: isE.Format("2006-01-02"),
+				OosStart: oosS.Format("2006-01-02"), OosEnd: oosE.Format("2006-01-02"),
 			})
 			if err != nil {
 				return api.WalkForward{}, fmt.Errorf("create fold %d %s: %w", f.Index, leg.StrategyID, err)
@@ -191,9 +229,10 @@ func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardReq
 		}
 	}
 
-	total, failed := 0, 0
+	total, failed, persistErrs := 0, 0, 0
 	var firstErr string
 	for _, f := range folds {
+		isS, isE, oosS, oosE := foldDates(f)
 		for _, leg := range req.Legs {
 			total++
 			fid := foldIDs[fmt.Sprintf("%d|%s", f.Index, leg.StrategyID)]
@@ -204,8 +243,8 @@ func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardReq
 				start, end time.Time
 				runID      **string
 			}{
-				{"in_sample", f.IsStart, f.IsEnd, &isID},
-				{"out_of_sample", f.OosStart, f.OosEnd, &oosID},
+				{"in_sample", isS, isE, &isID},
+				{"out_of_sample", oosS, oosE, &oosID},
 			} {
 				br := s.wfLegRequest(req, leg, w.start, w.end, &expID, w.sample)
 				run, err := s.Execute(ctx, br)
@@ -220,15 +259,25 @@ func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardReq
 				id := run.ID
 				*w.runID = &id
 			}
+			foldStatus := "completed"
 			if foldErr != "" {
+				foldStatus = "failed"
 				failed++
 				if firstErr == "" {
 					firstErr = fmt.Sprintf("fold %d %s: %s", f.Index, leg.StrategyID, foldErr)
 				}
-				errCopy := foldErr
-				_ = s.repos.WalkForwards.SetFoldResult(ctx, fid, "failed", isID, oosID, &errCopy)
-			} else {
-				_ = s.repos.WalkForwards.SetFoldResult(ctx, fid, "completed", isID, oosID, nil)
+			}
+			var errCopy *string
+			if foldErr != "" {
+				errCopy = &foldErr
+			}
+			// A failed fold-result write must not leave the experiment looking
+			// cleaner than it is — the fold would stay "pending" in the DB
+			// while the summary claimed it ran.
+			if err := s.repos.WalkForwards.SetFoldResult(ctx, fid, foldStatus, isID, oosID, errCopy); err != nil {
+				persistErrs++
+				s.log.Error("walk-forward fold result not persisted", "experiment_id", expID,
+					"fold", f.Index, "strategy_id", leg.StrategyID, "error", err.Error())
 			}
 		}
 	}
@@ -236,6 +285,19 @@ func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardReq
 	status := "completed"
 	var errMsg *string
 	switch {
+	case persistErrs > 0:
+		// Distinguish DB persistence failures from strategy-run failures:
+		// member runs exist, but the fold records don't reflect them, so the
+		// experiment can never claim "completed".
+		status = "partial_failed"
+		if persistErrs == total {
+			status = "failed"
+		}
+		msg := fmt.Sprintf("%d fold result(s) could not be persisted", persistErrs)
+		if firstErr != "" {
+			msg += "; first run error: " + firstErr
+		}
+		errMsg = &msg
 	case failed == total:
 		status = "failed"
 		errMsg = &firstErr
