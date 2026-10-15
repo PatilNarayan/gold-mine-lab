@@ -1,5 +1,6 @@
 import type {
   BacktestService,
+  SignalResearchService,
   GraphService,
   ComparisonService,
   WalkForwardService,
@@ -29,6 +30,8 @@ import { httpWalkForwardService } from './api/httpWalkForward';
 import { mockWalkForwardService } from './mock/mockWalkForward';
 import { httpGraphService } from './api/httpStrategyGraph';
 import { mockGraphService } from './mock/mockStrategyGraph';
+import { httpSignalResearchService } from './api/httpSignalResearch';
+import { mockSignalResearchService } from './mock/mockSignalResearch';
 
 export interface Services {
   market: MarketService;
@@ -38,6 +41,7 @@ export interface Services {
   comparison: ComparisonService;
   walkForward: WalkForwardService;
   graph: GraphService;
+  signalResearch: SignalResearchService;
   health: HealthService;
   realtime: RealtimeClient;
 }
@@ -57,6 +61,7 @@ export function createServices(mode: DataMode = dataMode): Services {
       comparison: httpComparisonService,
       walkForward: httpWalkForwardService,
       graph: httpGraphService,
+      signalResearch: httpSignalResearchService,
       health: httpHealthService,
       realtime: new NoopRealtimeClient(),
     };
@@ -69,6 +74,7 @@ export function createServices(mode: DataMode = dataMode): Services {
     comparison: mockComparisonService,
     walkForward: mockWalkForwardService,
     graph: mockGraphService,
+    signalResearch: mockSignalResearchService,
     health: mockHealthService,
     realtime: new NoopRealtimeClient(),
   };

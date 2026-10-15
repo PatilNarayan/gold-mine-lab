@@ -542,3 +542,70 @@ export const graphDiagnosticsSchema = z.object({
   traces: z.array(graphTraceRowSchema),
 });
 export type GraphDiagnostics = z.infer<typeof graphDiagnosticsSchema>;
+
+/* ------------------------------- Phase 9: signal research ---------------- */
+
+export const signalResearchLegSchema = z.object({
+  strategyId: z.string(),
+  parameters: z.record(z.any()).optional(),
+});
+export const signalResearchRequestSchema = z.object({
+  name: z.string().optional(),
+  legs: z.array(signalResearchLegSchema).min(2).max(8),
+  assetId: z.string(),
+  timeframe: z.string(),
+  startDate: z.string(),
+  endDate: z.string(),
+  eventStudy: z.boolean().optional(),
+});
+export const signalCandidateStatsSchema = z.object({
+  strategyId: z.string(),
+  version: z.string(),
+  evaluatedBars: z.number(),
+  buy: z.number(),
+  sell: z.number(),
+  neutral: z.number(),
+  actionablePct: z.number(),
+  buyEpisodes: z.number(),
+  sellEpisodes: z.number(),
+  avgScore: z.number().nullish(),
+});
+export const signalPairAgreementSchema = z.object({
+  a: z.string(), b: z.string(),
+  bothBuy: z.number(), bothSell: z.number(),
+  sameDirection: z.number(), opposite: z.number(),
+  oneActionable: z.number(), bothNeutral: z.number(),
+  coActionable: z.number(),
+  agreementPct: z.number().nullish(),
+  conflictPct: z.number().nullish(),
+});
+export const signalHorizonResultSchema = z.object({
+  horizon: z.number(), strategyId: z.string(),
+  eligible: z.number(), excluded: z.number(),
+  meanReturn: z.number().nullish(), medianReturn: z.number().nullish(),
+  positivePct: z.number().nullish(), worstReturn: z.number().nullish(),
+});
+export const signalForwardResultSchema = z.object({
+  strategyId: z.string(),
+  horizons: z.array(signalHorizonResultSchema),
+});
+export const signalResearchSchema = z.object({
+  id: z.string(), status: z.string(), name: z.string(),
+  assetId: z.string(), timeframe: z.string(),
+  startDate: z.string(), endDate: z.string(), eventStudy: z.boolean(),
+  dataset: z.string().nullish(), lastCandle: z.string().nullish(),
+  evaluatedBars: z.number(), warmupBars: z.number(),
+  strategyIds: z.array(z.string()),
+  candidates: z.array(signalCandidateStatsSchema).nullish(),
+  pairs: z.array(signalPairAgreementSchema).nullish(),
+  forward: z.array(signalForwardResultSchema).nullish(),
+  error: z.string().nullish(),
+  createdAt: z.string(),
+});
+export type SignalResearchLeg = z.infer<typeof signalResearchLegSchema>;
+export type SignalResearchRequest = z.infer<typeof signalResearchRequestSchema>;
+export type SignalCandidateStats = z.infer<typeof signalCandidateStatsSchema>;
+export type SignalPairAgreement = z.infer<typeof signalPairAgreementSchema>;
+export type SignalHorizonResult = z.infer<typeof signalHorizonResultSchema>;
+export type SignalForwardResult = z.infer<typeof signalForwardResultSchema>;
+export type SignalResearch = z.infer<typeof signalResearchSchema>;

@@ -257,3 +257,25 @@ type MetricRepository interface {
 	// highest net P&L.
 	BestStrategyByNetPnl(ctx context.Context) (id, name string, ok bool, err error)
 }
+
+// SignalResearchRow is one persisted cross-strategy analysis: the full
+// request plus a summary-only result (per-candle signals are never stored).
+type SignalResearchRow struct {
+	ID          string
+	Status      string
+	Request     []byte
+	Result      []byte
+	Error       *string
+	CreatedAt   time.Time
+	CompletedAt *time.Time
+}
+
+// SignalResearchRepository persists signal-research analyses.
+type SignalResearchRepository interface {
+	CreateSignalResearch(ctx context.Context, request []byte) (string, error)
+	// SetSignalResearchResult writes status/result/error and stamps
+	// completed_at for terminal statuses.
+	SetSignalResearchResult(ctx context.Context, id, status string, result []byte, errMsg *string) error
+	GetSignalResearch(ctx context.Context, id string) (SignalResearchRow, error)
+	ListSignalResearch(ctx context.Context) ([]SignalResearchRow, error)
+}

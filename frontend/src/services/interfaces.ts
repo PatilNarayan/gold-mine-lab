@@ -8,6 +8,8 @@ import type {
   ComparisonRequest,
   WalkForward,
   WalkForwardRequest,
+  SignalResearch,
+  SignalResearchRequest,
   DashboardSummary,
   MarketSummary,
   PagedTrades,
@@ -82,4 +84,10 @@ export interface GraphService {
   createRevision(id: string, definition: GraphDefinition): Promise<GraphRevision>;
   runBacktest(id: string, revision: number, request: GraphBacktestRequest): Promise<BacktestRun>;
   diagnostics(id: string, revision: number, request: GraphDiagnosticsRequest): Promise<GraphDiagnostics>;
+}
+
+export interface SignalResearchService {
+  run(request: SignalResearchRequest): Promise<SignalResearch>;
+  list(): Promise<SignalResearch[]>;
+  get(id: string): Promise<SignalResearch>;
 }

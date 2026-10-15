@@ -9,6 +9,7 @@ import {
   Layers,
   LayoutDashboard,
   Settings,
+  Microscope,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -27,6 +28,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/compare', label: 'Compare', icon: GitCompareArrows },
   { to: '/walkforward', label: 'Walk-Forward', icon: Footprints },
   { to: '/graphs', label: 'Graphs', icon: GitFork },
+  { to: '/research', label: 'Research', icon: Microscope },
   { to: '/results', label: 'Results', icon: BarChart3 },
   { to: '/trades', label: 'Trades', icon: ArrowLeftRight },
   { to: '/settings', label: 'Settings', icon: Settings },

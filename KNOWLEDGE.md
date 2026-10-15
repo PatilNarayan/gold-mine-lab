@@ -377,3 +377,16 @@ cd frontend && npm run typecheck && npm run lint && npm test && npm run build
 Auth · live market data / websockets · broker execution · async backtest
 queue (POST is synchronous today) · more strategies/assets · DB-driven
 strategy registry · Sharpe/benchmark metrics · frontend auth gating.
+
+## Signal Research Lab (Phase 9)
+
+Cross-strategy signal research (`service/signalresearch.go`, `api/routes.go` registerSignalResearchRoutes, `internal/repository/postgres/signalresearch.go`, migration `000006`):
+
+- **Candidates**: 2–8 legs (`srMaxLegs`), each a built-in strategy ID (params applied via `Configurable.Configure`) or `graph:<uuid>:v<n>` (exact immutable revision, params rejected via `graphLegParameters`). Shared asset/timeframe/dataset/dates.
+- **Shared replay**: ONE `data.Range` fetch (warmup = max across candidates). Each candidate gets its own `NewStream()`; every candidate sees every candle in timestamp order. `actions[leg][wi]`/`scores[leg][wi]` recorded only for `wi >= windowStart` — warm-up bars are streamed but never counted (`evaluatedBars`/`warmupBars` reported).
+- **Stats per candidate**: BUY/SELL/NEUTRAL raw counts, actionable %, BUY/SELL **episodes** (consecutive same-direction runs — NOT trades), avg score over actionable bars, strategy version / graph revision id.
+- **Pairwise**: timestamp-aligned counts — bothBuy, bothSell, sameDirection, opposite (BUY↔SELL conflict), oneActionable, bothNeutral, coActionable. `agreementPct`/`conflictPct` are percentages **of co-actionable bars** and are `null` when coActionable = 0. NEUTRAL/NEUTRAL is NOT agreement.
+- **Forward study** (when `request.eventStudy`): BUY episodes only, horizons 1/5/10/20 (`srHorizons`). Event = first BUY bar of each episode; entry = NEXT candle's open; exit = close h candles after signal bar. Incomplete horizons are excluded, never shortened. Returns are gross % price moves — no costs, sizing, management; NOT P&L, NOT predictions. No forward SELL study (SELL = long-exit semantics).
+- **No look-ahead**: signals come only from streams fed past+current candles; outcomes never feed back into generation/config. Forward study is a separate reporting layer.
+- **API**: `POST /api/signal-research` (execute+persist), `GET /api/signal-research` (summary list — candidates/pairs/forward nulled), `GET /api/signal-research/:id`. Result persisted as JSONB on `signal_research` (status pending→completed/failed; failures persist honestly). Summary records only — never per-candle signals. `srMaxEvalBars` = 250_000.
+- Frontend: `/research` + `/research/:id` (`pages/SignalResearch.tsx`), services `signalResearch` (http + deterministic mock), `useSignalResearch*` hooks.

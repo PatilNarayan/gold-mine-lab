@@ -525,3 +525,106 @@ type GraphDiagnostics struct {
 	Nodes         []GraphNodeSummary `json:"nodes"`
 	Traces        []GraphTraceRow    `json:"traces"`
 }
+
+// --- Signal research (Phase 9) ----------------------------------------------
+
+// SignalResearchLeg selects one candidate: a built-in strategy id or a saved
+// graph slug `graph:<uuid>:v<n>`. Parameters apply to built-ins only — graph
+// legs reject overrides (fixed by the saved revision).
+type SignalResearchLeg struct {
+	StrategyID string         `json:"strategyId" binding:"required"`
+	Parameters map[string]any `json:"parameters,omitempty"`
+}
+
+// SignalResearchRequest is the body of POST /api/signal-research.
+type SignalResearchRequest struct {
+	Name       string             `json:"name,omitempty"`
+	Legs       []SignalResearchLeg `json:"legs" binding:"required"`
+	AssetID    string             `json:"assetId" binding:"required"`
+	Timeframe  market.Timeframe   `json:"timeframe" binding:"required"`
+	StartDate  string             `json:"startDate" binding:"required"`
+	EndDate    string             `json:"endDate" binding:"required"`
+	EventStudy bool               `json:"eventStudy,omitempty"`
+}
+
+// SignalCandidateStats aggregates one candidate's replayed signals.
+// Episodes are consecutive runs of the same actionable direction — they are
+// NOT trades.
+type SignalCandidateStats struct {
+	StrategyID    string   `json:"strategyId"`
+	Version       string   `json:"version"`
+	EvaluatedBars int      `json:"evaluatedBars"`
+	Buy           int      `json:"buy"`
+	Sell          int      `json:"sell"`
+	Neutral       int      `json:"neutral"`
+	ActionablePct float64  `json:"actionablePct"`
+	BuyEpisodes   int      `json:"buyEpisodes"`
+	SellEpisodes  int      `json:"sellEpisodes"`
+	AvgScore      *float64 `json:"avgScore,omitempty"`
+}
+
+// SignalPairAgreement is the pairwise timestamp-aligned comparison.
+// Percentages are null when there are no co-actionable bars. SELL here is a
+// long-EXIT signal, not a short-entry forecast.
+type SignalPairAgreement struct {
+	A             string   `json:"a"`
+	B             string   `json:"b"`
+	BothBuy       int      `json:"bothBuy"`
+	BothSell      int      `json:"bothSell"`
+	SameDirection int      `json:"sameDirection"`
+	Opposite      int      `json:"opposite"`
+	OneActionable int      `json:"oneActionable"`
+	BothNeutral   int      `json:"bothNeutral"`
+	CoActionable  int      `json:"coActionable"`
+	AgreementPct  *float64 `json:"agreementPct,omitempty"`
+	ConflictPct   *float64 `json:"conflictPct,omitempty"`
+}
+
+// SignalHorizonResult is one horizon of the BUY-episode forward study.
+// Returns are gross price movements (next-open entry, h-bars-later close),
+// NOT strategy P&L — no costs, sizing, or position management.
+type SignalHorizonResult struct {
+	Horizon        int      `json:"horizon"`
+	StrategyID     string   `json:"strategyId"`
+	Eligible       int      `json:"eligible"`
+	Excluded       int      `json:"excluded"`
+	MeanReturn     *float64 `json:"meanReturn,omitempty"`
+	MedianReturn   *float64 `json:"medianReturn,omitempty"`
+	PositivePct    *float64 `json:"positivePct,omitempty"`
+	WorstReturn    *float64 `json:"worstReturn,omitempty"`
+}
+
+// SignalForwardResult groups horizons per candidate.
+type SignalForwardResult struct {
+	StrategyID string                 `json:"strategyId"`
+	Horizons   []SignalHorizonResult  `json:"horizons"`
+}
+
+// SignalResearch is a saved analysis (full detail on GET, summary on list).
+type SignalResearch struct {
+	ID          string                  `json:"id"`
+	Status      string                  `json:"status"`
+	Name        string                  `json:"name"`
+	AssetID     string                  `json:"assetId"`
+	Timeframe   market.Timeframe        `json:"timeframe"`
+	StartDate   string                  `json:"startDate"`
+	EndDate     string                  `json:"endDate"`
+	EventStudy  bool                    `json:"eventStudy"`
+	Dataset     *string                 `json:"dataset,omitempty"`
+	LastCandle  *string                 `json:"lastCandle,omitempty"`
+	EvaluatedBars int                   `json:"evaluatedBars"`
+	WarmupBars  int                     `json:"warmupBars"`
+	StrategyIDs []string                `json:"strategyIds"`
+	Candidates  []SignalCandidateStats  `json:"candidates,omitempty"`
+	Pairs       []SignalPairAgreement   `json:"pairs,omitempty"`
+	Forward     []SignalForwardResult   `json:"forward,omitempty"`
+	Error       *string                 `json:"error,omitempty"`
+	CreatedAt   string                  `json:"createdAt"`
+}
+
+// SignalResearchService runs and serves cross-strategy signal analyses.
+type SignalResearchService interface {
+	ExecuteSignalResearch(ctx context.Context, req SignalResearchRequest) (SignalResearch, error)
+	ListSignalResearch(ctx context.Context) ([]SignalResearch, error)
+	GetSignalResearch(ctx context.Context, id string) (SignalResearch, error)
+}

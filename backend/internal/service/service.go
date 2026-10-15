@@ -48,6 +48,7 @@ type Repositories struct {
 	Comparisons    repository.ComparisonRepository
 	WalkForwards   repository.WalkForwardRepository
 	StrategyGraphs repository.StrategyGraphRepository
+	SignalResearch repository.SignalResearchRepository
 }
 
 // Service implements api.MarketService/StrategyService/BacktestService/

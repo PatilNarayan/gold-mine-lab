@@ -352,3 +352,36 @@ func registerStrategyGraphRoutes(g *gin.RouterGroup, svc StrategyGraphService) {
 		c.JSON(http.StatusCreated, run)
 	})
 }
+
+// registerSignalResearchRoutes mounts POST/GET signal-research analyses.
+func registerSignalResearchRoutes(g *gin.RouterGroup, svc SignalResearchService) {
+	g.POST("/signal-research", func(c *gin.Context) {
+		var req SignalResearchRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		out, err := svc.ExecuteSignalResearch(c.Request.Context(), req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	g.GET("/signal-research", func(c *gin.Context) {
+		out, err := svc.ListSignalResearch(c.Request.Context())
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	g.GET("/signal-research/:id", func(c *gin.Context) {
+		out, err := svc.GetSignalResearch(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+}
