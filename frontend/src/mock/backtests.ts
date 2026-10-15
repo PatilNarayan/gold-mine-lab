@@ -7,6 +7,7 @@ import type {
   DashboardSummary,
   EquityPoint,
   ParameterValues,
+  StrategyPerformance,
 } from '@/types/domain';
 import { generateCandleSeries, HISTORY_END } from './candles';
 import { strategyById } from './strategies';
@@ -37,12 +38,12 @@ interface SeedSpec {
 const SEED_SPECS: SeedSpec[] = [
   { strategyId: 'ema-cross', assetId: 'xauusd', status: 'completed', startDate: '2024-02-01', endDate: '2024-11-30', daysAgo: 10 },
   { strategyId: 'ema-cross', assetId: 'xagusd', status: 'completed', startDate: '2024-03-01', endDate: '2024-12-15', daysAgo: 8 },
-  { strategyId: 'rsi-reversion', assetId: 'xauusd', status: 'completed', startDate: '2024-04-01', endDate: '2024-10-31', daysAgo: 6 },
+  { strategyId: 'rsi-mean-reversion', assetId: 'xauusd', status: 'completed', startDate: '2024-04-01', endDate: '2024-10-31', daysAgo: 6 },
   { strategyId: 'macd-trend', assetId: 'msft', status: 'completed', startDate: '2024-01-10', endDate: '2024-12-01', daysAgo: 5 },
   { strategyId: 'macd-trend', assetId: 'tsla', status: 'completed', startDate: '2024-02-15', endDate: '2024-12-20', daysAgo: 4 },
   { strategyId: 'atr-breakout', assetId: 'xauusd', status: 'completed', startDate: '2024-05-01', endDate: '2024-11-15', daysAgo: 3 },
   { strategyId: 'bollinger-squeeze', assetId: 'xagusd', status: 'failed', startDate: '2024-06-01', endDate: '2024-12-01', daysAgo: 2 },
-  { strategyId: 'rsi-reversion', assetId: 'xauusd', status: 'completed', startDate: '2024-07-01', endDate: '2024-12-28', daysAgo: 1 },
+  { strategyId: 'rsi-mean-reversion', assetId: 'xauusd', status: 'completed', startDate: '2024-07-01', endDate: '2024-12-28', daysAgo: 1 },
 ];
 
 function seedRuns(): BacktestRun[] {
@@ -258,12 +259,20 @@ export function dashboardSummary(): DashboardSummary {
   };
 }
 
-export function strategyPerformance(strategyId: string) {
-  const runs = runsForStrategy(strategyId).filter((r) => r.status === 'completed');
-  const details = runs.map((r) => getRunDetail(r.id)!).filter((d) => d.metrics);
-  const netPnl = round(details.reduce((s, d) => s + d.metrics!.netPnl, 0), 2);
-  const winRate = details.length
-    ? round(details.reduce((s, d) => s + d.metrics!.winRate, 0) / details.length, 4)
-    : 0;
-  return { netPnl, winRate, totalBacktests: details.length };
+// Latest-run semantics, mirroring the real service: experiments are not
+// summed — figures are the newest completed run's own metrics.
+export function strategyPerformance(strategyId: string): StrategyPerformance {
+  const runs = runsForStrategy(strategyId)
+    .filter((r) => r.status === 'completed')
+    .sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''));
+  const latest = runs[0] ? getRunDetail(runs[0].id) : undefined;
+  return {
+    totalBacktests: runs.length,
+    latestRunId: latest?.run.id ?? null,
+    latestRunTimeframe: latest?.run.timeframe ?? null,
+    latestRunStartDate: latest?.run.startDate ?? null,
+    latestRunEndDate: latest?.run.endDate ?? null,
+    latestRunNetPnl: latest?.metrics?.netPnl ?? 0,
+    latestRunWinRate: latest?.metrics?.winRate ?? 0,
+  };
 }

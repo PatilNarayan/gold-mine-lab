@@ -11,7 +11,9 @@ package tests
 import (
 	"context"
 	"log/slog"
+	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +44,9 @@ func pipelineService(t *testing.T) (*service.Service, func()) {
 	store := postgres.New(pool.Pool)
 	reg := strategy.NewRegistry()
 	if err := reg.Register(strategy.NewEMACross()); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(strategy.NewRSIMeanReversion()); err != nil {
 		t.Fatal(err)
 	}
 	svc := service.New(service.Repositories{
@@ -89,6 +94,45 @@ func TestPipelineEndToEnd(t *testing.T) {
 	}
 	if run.Status != "completed" {
 		t.Fatalf("run status %s", run.Status)
+	}
+	// Provenance: engine/strategy versions + dataset fingerprint persisted.
+	if run.EngineVersion == nil || *run.EngineVersion != "2.1.0" {
+		t.Fatalf("engineVersion = %v", run.EngineVersion)
+	}
+	if run.StrategyVersion == nil || *run.StrategyVersion != "1.0.0" {
+		t.Fatalf("strategyVersion = %v", run.StrategyVersion)
+	}
+	if run.Dataset == nil || !strings.Contains(*run.Dataset, "sha256:") {
+		t.Fatalf("dataset fingerprint = %v", run.Dataset)
+	}
+
+	// RSI strategy runs through the same engine + provenance path.
+	rsiRun, err := svc.Execute(ctx, api.BacktestRequest{
+		StrategyID: "rsi-mean-reversion", AssetID: "xauusd", Timeframe: "1d",
+		StartDate: "2020-01-01", EndDate: "2025-06-01",
+		InitialCapital: 50000, PositionSize: 10, Commission: 0.02, Slippage: 0.01,
+		Parameters: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("rsi execute: %v", err)
+	}
+	if rsiRun.Status != "completed" {
+		t.Fatalf("rsi run status %s", rsiRun.Status)
+	}
+	rsiDetail, err := svc.GetRun(ctx, rsiRun.ID)
+	if err != nil || rsiDetail.Metrics == nil {
+		t.Fatalf("rsi detail: %v", err)
+	}
+	// Equity reconciliation on the persisted curve.
+	var sumNet float64
+	for _, tr := range rsiDetail.Trades {
+		if tr.Pnl != nil {
+			sumNet += *tr.Pnl
+		}
+	}
+	last := rsiDetail.Equity[len(rsiDetail.Equity)-1]
+	if math.Abs(rsiDetail.Run.InitialCapital+sumNet-last.Equity) > 0.01 {
+		t.Fatalf("rsi run: last equity %v != initial+%v", last.Equity, sumNet)
 	}
 
 	detail, err := svc.GetRun(ctx, run.ID)

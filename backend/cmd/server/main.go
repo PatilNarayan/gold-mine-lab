@@ -64,6 +64,9 @@ func run(shutdown <-chan os.Signal) error {
 
 	reg := strategy.NewRegistry()
 	if err := reg.Register(strategy.NewEMACross()); err != nil {
+		return err
+	}
+	if err := reg.Register(strategy.NewRSIMeanReversion()); err != nil {
 		return fmt.Errorf("register strategy: %w", err)
 	}
 

@@ -28,7 +28,7 @@ Both apps are separate projects sharing one REST contract (`VITE_DATA_MODE=api`)
 ```
 data/XAU_*_data.csv  (real Kaggle XAUUSD history, 2004→2026)
    ↓  CSVProvider: validated streaming reads (Tail for charts, Range+warmup for backtests)
-ema-cross strategy   (EMA20/EMA50 crossover — pure math, no I/O)
+Strategy registry    (ema-cross + rsi-mean-reversion — pure math, no I/O)
    ↓  signals persisted to strategy_signals (idempotent)
 Backtest Engine      (next-candle-open fills, 1 position, commission+slippage)
    ↓  metrics (net P&L, win rate, PF, max DD…) + equity curve
@@ -42,9 +42,9 @@ React frontend       (charts, tables, run-history — reads, never computes)
 | Surface | Source | Honesty |
 |---|---|---|
 | Market candles, EMA overlays, volume | **Real** Kaggle XAUUSD CSVs | Real prices |
-| BUY/SELL signal markers + signals table | **Real** — ema-cross evaluated over real candles | Real crossovers |
+| BUY/SELL signal markers + signals table | **Real** — both strategies evaluated over real candles | Real crossovers/threshold crosses |
 | Backtest trades/metrics/equity curves | **Real** — engine replayed over real candles | Real simulated results (a real backtest, not fabricated) |
-| Strategy list / performance tiles | Real — aggregated from persisted runs | Real |
+| Strategy list / performance tiles | Real — latest completed run per strategy | Real |
 | Market status | "Historical" | Dataset is frozen history, not live feed |
 | Dashboard cards | **Latest completed run** only | Independent runs ≠ portfolio |
 
@@ -105,6 +105,24 @@ Never Handler→SQL, never Strategy→I/O.
   capital) are experiments, not one portfolio — the dashboard shows the
   experiment count plus the *latest completed run's* metrics and equity
   curve, labeled as such.
+- **Latest-run strategy summaries.** `StrategyPerformance` likewise reports
+  the experiment count + the latest completed run's own metrics with its ID,
+  timeframe and date range — never summed P&L or averaged win rates across
+  incomparable runs. Comparable-strategy analysis is a separate future
+  research feature.
+- **Dataset provenance.** Every run records `dataset` as
+  `<asset>:<tf>@sha256:<16-hex>` — a content fingerprint of the exact CSV
+  used, cached per file per process (`CSVProvider.Fingerprint`). Old runs
+  keep their recorded identity; nothing is rewritten.
+- **RSI (Wilder).** `indicators.RSI` / `RSIState`: seed = SMA of first
+  `period` changes, then `avg = (prevAvg·(p−1)+x)/p`. Undefined (NaN) for
+  index < period; avgLoss==0 → 100 (avgGain>0) or 50 (both zero = constant
+  prices). Batch and stream are identical.
+- **rsi-mean-reversion v1.0.0.** BUY = RSI crosses UP through oversold;
+  SELL = RSI crosses DOWN through overbought (exit only, long-only). A cross
+  fires once — staying beyond a threshold does not re-signal. Params:
+  `rsi_period` [2,100], `oversold` [1,49], `overbought` [51,99], os<ob.
+  Warmup = `3×period+2`. Same timeframe set as ema-cross.
 - **Streaming evaluation.** Strategies can implement `strategy.Streamer`
   (O(1) state per bar); the engine falls back to prefix `Evaluate` —
   correctness first, efficiency when available.

@@ -21,7 +21,7 @@ const trade = (over: Partial<BacktestTrade>): BacktestTrade => ({
 
 const trades = [
   trade({ id: 'a', strategyId: 'ema-cross', side: 'BUY', result: 'win' }),
-  trade({ id: 'b', strategyId: 'rsi-reversion', side: 'SELL', result: 'loss', pnl: -5 }),
+  trade({ id: 'b', strategyId: 'rsi-mean-reversion', side: 'SELL', result: 'loss', pnl: -5 }),
   trade({ id: 'c', strategyId: 'ema-cross', status: 'open', result: 'open', exitTime: null, exitPrice: null, pnl: null }),
   trade({ id: 'd', strategyId: 'macd-trend', entryTime: '2024-01-05T00:00:00.000Z' }),
 ];

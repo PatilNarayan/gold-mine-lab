@@ -13,10 +13,7 @@ import (
 	"github.com/gold-mine-lab/backend/internal/strategy"
 )
 
-var (
-	engineVersion = backtest.EngineVersion
-	datasetID     = "kaggle/xauusd-gold-price-historical-2004-2024"
-)
+var engineVersion = backtest.EngineVersion
 
 // --- backtests ---------------------------------------------------------------
 
@@ -127,6 +124,14 @@ func (s *Service) Execute(ctx context.Context, req api.BacktestRequest) (api.Bac
 	if err != nil {
 		return api.BacktestRun{}, err
 	}
+
+	// Provenance: fingerprint the exact CSV file this run will read. The
+	// provider hashes each file at most once per process and caches it.
+	if asset, err := s.repos.Assets.GetAsset(ctx, req.AssetID); err == nil {
+		if fp, err := s.data.Fingerprint(asset, req.Timeframe); err == nil {
+			run.Dataset = &fp
+		}
+	} // fingerprint unavailable → leave NULL rather than invent provenance
 
 	runID, err := s.repos.Runs.CreateRun(ctx, run)
 	if err != nil {
@@ -241,7 +246,6 @@ func (s *Service) validateRequest(ctx context.Context, req api.BacktestRequest) 
 		Commission: req.Commission, Slippage: req.Slippage, Parameters: req.Parameters,
 		EngineVersion:   &engineVersion,
 		StrategyVersion: ptr(strat.Version()), // captured at execution time
-		Dataset:         &datasetID,
 	}, strat, nil
 }
 

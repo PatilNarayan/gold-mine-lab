@@ -76,8 +76,16 @@ export default function StrategyDetail() {
               </div>
               <div className="text-right text-2xs text-content-3">
                 <div>
-                  Timeframe: <span className="tnum text-content-2">{strategy.data.timeframe}</span>
+                  Default timeframe: <span className="tnum text-content-2">{strategy.data.timeframe}</span>
                 </div>
+                {strategy.data.supportedTimeframes ? (
+                  <div className="mt-0.5">
+                    Supported:{' '}
+                    <span className="tnum text-content-2">
+                      {strategy.data.supportedTimeframes.join(' · ')}
+                    </span>
+                  </div>
+                ) : null}
                 <div className="mt-1 flex justify-end gap-1">
                   {strategy.data.supportedAssets.map((a) => (
                     <Badge key={a} tone="default">
@@ -90,14 +98,27 @@ export default function StrategyDetail() {
           </section>
 
           {perf ? (
-            <section aria-label="Performance" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <section aria-label="Performance" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <StatCard label="Backtests" value={perf.totalBacktests} />
               <StatCard
-                label="Net P&L (all runs)"
-                value={formatSignedCurrency(perf.netPnl)}
-                tone={perf.netPnl >= 0 ? 'buy' : 'sell'}
+                label="Net P&L (latest run)"
+                value={
+                  perf.latestRunId ? formatSignedCurrency(perf.latestRunNetPnl) : '—'
+                }
+                tone={perf.latestRunNetPnl >= 0 ? 'buy' : 'sell'}
               />
-              <StatCard label="Avg win rate" value={formatPercent(perf.winRate)} />
+              <StatCard
+                label="Win rate (latest)"
+                value={perf.latestRunId ? formatPercent(perf.latestRunWinRate) : '—'}
+              />
+              <StatCard
+                label="Latest run window"
+                value={
+                  perf.latestRunId
+                    ? `${perf.latestRunTimeframe} · ${perf.latestRunStartDate}→${perf.latestRunEndDate}`
+                    : '—'
+                }
+              />
             </section>
           ) : null}
 

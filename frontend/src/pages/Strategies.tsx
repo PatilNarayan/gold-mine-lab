@@ -58,14 +58,22 @@ export default function Strategies() {
     },
     {
       key: 'performance',
-      header: 'Performance',
+      header: 'Latest run',
       align: 'right',
-      cell: (s) => (
-        <span className={s.performance.netPnl >= 0 ? 'text-buy' : 'text-sell'}>
-          {formatSignedCurrency(s.performance.netPnl)} · {formatPercent(s.performance.winRate, 0)} win
-        </span>
-      ),
-      sortValue: (s) => s.performance.netPnl,
+      cell: (s) =>
+        s.performance.latestRunId ? (
+          <span className={s.performance.latestRunNetPnl >= 0 ? 'text-buy' : 'text-sell'}>
+            {formatSignedCurrency(s.performance.latestRunNetPnl)} ·{' '}
+            {formatPercent(s.performance.latestRunWinRate, 0)} win
+            <span className="block text-2xs text-content-3">
+              {s.performance.latestRunTimeframe} · {s.performance.latestRunStartDate} →{' '}
+              {s.performance.latestRunEndDate}
+            </span>
+          </span>
+        ) : (
+          <span className="text-content-3">no runs</span>
+        ),
+      sortValue: (s) => (s.performance.latestRunId ? s.performance.latestRunNetPnl : -Infinity),
     },
   ];
 

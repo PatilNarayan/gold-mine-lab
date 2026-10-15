@@ -28,19 +28,20 @@ export const MOCK_STRATEGIES: Strategy[] = [
     ],
   },
   {
-    id: 'rsi-reversion',
+    // Mirrors the real backend strategy (rsi-mean-reversion v1.0.0).
+    id: 'rsi-mean-reversion',
     name: 'RSI Mean Reversion',
-    version: '2.0.1',
+    version: '1.0.0',
     description:
-      'Fades overextended RSI readings back toward the mean. Long below the lower band, short above the upper band.',
+      'Long-only mean reversion: buys when Wilder RSI crosses up through the oversold threshold, exits when it crosses down through overbought.',
     supportedAssets: ['xauusd'],
-    timeframe: '15m',
+    timeframe: '1d',
+    supportedTimeframes: ['15m', '1h', '4h', '1d'],
     status: 'active',
     parameters: [
-      { name: 'rsiLength', label: 'RSI length', type: 'number', default: 14, min: 2, max: 50, step: 1 },
-      { name: 'oversold', label: 'Oversold level', type: 'number', default: 30, min: 5, max: 45, step: 1 },
-      { name: 'overbought', label: 'Overbought level', type: 'number', default: 70, min: 55, max: 95, step: 1 },
-      { name: 'useTrendFilter', label: 'Trend filter', type: 'boolean', default: true },
+      { name: 'rsi_period', label: 'RSI Period', type: 'number', default: 14, min: 2, max: 100, step: 1 },
+      { name: 'oversold', label: 'Oversold', type: 'number', default: 30, min: 1, max: 49, step: 1 },
+      { name: 'overbought', label: 'Overbought', type: 'number', default: 70, min: 51, max: 99, step: 1 },
     ],
   },
   {

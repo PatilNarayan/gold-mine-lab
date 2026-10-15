@@ -6,7 +6,7 @@ Phase 2 replaced the demo layer with the real research pipeline:
 ```
 Historical CSV (MARKET_DATA_DIR)
       ↓  market.CSVProvider            # streaming, validated, bounded
-Strategy Engine (strategy.Registry)    # ema-cross v1.0.0, pure compute
+Strategy Engine (strategy.Registry)    # ema-cross + rsi-mean-reversion v1.0.0, pure compute
       ↓  indicators.EMA
 Signal Generation → strategy_signals   # real crossovers, persisted
       ↓  backtest.Engine               # next-candle-open fills, deterministic
@@ -127,6 +127,30 @@ Rules, evaluated at each bar's close (EMA seeded at first close, k=2/(n+1)):
 engine falls back to prefix `Evaluate` otherwise. Both paths are proven
 equivalent bar-for-bar by `TestEMACrossStreamEqualsEvaluate`.
 
+## Strategy: rsi-mean-reversion v1.0.0
+
+Parameters: `rsi_period` (14, int ∈ [2,100]), `oversold` (30, [1,49]),
+`overbought` (70, [51,99]); validated, `oversold < overbought`.
+
+Wilder RSI: seeded by the simple average of the first `period` changes, then
+`avg = (prevAvg·(period−1) + x)/period`. Defined from index `period`;
+`avgLoss=0` → RSI 100 (avgGain>0) or 50 on constant prices.
+
+Rules (long-only):
+
+- **BUY**  — `prevRSI ≤ oversold` AND `RSI > oversold` (upward cross)
+- **SELL** — `prevRSI ≥ overbought` AND `RSI < overbought` (downward cross —
+  exits the long; never shorts)
+- **NEUTRAL** otherwise — crossing is an event; remaining beyond the
+  threshold does not re-signal
+- First `period+1` bars are warm-up → NEUTRAL; `WarmupBars() = 3·period+2`
+- Metadata carries rsi/prev_rsi/thresholds/period; reason e.g.
+  `"RSI14 crossed above oversold 30"`
+- These rules are a research hypothesis, not a claimed edge
+
+Same engine, same fill model, same accounting — equivalence proven by
+`TestRSIStreamEqualsEvaluate`.
+
 Timeframe is a **per-run choice**: `Definition.timeframe` is the default and
 `supportedTimeframes` (15m/1h/4h/1d) bounds what a run may request —
 validation rejects anything else. EMA warm-up is parameter-derived:
@@ -197,7 +221,7 @@ Same contract as before — thin handlers → `service` → repos/engine:
 | GET    | `/api/assets` | from `assets` table |
 | GET    | `/api/market/candles?asset&timeframe` | real CSV candles + EMA overlays |
 | GET    | `/api/market/summary` | real last candle close / change (status `Historical` — no live feed) |
-| GET    | `/api/strategies` | defs + latest signal + real run aggregates |
+| GET    | `/api/strategies` | defs + latest signal + latest-run metrics per strategy |
 | GET    | `/api/signals` | persisted crossover signals |
 | GET    | `/api/backtests?strategy` | all runs |
 | GET    | `/api/backtests/latest` | newest completed run ID |
@@ -231,7 +255,10 @@ generation, market-data config, and DB errors — each carrying `run_id`,
 
 ## Known limitations
 
-- One strategy (ema-cross), one asset (XAUUSD); registry is static in-memory.
+- Two strategies (ema-cross, rsi-mean-reversion), one asset (XAUUSD);
+  registry is static in-memory.
+- Run `dataset` = `asset:tf@sha256:<16>` — content fingerprint of the exact
+  CSV file used, cached per process; legacy rows keep `unknown`.
 - POST /api/backtests is synchronous — large 1m windows take seconds.
 - Market endpoints serve a bounded tail; full range available via Range().
 - Legacy (pre-2.1) runs keep gross-P&L trades and no cost decomposition —

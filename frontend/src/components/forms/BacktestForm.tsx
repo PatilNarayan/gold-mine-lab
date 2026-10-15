@@ -127,7 +127,19 @@ export function BacktestForm({
           <Select
             id="bf-strategy"
             value={v.strategyId}
-            onChange={(e) => update({ strategyId: e.target.value, parameters: undefined })}
+            onChange={(e) => {
+              // Switching strategy: reset params to that strategy's defaults
+              // and snap the timeframe to a value the new strategy supports.
+              const next = strategies.find((s) => s.id === e.target.value);
+              const tfOk =
+                !next?.supportedTimeframes ||
+                next.supportedTimeframes.includes(v.timeframe);
+              update({
+                strategyId: e.target.value,
+                parameters: undefined,
+                ...(tfOk ? {} : { timeframe: next?.timeframe ?? DEFAULTS.timeframe }),
+              });
+            }}
           >
             {strategies.map((s) => (
               <option key={s.id} value={s.id}>

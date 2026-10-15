@@ -40,24 +40,34 @@ func (s *Service) List(ctx context.Context) ([]api.StrategyListItem, error) {
 	return out, nil
 }
 
-// performanceFor aggregates a strategy's completed runs from its metric rows.
+// performanceFor reports the completed-experiment count plus the LATEST
+// completed run's metrics. Runs are independent experiments — never summed
+// or averaged into a fake portfolio result.
 func (s *Service) performanceFor(ctx context.Context, strategyID string, runs []repository.RunRow) (api.StrategyPerformance, error) {
 	var perf api.StrategyPerformance
-	for _, r := range runs {
-		if r.StrategyID != strategyID || r.Status != "completed" {
+	var latest *repository.RunRow
+	for i := range runs {
+		if runs[i].StrategyID != strategyID || runs[i].Status != "completed" {
 			continue
 		}
 		perf.TotalBacktests++
-		m, err := s.repos.Metrics.GetMetrics(ctx, r.ID)
-		if err != nil {
-			return perf, err
+		if latest == nil { // ListRuns orders created_at DESC — first hit is latest
+			latest = &runs[i]
 		}
-		perf.NetPnl += m["net_pnl"]
-		perf.WinRate += m["win_rate"]
 	}
-	if perf.TotalBacktests > 0 {
-		perf.WinRate /= float64(perf.TotalBacktests)
+	if latest == nil {
+		return perf, nil
 	}
+	m, err := s.repos.Metrics.GetMetrics(ctx, latest.ID)
+	if err != nil {
+		return perf, err
+	}
+	perf.LatestRunID = &latest.ID
+	perf.LatestRunTimeframe = &latest.Timeframe
+	perf.LatestRunStartDate = &latest.StartDate
+	perf.LatestRunEndDate = &latest.EndDate
+	perf.LatestRunNetPnl = m["net_pnl"]
+	perf.LatestRunWinRate = m["win_rate"]
 	return perf, nil
 }
 

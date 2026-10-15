@@ -398,21 +398,28 @@ func (s *store) summary() api.DashboardSummary {
 }
 
 func (s *store) performanceFor(strategyID string) api.StrategyPerformance {
-	var netPnl, winRateSum float64
-	n := 0
-	for _, r := range s.listRuns(strategyID) {
+	var perf api.StrategyPerformance
+	var latest *api.BacktestRun
+	for i, r := range s.listRuns(strategyID) {
 		if r.Status != "completed" {
 			continue
 		}
-		if d, ok := s.detail(r.ID); ok && d.Metrics != nil {
-			netPnl += d.Metrics.NetPnl
-			winRateSum += d.Metrics.WinRate
-			n++
+		perf.TotalBacktests++
+		if latest == nil { // listRuns is newest-first
+			latest = &s.listRuns(strategyID)[i]
 		}
 	}
-	perf := api.StrategyPerformance{NetPnl: round(netPnl, 2), TotalBacktests: n}
-	if n > 0 {
-		perf.WinRate = round(winRateSum/float64(n), 4)
+	if latest == nil {
+		return perf
+	}
+	perf.LatestRunID = &latest.ID
+	tf := string(latest.Timeframe)
+	perf.LatestRunTimeframe = &tf
+	perf.LatestRunStartDate = &latest.StartDate
+	perf.LatestRunEndDate = &latest.EndDate
+	if d, ok := s.detail(latest.ID); ok && d.Metrics != nil {
+		perf.LatestRunNetPnl = d.Metrics.NetPnl
+		perf.LatestRunWinRate = d.Metrics.WinRate
 	}
 	return perf
 }

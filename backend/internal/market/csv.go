@@ -3,7 +3,9 @@ package market
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -28,6 +30,7 @@ type CSVProvider struct {
 	mu      sync.Mutex
 	loaded  map[string][]Candle // key: "PREFIX|tf"
 	missing map[string]bool
+	fps     map[string]string // cached SHA-256 fingerprints per file
 }
 
 var csvFileSuffix = map[Timeframe]string{
@@ -57,7 +60,33 @@ func NewCSVProvider(dir string, tailKeep map[Timeframe]int) *CSVProvider {
 		tailKeep: tailKeep,
 		loaded:   map[string][]Candle{},
 		missing:  map[string]bool{},
+		fps:      map[string]string{},
 	}
+}
+
+// Fingerprint returns a stable content identity for the file backing
+// asset/tf — "xauusd:1d@sha256:<hex16>" — computed once per file and cached
+// under the caller mutex (a 350 MB file is hashed at most once per process).
+// No local filesystem paths are exposed in the identifier.
+func (p *CSVProvider) Fingerprint(asset Asset, tf Timeframe) (string, error) {
+	name := fmt.Sprintf("%s_%s_data.csv", filePrefix(asset), tf)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if fp, ok := p.fps[name]; ok {
+		return fp, nil
+	}
+	h := sha256.New()
+	f, err := os.Open(filepath.Join(p.dir, name))
+	if err != nil {
+		return "", fmt.Errorf("fingerprint %s: %w", name, err)
+	}
+	defer f.Close()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("fingerprint %s: %w", name, err)
+	}
+	fp := fmt.Sprintf("%s:%s@sha256:%x", asset.ID, tf, h.Sum(nil)[:8])
+	p.fps[name] = fp
+	return fp, nil
 }
 
 // filePrefix maps an asset to its CSV file prefix, e.g. XAUUSD → "XAU".

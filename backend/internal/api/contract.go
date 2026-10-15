@@ -52,11 +52,18 @@ type MarketSummary struct {
 	Status        string           `json:"status"` // "Open" | "Closed" | "Historical / Demo"
 }
 
-// StrategyPerformance is precomputed per-strategy aggregate stats.
+// StrategyPerformance reports experiment count + the LATEST completed run's
+// metrics. Independent runs differ in window/capital/params — summing P&L or
+// averaging win rates across them would misrepresent the strategy.
+// nil latestRun* = no completed run yet.
 type StrategyPerformance struct {
-	NetPnl         float64 `json:"netPnl"`
-	WinRate        float64 `json:"winRate"`
-	TotalBacktests int     `json:"totalBacktests"`
+	TotalBacktests     int     `json:"totalBacktests"`
+	LatestRunID        *string `json:"latestRunId"`
+	LatestRunTimeframe *string `json:"latestRunTimeframe"`
+	LatestRunStartDate *string `json:"latestRunStartDate"`
+	LatestRunEndDate   *string `json:"latestRunEndDate"`
+	LatestRunNetPnl    float64 `json:"latestRunNetPnl"`
+	LatestRunWinRate   float64 `json:"latestRunWinRate"`
 }
 
 // StrategyListItem = strategy + last signal + performance for the list view.

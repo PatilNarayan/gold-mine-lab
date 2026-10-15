@@ -109,10 +109,16 @@ export const signalSchema = z.object({
 export type Signal = z.infer<typeof signalSchema>;
 
 /** Precomputed per-strategy stats attached to list rows. */
+/** Per-strategy experiment count + LATEST completed run's metrics —
+ *  independent runs are not summed/averaged into a portfolio result. */
 export const strategyPerformanceSchema = z.object({
-  netPnl: z.number(),
-  winRate: z.number(),
   totalBacktests: z.number(),
+  latestRunId: z.string().nullable(),
+  latestRunTimeframe: z.string().nullable(),
+  latestRunStartDate: z.string().nullable(),
+  latestRunEndDate: z.string().nullable(),
+  latestRunNetPnl: z.number(),
+  latestRunWinRate: z.number(),
 });
 export type StrategyPerformance = z.infer<typeof strategyPerformanceSchema>;
 
