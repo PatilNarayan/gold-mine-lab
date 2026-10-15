@@ -192,21 +192,13 @@ func (s *Service) GetComparison(ctx context.Context, id string) (api.Comparison,
 		return api.Comparison{}, err
 	}
 	results := make([]api.ComparisonResult, 0, len(runs))
+	// Reuse comparisonResult (shared with walk-forward) so completed runs
+	// propagate metric-store errors and report missing metrics as a data-
+	// integrity problem instead of silently returning incomplete results.
 	for _, r := range runs {
-		res := api.ComparisonResult{Run: runDTO(r)}
-		if r.Sample != nil {
-			res.Sample = *r.Sample
-		}
-		if r.Status == "completed" {
-			if m, err := s.repos.Metrics.GetMetrics(ctx, r.ID); err == nil {
-				mm := metricsDTO(m)
-				res.Metrics = &mm
-			}
-			for _, p := range r.EquityCurve {
-				res.Equity = append(res.Equity, api.EquityPoint{
-					Time: p.Time.UTC().Format("2006-01-02T15:04:05Z"), Equity: p.Equity, Drawdown: p.Drawdown,
-				})
-			}
+		res, err := s.comparisonResult(ctx, r.ID)
+		if err != nil {
+			return api.Comparison{}, err
 		}
 		results = append(results, res)
 	}

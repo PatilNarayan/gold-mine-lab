@@ -480,7 +480,10 @@ func (s *Service) comparisonResult(ctx context.Context, runID string) (api.Compa
 		// than returning a "successful" result with silently absent metrics.
 		m, err := s.repos.Metrics.GetMetrics(ctx, r.ID)
 		if err != nil {
-			return api.ComparisonResult{}, fmt.Errorf("completed run missing metrics: %w", err)
+			return api.ComparisonResult{}, fmt.Errorf("completed run metrics unreadable: %w", err)
+		}
+		if len(m) == 0 {
+			return api.ComparisonResult{}, fmt.Errorf("completed run %s has no persisted metrics", r.ID)
 		}
 		mm := metricsDTO(m)
 		res.Metrics = &mm

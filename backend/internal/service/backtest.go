@@ -42,7 +42,16 @@ func (s *Service) GetRun(ctx context.Context, runID string) (api.BacktestDetail,
 	if def, err := s.repos.Strategies.GetStrategy(ctx, r.StrategyID); err == nil {
 		detail.Strategy = &def
 	}
-	if m, err := s.repos.Metrics.GetMetrics(ctx, r.ID); err == nil && len(m) > 0 {
+	if r.Status == "completed" {
+		// Every completed run writes metrics; absent/unreadable metrics on a
+		// completed run is an interrupted write — report it, don't hide it.
+		m, err := s.repos.Metrics.GetMetrics(ctx, r.ID)
+		if err != nil {
+			return detail, fmt.Errorf("completed run metrics unreadable: %w", err)
+		}
+		if len(m) == 0 {
+			return detail, fmt.Errorf("completed run %s has no persisted metrics", r.ID)
+		}
 		mm := metricsDTO(m)
 		detail.Metrics = &mm
 	}
