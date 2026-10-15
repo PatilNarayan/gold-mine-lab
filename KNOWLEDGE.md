@@ -392,3 +392,14 @@ Cross-strategy signal research (`service/signalresearch.go`, `api/routes.go` reg
 - Frontend: `/research` + `/research/:id` (`pages/SignalResearch.tsx`), services `signalResearch` (http + deterministic mock), `useSignalResearch*` hooks.
 
 **Persistence hardening (Phase 9.1)**: the dataset fingerprint is obtained BEFORE the row is created — no provenance, no persisted analysis. Cancellation mid-replay marks the row `failed` via `failSignalResearch` (bounded context detached from the cancelled request; cleanup errors logged separately, never masking the cause). Retrieval validates stored JSON: malformed result/request and a completed record without a result are integrity errors (500), never zero-valued. Unknown candidate IDs return 400 (nil-resolve previously panicked).
+
+## Regime-aware signal research (Phase 10)
+
+`internal/regime` — deterministic, streaming market-regime classifiers fed once per candle, independent of HTTP/Postgres/strategy execution. `DefinitionVersion = "regime-v1"` is stored on every regime-enabled analysis.
+
+- **Trend** (per candle close): EMA-50 and EMA-200 of closes. `uptrend` = close > EMA200 AND EMA50 > EMA200; `downtrend` = close < EMA200 AND EMA50 < EMA200; `transition` = every other combination (NOT a proven range); `unknown` = <200 bars of history. Warmup = 200.
+- **Volatility**: TR = max(high-low, |high-prevClose|, |low-prevClose|); Wilder ATR-14 (SMA seed, recursive after); `ATRPercent = ATR/close*100`. Baseline = EMA-100 over **prior completed** ATRPercent values only — the current observation joins the baseline AFTER its own label is decided. `low` < 0.8×baseline, `high` > 1.2×baseline, `normal` in between (inclusive), `unknown` until ATR + 100 baseline points exist (~114 bars). Multipliers are research conventions, not tuned. Labels are timeframe-relative.
+- **Integration** (`service/signalresearch.go`): `regimeAnalysis` flag on `POST /api/signal-research`; default off preserves the old response exactly (all regime fields omitempty). When on: `maxWarmup = max(strategyWarmup, regime.WarmupBars)`; one shared classifier pass during the SAME replay; labels recorded only for evaluated bars.
+- **Per-regime outputs**: `candidates[].byTrend/byVolatility` (same stats incl. episodes over each bucket's chronological subsequence), `pairs[].byTrend/byVolatility` (same agreement definitions; pct null when no co-actionable bars), `forward[].byTrend/byVolatility` (regime at the EPISODE'S signal bar; same entry/exit/exclusion rules). No trend×volatility matrix — two independent dimensions.
+- Frontend: builder checkbox "Enable Market Regime Analysis"; detail adds Strategy-by-regime, Agreement-by-regime, Forward-outcomes-by-regime tables + regime definitions version in provenance.
+- Hardening also in this commit: `strategyIds` now marshals `[]` not `null` for result-less rows (old failed rows previously broke the list schema).

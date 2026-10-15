@@ -538,13 +538,17 @@ type SignalResearchLeg struct {
 
 // SignalResearchRequest is the body of POST /api/signal-research.
 type SignalResearchRequest struct {
-	Name       string             `json:"name,omitempty"`
+	Name       string              `json:"name,omitempty"`
 	Legs       []SignalResearchLeg `json:"legs" binding:"required"`
-	AssetID    string             `json:"assetId" binding:"required"`
-	Timeframe  market.Timeframe   `json:"timeframe" binding:"required"`
-	StartDate  string             `json:"startDate" binding:"required"`
-	EndDate    string             `json:"endDate" binding:"required"`
-	EventStudy bool               `json:"eventStudy,omitempty"`
+	AssetID    string              `json:"assetId" binding:"required"`
+	Timeframe  market.Timeframe    `json:"timeframe" binding:"required"`
+	StartDate  string              `json:"startDate" binding:"required"`
+	EndDate    string              `json:"endDate" binding:"required"`
+	EventStudy bool                `json:"eventStudy,omitempty"`
+	// RegimeAnalysis additionally buckets every stat by market regime
+	// (trend EMA50/200, volatility ATR-14 vs prior-only EMA-100 baseline).
+	// Omitted/false preserves the pre-regime response exactly.
+	RegimeAnalysis bool `json:"regimeAnalysis,omitempty"`
 }
 
 // SignalCandidateStats aggregates one candidate's replayed signals.
@@ -561,14 +565,50 @@ type SignalCandidateStats struct {
 	BuyEpisodes   int      `json:"buyEpisodes"`
 	SellEpisodes  int      `json:"sellEpisodes"`
 	AvgScore      *float64 `json:"avgScore,omitempty"`
+	// Regime-conditioned views (only when regimeAnalysis was enabled).
+	// "unknown" covers bars the classifiers could not yet label.
+	ByTrend      []SignalRegimeStats `json:"byTrend,omitempty"`
+	ByVolatility []SignalRegimeStats `json:"byVolatility,omitempty"`
+}
+
+// SignalRegimeStats is SignalCandidateStats scoped to one regime bucket.
+// Regime is one of uptrend|downtrend|transition|unknown or
+// low|normal|high|unknown, tagged separately so no 9-cell matrix is formed.
+type SignalRegimeStats struct {
+	Regime        string   `json:"regime"`
+	EvaluatedBars int      `json:"evaluatedBars"`
+	Buy           int      `json:"buy"`
+	Sell          int      `json:"sell"`
+	Neutral       int      `json:"neutral"`
+	ActionablePct float64  `json:"actionablePct"`
+	BuyEpisodes   int      `json:"buyEpisodes"`
+	SellEpisodes  int      `json:"sellEpisodes"`
+	AvgScore      *float64 `json:"avgScore,omitempty"`
 }
 
 // SignalPairAgreement is the pairwise timestamp-aligned comparison.
 // Percentages are null when there are no co-actionable bars. SELL here is a
 // long-EXIT signal, not a short-entry forecast.
 type SignalPairAgreement struct {
-	A             string   `json:"a"`
-	B             string   `json:"b"`
+	A             string                  `json:"a"`
+	B             string                  `json:"b"`
+	BothBuy       int                     `json:"bothBuy"`
+	BothSell      int                     `json:"bothSell"`
+	SameDirection int                     `json:"sameDirection"`
+	Opposite      int                     `json:"opposite"`
+	OneActionable int                     `json:"oneActionable"`
+	BothNeutral   int                     `json:"bothNeutral"`
+	CoActionable  int                     `json:"coActionable"`
+	AgreementPct  *float64                `json:"agreementPct,omitempty"`
+	ConflictPct   *float64                `json:"conflictPct,omitempty"`
+	ByTrend       []SignalRegimeAgreement `json:"byTrend,omitempty"`
+	ByVolatility  []SignalRegimeAgreement `json:"byVolatility,omitempty"`
+}
+
+// SignalRegimeAgreement is the pairwise agreement counts scoped to one
+// regime; percentages are null when that regime has no co-actionable bars.
+type SignalRegimeAgreement struct {
+	Regime        string   `json:"regime"`
 	BothBuy       int      `json:"bothBuy"`
 	BothSell      int      `json:"bothSell"`
 	SameDirection int      `json:"sameDirection"`
@@ -584,42 +624,54 @@ type SignalPairAgreement struct {
 // Returns are gross price movements (next-open entry, h-bars-later close),
 // NOT strategy P&L — no costs, sizing, or position management.
 type SignalHorizonResult struct {
-	Horizon        int      `json:"horizon"`
-	StrategyID     string   `json:"strategyId"`
-	Eligible       int      `json:"eligible"`
-	Excluded       int      `json:"excluded"`
-	MeanReturn     *float64 `json:"meanReturn,omitempty"`
-	MedianReturn   *float64 `json:"medianReturn,omitempty"`
-	PositivePct    *float64 `json:"positivePct,omitempty"`
-	WorstReturn    *float64 `json:"worstReturn,omitempty"`
+	Horizon      int      `json:"horizon"`
+	StrategyID   string   `json:"strategyId"`
+	Eligible     int      `json:"eligible"`
+	Excluded     int      `json:"excluded"`
+	MeanReturn   *float64 `json:"meanReturn,omitempty"`
+	MedianReturn *float64 `json:"medianReturn,omitempty"`
+	PositivePct  *float64 `json:"positivePct,omitempty"`
+	WorstReturn  *float64 `json:"worstReturn,omitempty"`
 }
 
 // SignalForwardResult groups horizons per candidate.
 type SignalForwardResult struct {
-	StrategyID string                 `json:"strategyId"`
-	Horizons   []SignalHorizonResult  `json:"horizons"`
+	StrategyID string                `json:"strategyId"`
+	Horizons   []SignalHorizonResult `json:"horizons"`
+	// Forward study grouped by the regime at each episode's signal bar.
+	ByTrend      []SignalRegimeForward `json:"byTrend,omitempty"`
+	ByVolatility []SignalRegimeForward `json:"byVolatility,omitempty"`
+}
+
+// SignalRegimeForward holds the forward-study results for one regime bucket.
+type SignalRegimeForward struct {
+	Regime   string                `json:"regime"`
+	Horizons []SignalHorizonResult `json:"horizons"`
 }
 
 // SignalResearch is a saved analysis (full detail on GET, summary on list).
 type SignalResearch struct {
-	ID          string                  `json:"id"`
-	Status      string                  `json:"status"`
-	Name        string                  `json:"name"`
-	AssetID     string                  `json:"assetId"`
-	Timeframe   market.Timeframe        `json:"timeframe"`
-	StartDate   string                  `json:"startDate"`
-	EndDate     string                  `json:"endDate"`
-	EventStudy  bool                    `json:"eventStudy"`
-	Dataset     *string                 `json:"dataset,omitempty"`
-	LastCandle  *string                 `json:"lastCandle,omitempty"`
-	EvaluatedBars int                   `json:"evaluatedBars"`
-	WarmupBars  int                     `json:"warmupBars"`
-	StrategyIDs []string                `json:"strategyIds"`
-	Candidates  []SignalCandidateStats  `json:"candidates,omitempty"`
-	Pairs       []SignalPairAgreement   `json:"pairs,omitempty"`
-	Forward     []SignalForwardResult   `json:"forward,omitempty"`
-	Error       *string                 `json:"error,omitempty"`
-	CreatedAt   string                  `json:"createdAt"`
+	ID            string                 `json:"id"`
+	Status        string                 `json:"status"`
+	Name          string                 `json:"name"`
+	AssetID       string                 `json:"assetId"`
+	Timeframe     market.Timeframe       `json:"timeframe"`
+	StartDate     string                 `json:"startDate"`
+	EndDate       string                 `json:"endDate"`
+	EventStudy    bool                   `json:"eventStudy"`
+	Dataset       *string                `json:"dataset,omitempty"`
+	LastCandle    *string                `json:"lastCandle,omitempty"`
+	EvaluatedBars int                    `json:"evaluatedBars"`
+	WarmupBars    int                    `json:"warmupBars"`
+	StrategyIDs   []string               `json:"strategyIds"`
+	Candidates    []SignalCandidateStats `json:"candidates,omitempty"`
+	Pairs         []SignalPairAgreement  `json:"pairs,omitempty"`
+	Forward       []SignalForwardResult  `json:"forward,omitempty"`
+	Error         *string                `json:"error,omitempty"`
+	// RegimeVersion records which label definitions produced ByTrend/
+	// ByVolatility results, so saved analyses stay reproducible.
+	RegimeVersion *string `json:"regimeVersion,omitempty"`
+	CreatedAt     string  `json:"createdAt"`
 }
 
 // SignalResearchService runs and serves cross-strategy signal analyses.

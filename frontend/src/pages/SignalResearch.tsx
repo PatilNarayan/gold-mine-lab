@@ -4,7 +4,7 @@ import { DemoBanner } from '@/components/common/DemoBanner';
 import { SkeletonRows } from '@/components/common/Skeleton';
 import { useSignalResearchList, useSignalResearch, useRunSignalResearch } from '@/hooks/useSignalResearch';
 import { useStrategies } from '@/hooks/useStrategies';
-import type { SignalResearch as SR, Timeframe } from '@/types/domain';
+import type { SignalRegimeStats, SignalResearch as SR, Timeframe } from '@/types/domain';
 import { formatDateTime } from '@/lib/formatters';
 
 const MAX_LEGS = 8;
@@ -30,6 +30,7 @@ function ResearchWorkspace() {
   const [startDate, setStartDate] = useState('2020-01-01');
   const [endDate, setEndDate] = useState('2021-06-30');
   const [eventStudy, setEventStudy] = useState(true);
+  const [regimeAnalysis, setRegimeAnalysis] = useState(false);
   const nameOf = (sid: string) =>
     (strategies.data ?? []).find((s) => s.id === sid)?.name ?? sid;
 
@@ -42,7 +43,7 @@ function ResearchWorkspace() {
     run.mutate(
       {
         legs: selected.map((sid) => ({ strategyId: sid })),
-        assetId: 'xauusd', timeframe, startDate, endDate, eventStudy,
+        assetId: 'xauusd', timeframe, startDate, endDate, eventStudy, regimeAnalysis,
       },
       { onSuccess: (r) => navigate(`/research/${r.id}`) },
     );
@@ -78,6 +79,10 @@ function ResearchWorkspace() {
           <label className="flex items-center gap-1">
             <input type="checkbox" checked={eventStudy} onChange={(e) => setEventStudy(e.target.checked)} />
             Forward price study (BUY episodes, horizons 1/5/10/20)
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={regimeAnalysis} onChange={(e) => setRegimeAnalysis(e.target.checked)} />
+            Enable Market Regime Analysis
           </label>
           <button className="btn" disabled={run.isPending || selected.length < 2} onClick={submit}>
             {run.isPending ? 'Analyzing…' : `Analyze ${selected.length} candidates`}
@@ -135,6 +140,7 @@ function ResearchDetail({ id }: { id: string }) {
         {r.startDate} → {r.endDate} · {r.timeframe} · {r.evaluatedBars} bars evaluated ·
         warm-up {r.warmupBars} (never counted) · dataset <span className="tnum">{r.dataset}</span>
         {r.lastCandle ? ` · last candle ${r.lastCandle}` : ''} · status {r.status}
+        {r.regimeVersion ? ` · regime definitions ${r.regimeVersion}` : ''}
       </p>
       {smallSample && (
         <p className="text-xs text-yellow-400">
@@ -241,10 +247,117 @@ function ResearchDetail({ id }: { id: string }) {
         </section>
       )}
 
+      {(r.candidates ?? []).some((c) => (c.byTrend?.length ?? 0) > 0) && (
+        <>
+          <section className="card space-y-2" aria-label="Strategy statistics by regime">
+            <h3 className="section-label">STRATEGY BY REGIME — regime at each candle close; warm-up never counted</h3>
+            {(r.candidates ?? []).map((c) => (
+              <div key={c.strategyId} className="mb-3">
+                <p className="text-xs text-content-1 mb-1">{nameOf(c.strategyId)}</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-content-3 text-left">
+                      <th className="pr-3">Dimension</th><th className="pr-3">Regime</th><th className="pr-3 tnum">Bars</th>
+                      <th className="pr-3 tnum">BUY</th><th className="pr-3 tnum">SELL</th><th className="pr-3 tnum">NEUTRAL</th>
+                      <th className="pr-3 tnum">Actionable %</th><th className="pr-3 tnum">BUY eps</th><th className="pr-3 tnum">SELL eps</th>
+                    </tr></thead>
+                    <tbody>
+                      {(c.byTrend ?? []).map((b) => <RegimeStatRow key={`t-${b.regime}`} dim="Trend" b={b} />)}
+                      {(c.byVolatility ?? []).map((b) => <RegimeStatRow key={`v-${b.regime}`} dim="Volatility" b={b} />)}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </section>
+
+          <section className="card space-y-2" aria-label="Pairwise agreement by regime">
+            <h3 className="section-label">AGREEMENT BY REGIME — sparse co-actionable samples shown as —</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="text-content-3 text-left">
+                  <th className="pr-3">Pair</th><th className="pr-3">Regime</th>
+                  <th className="pr-3 tnum">Co-actionable</th><th className="pr-3 tnum">Opposite</th>
+                  <th className="pr-3 tnum">Agree %</th><th className="pr-3 tnum">Conflict %</th>
+                </tr></thead>
+                <tbody>
+                  {(r.pairs ?? []).flatMap((p) =>
+                    [...(p.byTrend ?? []).map((b) => ({ key: `t-${b.regime}`, label: b.regime, b })),
+                     ...(p.byVolatility ?? []).map((b) => ({ key: `v-${b.regime}`, label: `vol:${b.regime}`, b }))].map(({ key, label, b }) => (
+                      <tr key={`${p.a}/${p.b}/${key}`} className="border-t border-line">
+                        <td className="pr-3 py-1">{nameOf(p.a)} / {nameOf(p.b)}</td>
+                        <td className="pr-3">{label}</td>
+                        <td className="pr-3 tnum">{b.coActionable}</td>
+                        <td className="pr-3 tnum">{b.opposite}</td>
+                        <td className="pr-3 tnum">{b.agreementPct != null ? `${b.agreementPct.toFixed(0)}%` : '—'}</td>
+                        <td className="pr-3 tnum">{b.conflictPct != null ? `${b.conflictPct.toFixed(0)}%` : '—'}</td>
+                      </tr>
+                    )),
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {r.eventStudy && (
+            <section className="card space-y-2" aria-label="Forward outcomes by regime">
+              <h3 className="section-label">FORWARD OUTCOMES BY REGIME — regime at the signal bar; gross price moves, not P&L</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="text-content-3 text-left">
+                    <th className="pr-3">Candidate</th><th className="pr-3">Regime</th><th className="pr-3 tnum">Horizon</th>
+                    <th className="pr-3 tnum">Eligible</th><th className="pr-3 tnum">Excluded</th>
+                    <th className="pr-3 tnum">Mean %</th><th className="pr-3 tnum">Positive %</th>
+                  </tr></thead>
+                  <tbody>
+                    {(r.forward ?? []).flatMap((f) =>
+                      [...(f.byTrend ?? []), ...(f.byVolatility ?? [])].flatMap((b) =>
+                        b.horizons.filter((h) => h.eligible > 0 || h.excluded > 0).map((h) => (
+                          <tr key={`${f.strategyId}-${b.regime}-${h.horizon}`} className="border-t border-line">
+                            <td className="pr-3 py-1">{nameOf(f.strategyId)}</td>
+                            <td className="pr-3">{b.regime}</td>
+                            <td className="pr-3 tnum">+{h.horizon}</td>
+                            <td className="pr-3 tnum">{h.eligible}</td>
+                            <td className="pr-3 tnum">{h.excluded}</td>
+                            <td className="pr-3 tnum">{h.meanReturn != null ? h.meanReturn.toFixed(2) : '—'}</td>
+                            <td className="pr-3 tnum">{h.positivePct != null ? `${h.positivePct.toFixed(0)}%` : '—'}</td>
+                          </tr>
+                        )),
+                      ),
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-content-3">
+                No regime shown here is &quot;the profitable regime&quot; — small samples, dependent
+                overlapping horizons, and gross moves only. Insufficient samples are shown as empty,
+                not as a winner.
+              </p>
+            </section>
+          )}
+        </>
+      )}
+
       <p className="text-xs text-content-3">
         Scores are per-strategy signal-strength heuristics and are not comparable across strategy
         families. Historical analysis only — not live signals, trades, or predictions.
       </p>
     </div>
+  );
+}
+
+function RegimeStatRow({ dim, b }: { dim: string; b: SignalRegimeStats }) {
+  return (
+    <tr className="border-t border-line">
+      <td className="pr-3 py-1 text-content-3">{dim}</td>
+      <td className="pr-3">{b.regime}</td>
+      <td className="pr-3 tnum">{b.evaluatedBars}</td>
+      <td className="pr-3 tnum">{b.buy}</td>
+      <td className="pr-3 tnum">{b.sell}</td>
+      <td className="pr-3 tnum">{b.neutral}</td>
+      <td className="pr-3 tnum">{b.actionablePct.toFixed(1)}%</td>
+      <td className="pr-3 tnum">{b.buyEpisodes}</td>
+      <td className="pr-3 tnum">{b.sellEpisodes}</td>
+    </tr>
   );
 }

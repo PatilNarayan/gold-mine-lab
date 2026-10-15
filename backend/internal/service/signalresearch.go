@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/gold-mine-lab/backend/internal/api"
+	"github.com/gold-mine-lab/backend/internal/market"
+	"github.com/gold-mine-lab/backend/internal/regime"
 	"github.com/gold-mine-lab/backend/internal/repository"
 	"github.com/gold-mine-lab/backend/internal/strategy"
 )
@@ -126,6 +128,11 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 		}
 	}
 
+	// Regime classifiers share the same candle prefix; the research warm-up
+	// must cover them too (EMA-200 dominates at 200 bars).
+	if req.RegimeAnalysis && maxWarmup < regime.WarmupBars {
+		maxWarmup = regime.WarmupBars
+	}
 	to := end.AddDate(0, 0, 1)
 	candles, err := s.data.Range(asset, req.Timeframe, start, to, maxWarmup)
 	if err != nil {
@@ -135,8 +142,11 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 	// Provenance is established up front: an analysis can never be
 	// persisted without identifying the exact dataset it ran on.
 	fp, err := s.data.Fingerprint(asset, req.Timeframe)
-	if err != nil || fp == "" {
+	if err != nil {
 		return api.SignalResearch{}, fmt.Errorf("dataset fingerprint unavailable for %s %s: %w", req.AssetID, req.Timeframe, err)
+	}
+	if fp == "" {
+		return api.SignalResearch{}, fmt.Errorf("dataset fingerprint empty for %s %s", req.AssetID, req.Timeframe)
 	}
 	windowStart := 0
 	for windowStart < len(candles) && candles[windowStart].Time.Before(start) {
@@ -164,12 +174,25 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 		actions[i] = make([]strategy.Action, evalBars)
 		scores[i] = make([]float64, evalBars)
 	}
+	var cls *regime.Classifier
+	var trendLbls, volLbls []string
+	if req.RegimeAnalysis {
+		cls = regime.New()
+		trendLbls = make([]string, evalBars)
+		volLbls = make([]string, evalBars)
+	}
 	for ci, c := range candles {
 		if err := ctx.Err(); err != nil {
 			s.failSignalResearch(rowID, fmt.Errorf("signal research cancelled: %w", err))
 			return api.SignalResearch{}, err
 		}
 		wi := ci - windowStart
+		if cls != nil {
+			tl, vl := cls.Next(c)
+			if wi >= 0 {
+				trendLbls[wi], volLbls[wi] = string(tl), string(vl)
+			}
+		}
 		for li, st := range streams {
 			sig := st.Next(c)
 			if wi >= 0 {
@@ -213,6 +236,10 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 			v := sc / float64(act)
 			cs.AvgScore = &v
 		}
+		if req.RegimeAnalysis {
+			cs.ByTrend = srRegimeStats(trendLbls, actions[i], scores[i], trendOrder)
+			cs.ByVolatility = srRegimeStats(volLbls, actions[i], scores[i], volOrder)
+		}
 		candStats[i] = cs
 	}
 
@@ -248,6 +275,10 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 				ag := pct(p.SameDirection, p.CoActionable)
 				cf := pct(p.Opposite, p.CoActionable)
 				p.AgreementPct, p.ConflictPct = &ag, &cf
+			}
+			if req.RegimeAnalysis {
+				p.ByTrend = srRegimeAgreement(trendLbls, actions[i], actions[j], trendOrder)
+				p.ByVolatility = srRegimeAgreement(volLbls, actions[i], actions[j], volOrder)
 			}
 			pairs = append(pairs, p)
 		}
@@ -288,6 +319,10 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 				}
 				fr.Horizons = append(fr.Horizons, hr)
 			}
+			if req.RegimeAnalysis {
+				fr.ByTrend = srRegimeForward(trendLbls, buyEpisodes[i], windowStart, candles, trendOrder)
+				fr.ByVolatility = srRegimeForward(volLbls, buyEpisodes[i], windowStart, candles, volOrder)
+			}
 			forward = append(forward, fr)
 		}
 	}
@@ -304,6 +339,10 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 		out.StrategyIDs = append(out.StrategyIDs, l.StrategyID)
 	}
 	out.Dataset = &fp
+	if req.RegimeAnalysis {
+		rv := regime.DefinitionVersion
+		out.RegimeVersion = &rv
+	}
 	lc := candles[len(candles)-1].Time.UTC().Format("2006-01-02T15:04:05Z")
 	out.LastCandle = &lc
 
@@ -366,6 +405,9 @@ func signalResearchFromRow(r repository.SignalResearchRow, summaryOnly bool) (ap
 		for _, l := range req.Legs {
 			out.StrategyIDs = append(out.StrategyIDs, l.StrategyID)
 		}
+	}
+	if out.StrategyIDs == nil {
+		out.StrategyIDs = []string{}
 	}
 	out.ID, out.Status, out.Error = r.ID, r.Status, r.Error
 	out.CreatedAt = r.CreatedAt.UTC().Format(time.RFC3339)
@@ -432,4 +474,155 @@ func minF(v []float64) float64 {
 		}
 	}
 	return m
+}
+
+// --- regime-conditioned summaries -----------------------------------------
+
+var (
+	trendOrder = []string{string(regime.TrendUp), string(regime.TrendDown), string(regime.TrendTransition), string(regime.TrendUnknown)}
+	volOrder   = []string{string(regime.VolLow), string(regime.VolNormal), string(regime.VolHigh), string(regime.VolUnknown)}
+)
+
+// srRegimeStats aggregates per-candidate signal stats inside each regime
+// bucket. Episodes follow the same convention as the overall stats: a
+// consecutive run of the same actionable direction within the bucket's own
+// chronological subsequence.
+func srRegimeStats(labels []string, acts []strategy.Action, scores []float64, order []string) []api.SignalRegimeStats {
+	type acc struct {
+		st   api.SignalRegimeStats
+		sum  float64
+		prev strategy.Action
+	}
+	m := map[string]*acc{}
+	for _, r := range order {
+		m[r] = &acc{st: api.SignalRegimeStats{Regime: r}}
+	}
+	for wi, rg := range labels {
+		b := m[rg]
+		b.st.EvaluatedBars++
+		switch a := acts[wi]; a {
+		case strategy.ActionBuy:
+			b.st.Buy++
+			b.sum += scores[wi]
+			if b.prev != strategy.ActionBuy {
+				b.st.BuyEpisodes++
+			}
+		case strategy.ActionSell:
+			b.st.Sell++
+			b.sum += scores[wi]
+			if b.prev != strategy.ActionSell {
+				b.st.SellEpisodes++
+			}
+		default:
+			b.st.Neutral++
+		}
+		b.prev = acts[wi]
+	}
+	out := make([]api.SignalRegimeStats, 0, len(order))
+	for _, r := range order {
+		b := m[r]
+		a := b.st.Buy + b.st.Sell
+		if b.st.EvaluatedBars > 0 {
+			b.st.ActionablePct = pct(a, b.st.EvaluatedBars)
+		}
+		if a > 0 {
+			v := b.sum / float64(a)
+			b.st.AvgScore = &v
+		}
+		out = append(out, b.st)
+	}
+	return out
+}
+
+// srRegimeAgreement is the pairwise agreement computation restricted to the
+// bars of each regime bucket (same definitions as the overall pass).
+func srRegimeAgreement(labels []string, actA, actB []strategy.Action, order []string) []api.SignalRegimeAgreement {
+	m := map[string]*api.SignalRegimeAgreement{}
+	for _, r := range order {
+		m[r] = &api.SignalRegimeAgreement{Regime: r}
+	}
+	for wi, rg := range labels {
+		p := m[rg]
+		a, b := actA[wi], actB[wi]
+		aAct := a == strategy.ActionBuy || a == strategy.ActionSell
+		bAct := b == strategy.ActionBuy || b == strategy.ActionSell
+		switch {
+		case aAct && bAct:
+			p.CoActionable++
+			if a == b {
+				p.SameDirection++
+				if a == strategy.ActionBuy {
+					p.BothBuy++
+				} else {
+					p.BothSell++
+				}
+			} else {
+				p.Opposite++
+			}
+		case aAct != bAct:
+			p.OneActionable++
+		default:
+			p.BothNeutral++
+		}
+	}
+	out := make([]api.SignalRegimeAgreement, 0, len(order))
+	for _, r := range order {
+		p := m[r]
+		if p.CoActionable > 0 {
+			ag := pct(p.SameDirection, p.CoActionable)
+			cf := pct(p.Opposite, p.CoActionable)
+			p.AgreementPct, p.ConflictPct = &ag, &cf
+		}
+		out = append(out, *p)
+	}
+	return out
+}
+
+// srRegimeForward groups the BUY-episode forward study by the regime at each
+// episode's signal candle (the regime never changes after the fact, even
+// though outcomes read later candles).
+func srRegimeForward(labels []string, episodes []int, windowStart int, candles []market.Candle, order []string) []api.SignalRegimeForward {
+	type bucket struct {
+		rets map[int][]float64
+		excl map[int]int
+	}
+	m := map[string]*bucket{}
+	for _, r := range order {
+		m[r] = &bucket{rets: map[int][]float64{}, excl: map[int]int{}}
+	}
+	for _, ev := range episodes {
+		b := m[labels[ev]]
+		gi := windowStart + ev
+		for _, h := range srHorizons {
+			entryIdx, exitIdx := gi+1, gi+h
+			if exitIdx >= len(candles) || entryIdx >= len(candles) {
+				b.excl[h]++
+				continue
+			}
+			entry, exit := candles[entryIdx].Open, candles[exitIdx].Close
+			if entry <= 0 || math.IsNaN(entry) || math.IsNaN(exit) {
+				b.excl[h]++
+				continue
+			}
+			b.rets[h] = append(b.rets[h], (exit-entry)/entry*100)
+		}
+	}
+	out := make([]api.SignalRegimeForward, 0, len(order))
+	for _, r := range order {
+		srf := api.SignalRegimeForward{Regime: r}
+		for _, h := range srHorizons {
+			rets := m[r].rets[h]
+			hr := api.SignalHorizonResult{Horizon: h, Eligible: len(rets), Excluded: m[r].excl[h]}
+			if len(rets) > 0 {
+				mn := mean(rets)
+				md := median(rets)
+				pos := pct(posCount(rets), len(rets))
+				wr := minF(rets)
+				hr.MeanReturn, hr.MedianReturn, hr.PositivePct, hr.WorstReturn = &mn, &md, &pos, &wr
+			}
+			srf.Horizons = append(srf.Horizons, hr)
+		}
+		out = append(out, srf)
+	}
+	return out
 }

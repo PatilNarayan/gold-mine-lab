@@ -556,7 +556,16 @@ export const signalResearchRequestSchema = z.object({
   timeframe: z.string(),
   startDate: z.string(),
   endDate: z.string(),
-  eventStudy: z.boolean().optional(),
+  eventStudy: z.boolean(),
+  regimeAnalysis: z.boolean().optional(),
+});
+export const signalRegimeStatsSchema = z.object({
+  regime: z.string(),
+  evaluatedBars: z.number(),
+  buy: z.number(), sell: z.number(), neutral: z.number(),
+  actionablePct: z.number(),
+  buyEpisodes: z.number(), sellEpisodes: z.number(),
+  avgScore: z.number().nullish(),
 });
 export const signalCandidateStatsSchema = z.object({
   strategyId: z.string(),
@@ -569,6 +578,17 @@ export const signalCandidateStatsSchema = z.object({
   buyEpisodes: z.number(),
   sellEpisodes: z.number(),
   avgScore: z.number().nullish(),
+  byTrend: z.array(signalRegimeStatsSchema).nullish(),
+  byVolatility: z.array(signalRegimeStatsSchema).nullish(),
+});
+export const signalRegimeAgreementSchema = z.object({
+  regime: z.string(),
+  bothBuy: z.number(), bothSell: z.number(),
+  sameDirection: z.number(), opposite: z.number(),
+  oneActionable: z.number(), bothNeutral: z.number(),
+  coActionable: z.number(),
+  agreementPct: z.number().nullish(),
+  conflictPct: z.number().nullish(),
 });
 export const signalPairAgreementSchema = z.object({
   a: z.string(), b: z.string(),
@@ -578,6 +598,8 @@ export const signalPairAgreementSchema = z.object({
   coActionable: z.number(),
   agreementPct: z.number().nullish(),
   conflictPct: z.number().nullish(),
+  byTrend: z.array(signalRegimeAgreementSchema).nullish(),
+  byVolatility: z.array(signalRegimeAgreementSchema).nullish(),
 });
 export const signalHorizonResultSchema = z.object({
   horizon: z.number(), strategyId: z.string(),
@@ -585,9 +607,15 @@ export const signalHorizonResultSchema = z.object({
   meanReturn: z.number().nullish(), medianReturn: z.number().nullish(),
   positivePct: z.number().nullish(), worstReturn: z.number().nullish(),
 });
+export const signalRegimeForwardSchema = z.object({
+  regime: z.string(),
+  horizons: z.array(signalHorizonResultSchema),
+});
 export const signalForwardResultSchema = z.object({
   strategyId: z.string(),
   horizons: z.array(signalHorizonResultSchema),
+  byTrend: z.array(signalRegimeForwardSchema).nullish(),
+  byVolatility: z.array(signalRegimeForwardSchema).nullish(),
 });
 export const signalResearchSchema = z.object({
   id: z.string(), status: z.string(), name: z.string(),
@@ -599,6 +627,7 @@ export const signalResearchSchema = z.object({
   candidates: z.array(signalCandidateStatsSchema).nullish(),
   pairs: z.array(signalPairAgreementSchema).nullish(),
   forward: z.array(signalForwardResultSchema).nullish(),
+  regimeVersion: z.string().nullish(),
   error: z.string().nullish(),
   createdAt: z.string(),
 });
@@ -607,5 +636,8 @@ export type SignalResearchRequest = z.infer<typeof signalResearchRequestSchema>;
 export type SignalCandidateStats = z.infer<typeof signalCandidateStatsSchema>;
 export type SignalPairAgreement = z.infer<typeof signalPairAgreementSchema>;
 export type SignalHorizonResult = z.infer<typeof signalHorizonResultSchema>;
+export type SignalRegimeStats = z.infer<typeof signalRegimeStatsSchema>;
+export type SignalRegimeAgreement = z.infer<typeof signalRegimeAgreementSchema>;
+export type SignalRegimeForward = z.infer<typeof signalRegimeForwardSchema>;
 export type SignalForwardResult = z.infer<typeof signalForwardResultSchema>;
 export type SignalResearch = z.infer<typeof signalResearchSchema>;
