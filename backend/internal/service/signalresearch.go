@@ -80,6 +80,9 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 			}
 			return api.SignalResearch{}, err
 		}
+		if st == nil {
+			return verr("unknown strategyId")
+		}
 		params, err := graphLegParameters(leg.StrategyID, leg.Parameters)
 		if err != nil {
 			var ve *api.ValidationError
@@ -128,6 +131,13 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 	if err != nil {
 		return verr(fmt.Sprintf("no candle data for window: %v", err))
 	}
+
+	// Provenance is established up front: an analysis can never be
+	// persisted without identifying the exact dataset it ran on.
+	fp, err := s.data.Fingerprint(asset, req.Timeframe)
+	if err != nil || fp == "" {
+		return api.SignalResearch{}, fmt.Errorf("dataset fingerprint unavailable for %s %s: %w", req.AssetID, req.Timeframe, err)
+	}
 	windowStart := 0
 	for windowStart < len(candles) && candles[windowStart].Time.Before(start) {
 		windowStart++
@@ -156,6 +166,7 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 	}
 	for ci, c := range candles {
 		if err := ctx.Err(); err != nil {
+			s.failSignalResearch(rowID, fmt.Errorf("signal research cancelled: %w", err))
 			return api.SignalResearch{}, err
 		}
 		wi := ci - windowStart
@@ -292,9 +303,7 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 	for _, l := range req.Legs {
 		out.StrategyIDs = append(out.StrategyIDs, l.StrategyID)
 	}
-	if fp, err := s.data.Fingerprint(asset, req.Timeframe); err == nil && fp != "" {
-		out.Dataset = &fp
-	}
+	out.Dataset = &fp
 	lc := candles[len(candles)-1].Time.UTC().Format("2006-01-02T15:04:05Z")
 	out.LastCandle = &lc
 
@@ -312,7 +321,11 @@ func (s *Service) ListSignalResearch(ctx context.Context) ([]api.SignalResearch,
 	}
 	out := make([]api.SignalResearch, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, signalResearchFromRow(r, true))
+		sr, err := signalResearchFromRow(r, true)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sr)
 	}
 	return out, nil
 }
@@ -325,26 +338,33 @@ func (s *Service) GetSignalResearch(ctx context.Context, id string) (api.SignalR
 	if err != nil {
 		return api.SignalResearch{}, err
 	}
-	return signalResearchFromRow(r, false), nil
+	return signalResearchFromRow(r, false)
 }
 
 // signalResearchFromRow rebuilds the response. For completed rows the stored
 // result JSONB is returned as-is (minus candidates/pairs/forward in list
 // view); for pending/failed rows the request supplies the summary fields.
-func signalResearchFromRow(r repository.SignalResearchRow, summaryOnly bool) api.SignalResearch {
+// Persisted JSON that cannot be decoded is an integrity error, never a
+// silently zero-valued response.
+func signalResearchFromRow(r repository.SignalResearchRow, summaryOnly bool) (api.SignalResearch, error) {
 	var out api.SignalResearch
 	if len(r.Result) > 0 {
-		_ = json.Unmarshal(r.Result, &out)
+		if err := json.Unmarshal(r.Result, &out); err != nil {
+			return api.SignalResearch{}, fmt.Errorf("signal research %s: stored result is malformed: %w", r.ID, err)
+		}
+	} else if r.Status == "completed" {
+		return api.SignalResearch{}, fmt.Errorf("signal research %s: completed record has no stored result", r.ID)
 	}
 	if len(out.StrategyIDs) == 0 && len(r.Request) > 0 {
 		var req api.SignalResearchRequest
-		if json.Unmarshal(r.Request, &req) == nil {
-			out.AssetID, out.Timeframe = req.AssetID, req.Timeframe
-			out.StartDate, out.EndDate = req.StartDate, req.EndDate
-			out.EventStudy, out.Name = req.EventStudy, req.Name
-			for _, l := range req.Legs {
-				out.StrategyIDs = append(out.StrategyIDs, l.StrategyID)
-			}
+		if err := json.Unmarshal(r.Request, &req); err != nil {
+			return api.SignalResearch{}, fmt.Errorf("signal research %s: stored request is malformed: %w", r.ID, err)
+		}
+		out.AssetID, out.Timeframe = req.AssetID, req.Timeframe
+		out.StartDate, out.EndDate = req.StartDate, req.EndDate
+		out.EventStudy, out.Name = req.EventStudy, req.Name
+		for _, l := range req.Legs {
+			out.StrategyIDs = append(out.StrategyIDs, l.StrategyID)
 		}
 	}
 	out.ID, out.Status, out.Error = r.ID, r.Status, r.Error
@@ -352,7 +372,19 @@ func signalResearchFromRow(r repository.SignalResearchRow, summaryOnly bool) api
 	if summaryOnly {
 		out.Candidates, out.Pairs, out.Forward = nil, nil, nil
 	}
-	return out
+	return out, nil
+}
+
+// failSignalResearch best-effort transitions a persisted analysis to failed
+// on a bounded context detached from the (possibly cancelled) request. A
+// cleanup failure is logged separately and never masks the original cause.
+func (s *Service) failSignalResearch(rowID string, cause error) {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), 10*time.Second)
+	defer cancel()
+	msg := cause.Error()
+	if err := s.repos.SignalResearch.SetSignalResearchResult(cctx, rowID, "failed", nil, &msg); err != nil {
+		s.log.Error("signal research: could not persist failed status", "id", rowID, "cause", msg, "error", err.Error())
+	}
 }
 
 func isGraphSlug(id string) bool { return len(id) > 6 && id[:6] == "graph:" }
