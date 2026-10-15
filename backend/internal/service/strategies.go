@@ -104,15 +104,20 @@ func (s *Service) generateSignals(ctx context.Context) ([]strategy.Signal, error
 			}
 			stream := streamer.NewStream()
 			var last strategy.Signal
+			lastKept := false
 			for _, c := range candles {
 				last = stream.Next(c)
+				lastKept = false
 				if last.Action == strategy.ActionBuy || last.Action == strategy.ActionSell {
 					last.AssetID = assetID
 					out = append(out, last)
+					lastKept = true
 				}
 			}
-			// Always keep the most recent bar so the UI has a "current" state.
-			if len(candles) > 0 && (len(out) == 0 || out[len(out)-1].Timestamp != last.Timestamp) {
+			// Each strategy×asset pair keeps its own latest bar's signal so the
+			// UI has a "current" state — never skip it because ANOTHER pair's
+			// last signal happens to share the timestamp.
+			if len(candles) > 0 && !lastKept {
 				last.AssetID = assetID
 				out = append(out, last)
 			}

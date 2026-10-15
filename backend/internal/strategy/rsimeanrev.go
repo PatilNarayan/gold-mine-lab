@@ -131,22 +131,19 @@ func (r *RSIMeanReversion) crossSignal(prevRSI, curRSI float64, bar market.Candl
 		base.Action = ActionNeutral
 		base.Reason = "no threshold cross"
 	}
-	base.Score = thresholdScore(curRSI, r.oversold, r.overbought)
+	base.Score = crossMoveScore(prevRSI, curRSI, base.Action)
 	return base
 }
 
-// thresholdScore measures how far RSI pushed past the threshold it crossed,
-// normalized to [0,1] against the remaining band.
-func thresholdScore(rsi, oversold, overbought float64) float64 {
-	var s float64
-	switch {
-	case rsi <= oversold:
-		s = (oversold - rsi) / oversold // deeper oversold = stronger
-	case rsi >= overbought:
-		s = (rsi - overbought) / (100 - overbought)
-	default:
-		s = 0
+// crossMoveScore is the SIZE OF THE CROSSING MOVE in RSI points, normalized
+// to [0,1] over a 10-point reference move — identical semantics for BUY and
+// SELL. NEUTRAL = 0 (no event). It is signal strength only, NOT a
+// probability of profit.
+func crossMoveScore(prevRSI, curRSI float64, action Action) float64 {
+	if action != ActionBuy && action != ActionSell {
+		return 0
 	}
+	s := math.Abs(curRSI-prevRSI) / 10
 	if s > 1 {
 		return 1
 	}

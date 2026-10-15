@@ -10,6 +10,7 @@ const Market = lazy(() => import('@/pages/Market'));
 const Strategies = lazy(() => import('@/pages/Strategies'));
 const StrategyDetail = lazy(() => import('@/pages/StrategyDetail'));
 const Backtests = lazy(() => import('@/pages/Backtests'));
+const Compare = lazy(() => import('@/pages/Compare'));
 const Results = lazy(() => import('@/pages/Results'));
 const ResultsRedirect = lazy(() => import('@/pages/ResultsRedirect'));
 const Trades = lazy(() => import('@/pages/Trades'));
@@ -24,6 +25,8 @@ export const router = createBrowserRouter([
       { path: '/strategies', element: <Strategies /> },
       { path: '/strategies/:id', element: <StrategyDetail /> },
       { path: '/backtests', element: <Backtests /> },
+      { path: '/compare', element: <Compare /> },
+      { path: '/compare/:id', element: <Compare /> },
       { path: '/results', element: <ResultsRedirect /> },
       { path: '/results/:runId', element: <Results /> },
       { path: '/trades', element: <Trades /> },

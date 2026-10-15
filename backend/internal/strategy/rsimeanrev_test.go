@@ -28,16 +28,25 @@ func TestRSIMeanRevSignals(t *testing.T) {
 
 	stream := strat.NewStream()
 	var acts []Action
+	var scores []float64
 	for _, c := range candles {
-		acts = append(acts, stream.Next(c).Action)
+		sig := stream.Next(c)
+		acts = append(acts, sig.Action)
+		scores = append(scores, sig.Score)
 	}
 	buys, sells := 0, 0
-	for _, a := range acts {
+	for i, a := range acts {
 		if a == ActionBuy {
 			buys++
 		}
 		if a == ActionSell {
 			sells++
+		}
+		if a != ActionNeutral && scores[i] <= 0 {
+			t.Fatalf("bar %d: %s cross scored %v — must reflect the crossing move", i, a, scores[i])
+		}
+		if a == ActionNeutral && scores[i] != 0 {
+			t.Fatalf("bar %d: NEUTRAL scored %v — must be 0", i, scores[i])
 		}
 	}
 	if buys != 1 || sells != 1 {

@@ -150,6 +150,38 @@ func registerBacktestRoutes(g *gin.RouterGroup, svc BacktestService) {
 	})
 }
 
+func registerComparisonRoutes(g *gin.RouterGroup, svc ComparisonService) {
+	g.POST("/comparisons", func(c *gin.Context) {
+		var req ComparisonRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			return
+		}
+		out, err := svc.ExecuteComparison(c.Request.Context(), req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, out)
+	})
+	g.GET("/comparisons", func(c *gin.Context) {
+		out, err := svc.ListComparisons(c.Request.Context())
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	g.GET("/comparisons/:id", func(c *gin.Context) {
+		out, err := svc.GetComparison(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+}
+
 func registerTradeRoutes(g *gin.RouterGroup, svc TradeService) {
 	g.GET("/trades", func(c *gin.Context) {
 		f := TradeFilters{

@@ -139,7 +139,12 @@ export const backtestMetricsSchema = z.object({
   profitFactor: z.number(),
   maxDrawdown: z.number(),
   totalTrades: z.number(),
+  winningTrades: z.number(),
+  losingTrades: z.number(),
   avgTradePnl: z.number(),
+  grossProfit: z.number(),
+  grossLoss: z.number(),
+  totalCommissions: z.number().nullable(), // null on legacy runs
 });
 export type BacktestMetrics = z.infer<typeof backtestMetricsSchema>;
 
@@ -226,6 +231,68 @@ export const dashboardSummarySchema = z.object({
   equity: z.array(equityPointSchema),
 });
 export type DashboardSummary = z.infer<typeof dashboardSummarySchema>;
+
+// --- comparisons (Phase 4 research grouping) ---------------------------------
+
+export const comparisonLegSchema = z.object({
+  strategyId: z.string(),
+  parameters: parameterValuesSchema,
+});
+export type ComparisonLeg = z.infer<typeof comparisonLegSchema>;
+
+/** POST /api/comparisons — identical assumptions across legs; per-leg params. */
+export const comparisonRequestSchema = z.object({
+  legs: z.array(comparisonLegSchema).min(2),
+  assetId: z.string(),
+  timeframe: timeframeSchema,
+  startDate: z.string(), // in-sample window
+  endDate: z.string(),
+  oosStartDate: z.string().nullable().optional(), // optional out-of-sample
+  oosEndDate: z.string().nullable().optional(),
+  initialCapital: z.number(),
+  positionSize: z.number(),
+  commission: z.number(),
+  slippage: z.number(),
+});
+export type ComparisonRequest = z.infer<typeof comparisonRequestSchema>;
+
+export const comparisonStatusSchema = z.enum([
+  'pending',
+  'running',
+  'completed',
+  'partial_failed',
+  'failed',
+]);
+export type ComparisonStatus = z.infer<typeof comparisonStatusSchema>;
+
+export const comparisonResultSchema = z.object({
+  run: backtestRunSchema,
+  sample: z.enum(['in_sample', 'out_of_sample', '']),
+  metrics: backtestMetricsSchema.nullable(),
+  equity: z.array(equityPointSchema),
+});
+export type ComparisonResult = z.infer<typeof comparisonResultSchema>;
+
+export const comparisonSchema = z.object({
+  id: z.string(),
+  status: comparisonStatusSchema,
+  assetId: z.string(),
+  timeframe: z.string(),
+  startDate: z.string(),
+  endDate: z.string(),
+  oosStartDate: z.string().nullable(),
+  oosEndDate: z.string().nullable(),
+  initialCapital: z.number(),
+  positionSize: z.number(),
+  commission: z.number(),
+  slippage: z.number(),
+  strategyIds: z.array(z.string()),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+  completedAt: z.string().nullable(),
+  results: z.array(comparisonResultSchema).optional(),
+});
+export type Comparison = z.infer<typeof comparisonSchema>;
 
 export const backtestRequestSchema = z.object({
   assetId: z.string(),

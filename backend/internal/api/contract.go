@@ -75,13 +75,19 @@ type StrategyListItem struct {
 
 // BacktestMetrics mirrors the planned backtest_metrics table.
 type BacktestMetrics struct {
-	NetPnl       float64 `json:"netPnl"`
-	ReturnPct    float64 `json:"returnPct"`
-	WinRate      float64 `json:"winRate"`
-	ProfitFactor float64 `json:"profitFactor"`
-	MaxDrawdown  float64 `json:"maxDrawdown"`
-	TotalTrades  int     `json:"totalTrades"`
-	AvgTradePnl  float64 `json:"avgTradePnl"`
+	NetPnl        float64 `json:"netPnl"`
+	ReturnPct     float64 `json:"returnPct"`
+	WinRate       float64 `json:"winRate"`
+	ProfitFactor  float64 `json:"profitFactor"`
+	MaxDrawdown   float64 `json:"maxDrawdown"`
+	TotalTrades   int     `json:"totalTrades"`
+	WinningTrades int     `json:"winningTrades"`
+	LosingTrades  int     `json:"losingTrades"`
+	AvgTradePnl   float64 `json:"avgTradePnl"`
+	GrossProfit   float64 `json:"grossProfit"`
+	GrossLoss     float64 `json:"grossLoss"`
+	// TotalCommissions is nil on legacy runs that predate the metric.
+	TotalCommissions *float64 `json:"totalCommissions"`
 }
 
 // BacktestRun mirrors the planned backtest_runs table.
@@ -161,6 +167,66 @@ type DashboardSummary struct {
 	Equity                []EquityPoint `json:"equity"` // latest run's curve
 }
 
+// ComparisonLeg is one strategy + its parameter overrides inside a comparison.
+type ComparisonLeg struct {
+	StrategyID string         `json:"strategyId"`
+	Parameters map[string]any `json:"parameters"`
+}
+
+// ComparisonRequest is the body of POST /api/comparisons. Every leg shares
+// the window, capital, position sizing, and cost assumptions — identical
+// experiment conditions; only strategy parameters may differ.
+// The optional OOS window must be strictly after the in-sample end date.
+type ComparisonRequest struct {
+	Legs                 []ComparisonLeg  `json:"legs"`
+	AssetID              string           `json:"assetId"`
+	Timeframe            market.Timeframe `json:"timeframe"`
+	StartDate            string           `json:"startDate"` // in-sample window
+	EndDate              string           `json:"endDate"`
+	OutOfSampleStartDate *string          `json:"oosStartDate,omitempty"`
+	OutOfSampleEndDate   *string          `json:"oosEndDate,omitempty"`
+	InitialCapital       float64          `json:"initialCapital"`
+	PositionSize         float64          `json:"positionSize"`
+	Commission           float64          `json:"commission"`
+	Slippage             float64          `json:"slippage"`
+}
+
+// ComparisonResult pairs a member run with its metrics and equity curve.
+type ComparisonResult struct {
+	Run     BacktestRun      `json:"run"`
+	Sample  string           `json:"sample"` // "in_sample" | "out_of_sample"
+	Metrics *BacktestMetrics `json:"metrics"`
+	Equity  []EquityPoint    `json:"equity"`
+}
+
+// Comparison is a saved experiment group (summary in list, full detail on GET).
+type Comparison struct {
+	ID             string             `json:"id"`
+	Status         string             `json:"status"` // pending|running|completed|partial_failed|failed
+	AssetID        string             `json:"assetId"`
+	Timeframe      string             `json:"timeframe"`
+	StartDate      string             `json:"startDate"`
+	EndDate        string             `json:"endDate"`
+	OosStartDate   *string            `json:"oosStartDate"`
+	OosEndDate     *string            `json:"oosEndDate"`
+	InitialCapital float64            `json:"initialCapital"`
+	PositionSize   float64            `json:"positionSize"`
+	Commission     float64            `json:"commission"`
+	Slippage       float64            `json:"slippage"`
+	StrategyIDs    []string           `json:"strategyIds"`
+	Error          *string            `json:"error"`
+	CreatedAt      string             `json:"createdAt"`
+	CompletedAt    *string            `json:"completedAt"`
+	Results        []ComparisonResult `json:"results,omitempty"` // detail only
+}
+
+// ComparisonService executes and serves grouped strategy comparisons.
+type ComparisonService interface {
+	ExecuteComparison(ctx context.Context, req ComparisonRequest) (Comparison, error)
+	ListComparisons(ctx context.Context) ([]Comparison, error)
+	GetComparison(ctx context.Context, id string) (Comparison, error)
+}
+
 // BacktestRequest is the body of POST /api/backtests.
 type BacktestRequest struct {
 	AssetID        string           `json:"assetId"`
@@ -173,6 +239,10 @@ type BacktestRequest struct {
 	Commission     float64          `json:"commission"`
 	Slippage       float64          `json:"slippage"`
 	Parameters     map[string]any   `json:"parameters"`
+	// ComparisonID/Sample are set internally by the comparison runner — the
+	// public POST endpoint leaves them nil.
+	ComparisonID *string `json:"-"`
+	Sample       *string `json:"-"`
 }
 
 // TradeFilters mirrors the frontend's query-param filter set.

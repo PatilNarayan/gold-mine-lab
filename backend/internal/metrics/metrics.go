@@ -24,24 +24,27 @@ import (
 
 // Summary is the computed metric set (names match backtest_metrics rows).
 type Summary struct {
-	NetPnl       float64
-	ReturnPct    float64
-	TotalTrades  int
-	Winning      int
-	Losing       int
-	WinRate      float64
-	AvgTradePnl  float64
-	GrossProfit  float64
-	GrossLoss    float64
-	ProfitFactor float64
-	MaxDrawdown  float64
+	NetPnl      float64
+	ReturnPct   float64
+	TotalTrades int
+	Winning     int
+	Losing      int
+	WinRate     float64
+	AvgTradePnl float64
+	GrossProfit float64
+	GrossLoss   float64
+	// TotalCommissions is Σ(entryCommission + exitCommission) across all
+	// trades — the total cost drag paid inside this run.
+	TotalCommissions float64
+	ProfitFactor     float64
+	MaxDrawdown      float64
 }
 
 // Names is the canonical metric_name vocabulary stored in backtest_metrics.
 var Names = []string{
 	"net_pnl", "return_pct", "total_trades", "winning_trades", "losing_trades",
 	"win_rate", "avg_trade_pnl", "gross_profit", "gross_loss",
-	"profit_factor", "max_drawdown",
+	"total_commissions", "profit_factor", "max_drawdown",
 }
 
 // Compute derives metrics from engine output. Deterministic.
@@ -57,6 +60,7 @@ func Compute(res backtest.Result, initialCapital float64) Summary {
 			continue
 		}
 		s.TotalTrades++
+		s.TotalCommissions += t.EntryCommission + t.ExitCommission
 		if *t.Pnl > 0 {
 			s.Winning++
 			s.GrossProfit += *t.Pnl
@@ -101,6 +105,7 @@ func (s Summary) Rows() []repository.MetricValue {
 		{Name: "avg_trade_pnl", Value: s.AvgTradePnl},
 		{Name: "gross_profit", Value: s.GrossProfit},
 		{Name: "gross_loss", Value: s.GrossLoss},
+		{Name: "total_commissions", Value: s.TotalCommissions},
 		{Name: "profit_factor", Value: s.ProfitFactor},
 		{Name: "max_drawdown", Value: s.MaxDrawdown},
 	}

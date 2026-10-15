@@ -37,8 +37,31 @@ type RunRow struct {
 	EngineVersion   *string
 	StrategyVersion *string
 	Dataset         *string
-	CreatedAt       time.Time
-	CompletedAt     *time.Time
+	// Comparison grouping (migration 000003). nil = standalone run.
+	ComparisonID *string
+	Sample       *string // "in_sample" | "out_of_sample"
+	CreatedAt    time.Time
+	CompletedAt  *time.Time
+}
+
+// ComparisonRow mirrors the comparisons table.
+type ComparisonRow struct {
+	ID             string
+	AssetID        string
+	Timeframe      string
+	StartDate      string // in-sample window (YYYY-MM-DD)
+	EndDate        string
+	OosStartDate   *string
+	OosEndDate     *string
+	InitialCapital float64
+	PositionSize   float64
+	Commission     float64
+	Slippage       float64
+	StrategyIDs    []string
+	Status         string // pending|running|completed|partial_failed|failed
+	Error          *string
+	CreatedAt      time.Time
+	CompletedAt    *time.Time
 }
 
 // EquityPointRow is one point of a persisted equity curve.
@@ -118,7 +141,19 @@ type RunRepository interface {
 	FailRun(ctx context.Context, runID, message string) error
 	GetRun(ctx context.Context, runID string) (RunRow, error)
 	ListRuns(ctx context.Context, strategyID string) ([]RunRow, error)
+	ListRunsByComparison(ctx context.Context, comparisonID string) ([]RunRow, error)
 	LatestCompletedRunID(ctx context.Context) (string, error)
+}
+
+// ComparisonRepository persists comparison groups and their member runs.
+type ComparisonRepository interface {
+	// CreateComparison inserts a pending comparison and returns its ID.
+	CreateComparison(ctx context.Context, c ComparisonRow) (string, error)
+	// SetComparisonStatus transitions status (running→completed|partial_failed|failed)
+	// with an optional error message and completed_at.
+	SetComparisonStatus(ctx context.Context, id, status string, errMsg *string) error
+	GetComparison(ctx context.Context, id string) (ComparisonRow, error)
+	ListComparisons(ctx context.Context) ([]ComparisonRow, error)
 }
 
 type TradeRepository interface {

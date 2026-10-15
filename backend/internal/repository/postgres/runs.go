@@ -18,14 +18,14 @@ func (s *Store) CreateRun(ctx context.Context, r repository.RunRow) (string, err
 		INSERT INTO backtest_runs
 		    (strategy_id, asset_id, timeframe, start_date, end_date,
 		     initial_capital, position_size, commission, slippage, parameters,
-		     engine_version, strategy_version, dataset, status)
-		VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, $13, 'queued')
+		     engine_version, strategy_version, dataset, comparison_id, sample, status)
+		VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'queued')
 		RETURNING id::text`
 	var id string
 	err := s.db.QueryRow(ctx, q,
 		r.StrategyID, r.AssetID, r.Timeframe, r.StartDate, r.EndDate,
 		r.InitialCapital, r.PositionSize, r.Commission, r.Slippage, params,
-		r.EngineVersion, r.StrategyVersion, r.Dataset,
+		r.EngineVersion, r.StrategyVersion, r.Dataset, r.ComparisonID, r.Sample,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("create run: %w", err)
@@ -114,6 +114,7 @@ const runCols = `id::text, strategy_id, asset_id, timeframe, start_date, end_dat
 	initial_capital, position_size, commission, slippage, parameters,
 	status, equity_curve, error,
 	engine_version, strategy_version, dataset,
+	comparison_id::text, sample,
 	created_at, completed_at`
 
 func (s *Store) GetRun(ctx context.Context, runID string) (repository.RunRow, error) {
@@ -149,6 +150,25 @@ func (s *Store) ListRuns(ctx context.Context, strategyID string) ([]repository.R
 	return out, rows.Err()
 }
 
+func (s *Store) ListRunsByComparison(ctx context.Context, comparisonID string) ([]repository.RunRow, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT `+runCols+` FROM backtest_runs WHERE comparison_id = $1
+		 ORDER BY created_at`, comparisonID)
+	if err != nil {
+		return nil, fmt.Errorf("list runs by comparison: %w", err)
+	}
+	defer rows.Close()
+	out := []repository.RunRow{}
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) LatestCompletedRunID(ctx context.Context) (string, error) {
 	var id string
 	err := s.db.QueryRow(ctx,
@@ -169,6 +189,7 @@ func scanRun(row pgx.Row) (repository.RunRow, error) {
 		&r.InitialCapital, &r.PositionSize, &r.Commission, &r.Slippage,
 		&params, &r.Status, &curve, &r.Error,
 		&r.EngineVersion, &r.StrategyVersion, &r.Dataset,
+		&r.ComparisonID, &r.Sample,
 		&r.CreatedAt, &r.CompletedAt)
 	if err != nil {
 		return r, err

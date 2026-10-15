@@ -43,11 +43,8 @@ func (s *Service) GetRun(ctx context.Context, runID string) (api.BacktestDetail,
 		detail.Strategy = &def
 	}
 	if m, err := s.repos.Metrics.GetMetrics(ctx, r.ID); err == nil && len(m) > 0 {
-		detail.Metrics = &api.BacktestMetrics{
-			NetPnl: m["net_pnl"], ReturnPct: m["return_pct"], WinRate: m["win_rate"],
-			ProfitFactor: m["profit_factor"], MaxDrawdown: m["max_drawdown"],
-			TotalTrades: int(m["total_trades"]), AvgTradePnl: m["avg_trade_pnl"],
-		}
+		mm := metricsDTO(m)
+		detail.Metrics = &mm
 	}
 	for _, p := range r.EquityCurve {
 		detail.Equity = append(detail.Equity, api.EquityPoint{
@@ -246,6 +243,8 @@ func (s *Service) validateRequest(ctx context.Context, req api.BacktestRequest) 
 		Commission: req.Commission, Slippage: req.Slippage, Parameters: req.Parameters,
 		EngineVersion:   &engineVersion,
 		StrategyVersion: ptr(strat.Version()), // captured at execution time
+		ComparisonID:    req.ComparisonID,
+		Sample:          req.Sample,
 	}, strat, nil
 }
 

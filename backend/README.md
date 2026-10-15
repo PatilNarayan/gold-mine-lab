@@ -151,6 +151,16 @@ Rules (long-only):
 Same engine, same fill model, same accounting — equivalence proven by
 `TestRSIStreamEqualsEvaluate`.
 
+## Comparisons (Phase 4)
+
+`comparisons` table groups member runs (`backtest_runs.comparison_id`,
+`sample` ∈ in_sample|out_of_sample). `ExecuteComparison` validates ≥2
+distinct legs, enforces `oosStart > endDate`, then executes each leg through
+the normal `Execute` path — identical capital/sizing/costs/dataset/engine,
+per-leg parameters only. Status: completed | partial_failed | failed.
+Out-of-sample legs use a strictly later window; warm-up may extend before it
+but trades/metrics belong to the leg window only.
+
 Timeframe is a **per-run choice**: `Definition.timeframe` is the default and
 `supportedTimeframes` (15m/1h/4h/1d) bounds what a run may request —
 validation rejects anything else. EMA warm-up is parameter-derived:
@@ -222,6 +232,9 @@ Same contract as before — thin handlers → `service` → repos/engine:
 | GET    | `/api/market/candles?asset&timeframe` | real CSV candles + EMA overlays |
 | GET    | `/api/market/summary` | real last candle close / change (status `Historical` — no live feed) |
 | GET    | `/api/strategies` | defs + latest signal + latest-run metrics per strategy |
+| POST   | `/api/comparisons` | run 2–4 strategies under identical assumptions; optional OOS window |
+| GET    | `/api/comparisons` | saved comparisons (newest first) |
+| GET    | `/api/comparisons/:id` | config + per-leg runs, metrics, equity curves |
 | GET    | `/api/signals` | persisted crossover signals |
 | GET    | `/api/backtests?strategy` | all runs |
 | GET    | `/api/backtests/latest` | newest completed run ID |

@@ -118,6 +118,12 @@ Never Handler→SQL, never Strategy→I/O.
   `period` changes, then `avg = (prevAvg·(p−1)+x)/p`. Undefined (NaN) for
   index < period; avgLoss==0 → 100 (avgGain>0) or 50 (both zero = constant
   prices). Batch and stream are identical.
+- **Comparisons.** `/compare` runs 2–4 strategies under identical
+  assumptions (window/capital/sizing/costs/dataset/engine) — per-leg params
+  only differ. Optional out-of-sample window must be strictly later; each
+  leg's trades/metrics belong only to its own window (warm-up may precede
+  it). Results carry per-run fingerprint + engine/strategy versions; no
+  combined portfolio curve; <30-trade legs trigger a small-sample warning.
 - **rsi-mean-reversion v1.0.0.** BUY = RSI crosses UP through oversold;
   SELL = RSI crosses DOWN through overbought (exit only, long-only). A cross
   fires once — staying beyond a threshold does not re-signal. Params:

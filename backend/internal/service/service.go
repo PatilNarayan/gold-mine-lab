@@ -39,12 +39,13 @@ var serveCaps = map[market.Timeframe]int{
 
 // Repositories bundles the repository contracts the service consumes.
 type Repositories struct {
-	Assets     repository.AssetRepository
-	Strategies repository.StrategyRepository
-	Signals    repository.SignalRepository
-	Runs       repository.RunRepository
-	Trades     repository.TradeRepository
-	Metrics    repository.MetricRepository
+	Assets      repository.AssetRepository
+	Strategies  repository.StrategyRepository
+	Signals     repository.SignalRepository
+	Runs        repository.RunRepository
+	Trades      repository.TradeRepository
+	Metrics     repository.MetricRepository
+	Comparisons repository.ComparisonRepository
 }
 
 // Service implements api.MarketService/StrategyService/BacktestService/

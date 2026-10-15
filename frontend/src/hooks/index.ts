@@ -10,3 +10,4 @@ export {
 } from './useBacktests';
 export { useTrades } from './useTrades';
 export { useHealth } from './useHealth';
+export { useComparisons, useComparison, useRunComparison } from './useComparisons';

@@ -1,5 +1,6 @@
 import type {
   BacktestService,
+  ComparisonService,
   HealthService,
   MarketService,
   StrategyService,
@@ -20,12 +21,15 @@ import { httpStrategyService } from './api/httpStrategy';
 import { httpBacktestService } from './api/httpBacktest';
 import { httpTradeService } from './api/httpTrade';
 import { httpHealthService } from './api/httpHealth';
+import { httpComparisonService } from './api/httpComparison';
+import { mockComparisonService } from './mock/mockComparison';
 
 export interface Services {
   market: MarketService;
   strategy: StrategyService;
   backtest: BacktestService;
   trade: TradeService;
+  comparison: ComparisonService;
   health: HealthService;
   realtime: RealtimeClient;
 }
@@ -42,6 +46,7 @@ export function createServices(mode: DataMode = dataMode): Services {
       strategy: httpStrategyService,
       backtest: httpBacktestService,
       trade: httpTradeService,
+      comparison: httpComparisonService,
       health: httpHealthService,
       realtime: new NoopRealtimeClient(),
     };
@@ -51,6 +56,7 @@ export function createServices(mode: DataMode = dataMode): Services {
     strategy: mockStrategyService,
     backtest: mockBacktestService,
     trade: mockTradeService,
+    comparison: mockComparisonService,
     health: mockHealthService,
     realtime: new NoopRealtimeClient(),
   };

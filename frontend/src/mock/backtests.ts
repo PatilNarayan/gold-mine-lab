@@ -166,7 +166,15 @@ function buildDetail(run: BacktestRun): BacktestDetail {
     profitFactor: grossLoss > 0 ? round(grossWin / grossLoss, 2) : wins.length ? 99 : 0,
     maxDrawdown: round(maxDrawdown, 4),
     totalTrades: closed.length,
+    winningTrades: wins.length,
+    losingTrades: losses.length,
     avgTradePnl: closed.length ? round(netPnl / closed.length, 2) : 0,
+    grossProfit: round(grossWin, 2),
+    grossLoss: round(grossLoss, 2),
+    totalCommissions: round(
+      closed.reduce((s, t) => s + (t.entryCommission ?? 0) + (t.exitCommission ?? 0), 0),
+      2,
+    ),
   };
 
   return { run, strategy, metrics, equity, trades };

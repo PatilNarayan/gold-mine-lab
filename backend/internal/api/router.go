@@ -19,6 +19,7 @@ type Deps struct {
 	Strategies     StrategyService
 	Backtests      BacktestService
 	Trades         TradeService
+	Comparisons    ComparisonService
 	AllowedOrigins []string
 	// Env is "dev" | "prod" | "test" — controls gin's mode.
 	Env string
@@ -63,6 +64,9 @@ func NewRouter(d Deps) *gin.Engine {
 	}
 	if d.Trades != nil {
 		registerTradeRoutes(v1, d.Trades)
+	}
+	if d.Comparisons != nil {
+		registerComparisonRoutes(v1, d.Comparisons)
 	}
 
 	return r

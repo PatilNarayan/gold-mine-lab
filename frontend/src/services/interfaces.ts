@@ -4,6 +4,8 @@ import type {
   BacktestRequest,
   BacktestRun,
   CandleSeries,
+  Comparison,
+  ComparisonRequest,
   DashboardSummary,
   MarketSummary,
   PagedTrades,
@@ -44,6 +46,12 @@ export interface BacktestService {
 
 export interface TradeService {
   getTrades(filters: TradeFilters): Promise<PagedTrades>;
+}
+
+export interface ComparisonService {
+  run(request: ComparisonRequest): Promise<Comparison>;
+  list(): Promise<Comparison[]>;
+  get(id: string): Promise<Comparison>;
 }
 
 export interface HealthService {
