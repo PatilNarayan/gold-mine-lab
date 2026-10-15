@@ -3,7 +3,9 @@ package strategygraph
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 
 	"github.com/gold-mine-lab/backend/internal/market"
 	"github.com/gold-mine-lab/backend/internal/strategy"
@@ -29,6 +31,23 @@ type GraphStrategy struct {
 // StrategySlug is the backtest_runs.strategy_id a graph revision runs under.
 func StrategySlug(graphID string, revision int) string {
 	return fmt.Sprintf("graph:%s:v%d", graphID, revision)
+}
+
+var slugRe = regexp.MustCompile(`^graph:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}):v([0-9]+)$`)
+
+// ParseSlug strictly decodes a materialized graph strategy id produced by
+// StrategySlug. Anything else (including a bare "graph:" prefix) returns
+// ok=false so callers never guess at partial slugs.
+func ParseSlug(id string) (graphID string, revision int, ok bool) {
+	m := slugRe.FindStringSubmatch(id)
+	if m == nil {
+		return "", 0, false
+	}
+	rev, err := strconv.Atoi(m[2])
+	if err != nil || rev < 1 {
+		return "", 0, false
+	}
+	return m[1], rev, true
 }
 
 // New validates the definition and builds the strategy. Sources are resolved

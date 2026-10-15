@@ -86,11 +86,18 @@ func (s *Service) validateWalkForward(req api.WalkForwardRequest) ([]foldWindow,
 		return verr("a walk-forward supports at most 4 strategies")
 	}
 	seen := map[string]bool{}
-	for _, l := range req.Legs {
+	for i, l := range req.Legs {
 		if seen[l.StrategyID] {
 			return verr("duplicate strategy: " + l.StrategyID)
 		}
 		seen[l.StrategyID] = true
+		// Graph legs take their node parameters from the immutable saved
+		// revision — overrides are rejected, provenance is injected instead.
+		p, err := graphLegParameters(l.StrategyID, l.Parameters)
+		if err != nil {
+			return verr(err.Error())
+		}
+		req.Legs[i].Parameters = p
 	}
 	start, e1 := time.Parse("2006-01-02", req.StartDate)
 	end, e2 := time.Parse("2006-01-02", req.EndDate)

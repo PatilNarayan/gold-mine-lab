@@ -288,6 +288,16 @@ maxDD = max((peak−equity)/peak) over the curve.
   comes from the saved revision, never from the client body).
 - **Strategies list:** materialized graph revisions appear as `graph:…:v<n>`
   rows — distinguishable from built-ins by the `graph:` prefix.
+- **Research integration (Phase 6c):** `resolveStrategy` resolves ANY engine
+  strategy id — registry hit first, else a strict `graph:<uuid>:v<n>` slug is
+  lazily rebuilt from its immutable saved revision (`ensureGraphStrategy`), so
+  comparison and walk-forward legs can reference graph revisions even after a
+  restart (no startup pre-load of every revision). Graph legs reject
+  client-supplied parameters — node params live only in the revision — and
+  runs carry `{graphId, graphRevision}` provenance instead. Revision saves
+  are atomic: `CreateRevisionWithStrategy` commits the revision row and its
+  materialized strategies row in one transaction (unique-violation retry on
+  concurrent creates), so no revision can exist without a runnable identity.
 - **Limits (MVP):** 5 node types only; single-asset/timeframe per run;
   operators take the max of source warm-ups, not per-edge delays; a graph
   result says nothing about profitability — it is one more hypothesis to test,

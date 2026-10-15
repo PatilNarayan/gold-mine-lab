@@ -2,9 +2,13 @@ package postgres
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/gold-mine-lab/backend/internal/repository"
+	"github.com/gold-mine-lab/backend/internal/strategy"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (s *Store) ListGraphs(ctx context.Context) ([]repository.StrategyGraphRow, error) {
@@ -83,15 +87,53 @@ func (s *Store) GetRevision(ctx context.Context, graphID string, revision int) (
 	return r, err
 }
 
-func (s *Store) CreateRevision(ctx context.Context, graphID string, definition []byte, hash string) (repository.GraphRevisionRow, error) {
+// CreateRevisionWithStrategy inserts the next immutable revision AND its
+// materialized strategies row in one transaction: a persisted revision can
+// therefore never lack the strategy identity runs depend on. stratFor builds
+// the strategy Definition for the revision number assigned inside the tx.
+// Concurrent creates may collide on (graph_id, revision); each attempt takes
+// max+1 inside its own tx, so a short retry resolves the loser honestly.
+func (s *Store) CreateRevisionWithStrategy(ctx context.Context, graphID string, definition []byte, hash string, stratFor func(revision int) (strategy.Definition, error)) (repository.GraphRevisionRow, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		r, err := s.createRevisionTx(ctx, graphID, definition, hash, stratFor)
+		if err == nil {
+			return r, nil
+		}
+		lastErr = err
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+			return r, err
+		}
+	}
+	return repository.GraphRevisionRow{}, fmt.Errorf("create revision: %w", lastErr)
+}
+
+func (s *Store) createRevisionTx(ctx context.Context, graphID string, definition []byte, hash string, stratFor func(revision int) (strategy.Definition, error)) (repository.GraphRevisionRow, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return repository.GraphRevisionRow{}, err
+	}
+	defer tx.Rollback(ctx)
 	var r repository.GraphRevisionRow
-	// COALESCE+1 gives the next immutable revision; concurrent creates for the
-	// same graph could collide on the PK — acceptable for the MVP volume.
-	err := s.db.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`INSERT INTO strategy_graph_revisions (graph_id, revision, definition, definition_hash)
 		 VALUES ($1, COALESCE((SELECT max(revision) FROM strategy_graph_revisions WHERE graph_id=$1), 0) + 1, $2, $3)
 		 RETURNING graph_id, revision, definition, definition_hash, created_at`,
 		graphID, definition, hash).
 		Scan(&r.GraphID, &r.Revision, &r.Definition, &r.DefinitionHash, &r.CreatedAt)
-	return r, err
+	if err != nil {
+		return r, err
+	}
+	def, err := stratFor(r.Revision)
+	if err != nil {
+		return r, fmt.Errorf("materialize graph strategy: %w", err)
+	}
+	if err := upsertStrategy(ctx, tx, def); err != nil {
+		return r, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return r, err
+	}
+	return r, nil
 }

@@ -44,6 +44,8 @@ export default function Compare() {
 function ComparisonWorkspace() {
   const navigate = useNavigate();
   const strategies = useStrategies();
+  const nameOf = (sid: string) =>
+    (strategies.data ?? []).find((s) => s.id === sid)?.name ?? sid;
   const comparisons = useComparisons();
   const runCmp = useRunComparison();
   const [err, setErr] = useState<string | null>(null);
@@ -284,7 +286,7 @@ function ComparisonWorkspace() {
             onRowClick={(c) => navigate(`/compare/${c.id}`)}
             columns={[
               { key: 'created', header: 'Created', cell: (c) => <span className="tnum">{formatDateTime(c.createdAt)}</span>, sortValue: (c) => c.createdAt },
-              { key: 'strategies', header: 'Strategies', cell: (c) => c.strategyIds.join(' vs ') },
+              { key: 'strategies', header: 'Strategies', cell: (c) => c.strategyIds.map(nameOf).join(' vs ') },
               { key: 'window', header: 'In-sample', cell: (c) => <span className="tnum">{c.startDate} → {c.endDate}</span> },
               {
                 key: 'oos', header: 'OOS',

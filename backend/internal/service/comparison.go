@@ -37,12 +37,19 @@ func (s *Service) ExecuteComparison(ctx context.Context, req api.ComparisonReque
 	}
 	seen := map[string]bool{}
 	strategyIDs := make([]string, 0, len(req.Legs))
-	for _, l := range req.Legs {
+	for i, l := range req.Legs {
 		if seen[l.StrategyID] {
 			return verr("duplicate strategy in comparison: " + l.StrategyID)
 		}
 		seen[l.StrategyID] = true
 		strategyIDs = append(strategyIDs, l.StrategyID)
+		// Graph legs take their node parameters from the immutable saved
+		// revision — overrides are rejected, provenance is injected instead.
+		p, err := graphLegParameters(l.StrategyID, l.Parameters)
+		if err != nil {
+			return verr(err.Error())
+		}
+		req.Legs[i].Parameters = p
 	}
 	if _, err := time.Parse("2006-01-02", req.StartDate); err != nil {
 		return verr("invalid startDate")

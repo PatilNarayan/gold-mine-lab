@@ -8,6 +8,7 @@ import (
 
 	"github.com/gold-mine-lab/backend/internal/api"
 	"github.com/gold-mine-lab/backend/internal/repository"
+	"github.com/gold-mine-lab/backend/internal/strategy"
 	"github.com/gold-mine-lab/backend/internal/strategygraph"
 )
 
@@ -147,7 +148,17 @@ func (s *Service) saveRevision(ctx context.Context, g repository.StrategyGraphRo
 	if err != nil {
 		return api.GraphRevision{}, err
 	}
-	rev, err := s.repos.StrategyGraphs.CreateRevision(ctx, g.ID, body, strategygraph.Hash(def))
+	// Revision row + materialized strategies row commit atomically; the only
+	// remaining step (in-memory registry registration) is self-healing via
+	// resolveStrategy on any later request.
+	rev, err := s.repos.StrategyGraphs.CreateRevisionWithStrategy(ctx, g.ID, body, strategygraph.Hash(def),
+		func(revision int) (strategy.Definition, error) {
+			gs, err := strategygraph.New(s.registry, def, g.ID, g.Name, revision)
+			if err != nil {
+				return strategy.Definition{}, err
+			}
+			return gs.Describe(), nil
+		})
 	if err != nil {
 		return api.GraphRevision{}, err
 	}
@@ -155,6 +166,40 @@ func (s *Service) saveRevision(ctx context.Context, g repository.StrategyGraphRo
 		return api.GraphRevision{}, err
 	}
 	return revisionDTO(rev)
+}
+
+// resolveStrategy returns a strategy for ANY id the engine may see: built-ins
+// and already-registered graphs from the registry, or a `graph:<id>:v<n>` slug
+// lazily rebuilt from its immutable saved revision. This is what lets generic
+// comparison and walk-forward legs reference graphs after a restart without
+// pre-loading every revision at boot.
+func (s *Service) resolveStrategy(ctx context.Context, id string) (strategy.Strategy, error) {
+	if st, ok := s.registry.Get(id); ok {
+		return st, nil
+	}
+	graphID, rev, ok := strategygraph.ParseSlug(id)
+	if !ok {
+		return nil, nil
+	}
+	gs, err := s.ensureGraphStrategy(ctx, graphID, rev)
+	if err != nil {
+		return nil, err
+	}
+	return gs, nil
+}
+
+// graphLegParameters enforces that a graph leg's node parameters come ONLY
+// from the immutable saved revision: client-supplied parameters on a graph
+// leg are rejected, and the run carries graphId/graphRevision provenance.
+func graphLegParameters(strategyID string, params map[string]any) (map[string]any, error) {
+	graphID, rev, ok := strategygraph.ParseSlug(strategyID)
+	if !ok {
+		return params, nil
+	}
+	if len(params) > 0 {
+		return nil, &api.ValidationError{Msg: "graph leg parameters are fixed by the saved revision and cannot be overridden"}
+	}
+	return map[string]any{"graphId": graphID, "graphRevision": float64(rev)}, nil
 }
 
 // ensureGraphStrategy builds the adapter for a saved revision and registers

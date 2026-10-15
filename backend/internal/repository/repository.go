@@ -218,14 +218,16 @@ type TradeRepository interface {
 }
 
 // StrategyGraphRepository persists named graphs and their immutable
-// revisions. CreateRevision assigns revision = max(existing)+1 atomically.
+// revisions. CreateRevisionWithStrategy assigns revision = max(existing)+1 and
+// writes the materialized strategies row in the same transaction, so a saved
+// revision can never exist without its runnable strategy identity.
 type StrategyGraphRepository interface {
 	ListGraphs(ctx context.Context) ([]StrategyGraphRow, error)
 	CreateGraph(ctx context.Context, name, description string) (StrategyGraphRow, error)
 	GetGraph(ctx context.Context, id string) (StrategyGraphRow, error)
 	ListRevisions(ctx context.Context, graphID string) ([]GraphRevisionRow, error)
 	GetRevision(ctx context.Context, graphID string, revision int) (GraphRevisionRow, error)
-	CreateRevision(ctx context.Context, graphID string, definition []byte, hash string) (GraphRevisionRow, error)
+	CreateRevisionWithStrategy(ctx context.Context, graphID string, definition []byte, hash string, stratFor func(revision int) (strategy.Definition, error)) (GraphRevisionRow, error)
 }
 
 // StrategyGraphRow is a graph container.

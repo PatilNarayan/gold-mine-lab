@@ -190,8 +190,18 @@ func (s *Service) validateRequest(ctx context.Context, req api.BacktestRequest) 
 		}
 		return repository.RunRow{}, nil, err
 	}
-	base, ok := s.registry.Get(req.StrategyID)
-	if !ok {
+	base, err := s.resolveStrategy(ctx, req.StrategyID)
+	if err != nil {
+		if errors.Is(err, api.ErrNotFound) {
+			return verr("unknown strategyId")
+		}
+		var ve *api.ValidationError
+		if errors.As(err, &ve) {
+			return verr(ve.Msg)
+		}
+		return repository.RunRow{}, nil, err
+	}
+	if base == nil {
 		return verr("unknown strategyId")
 	}
 	supported := false

@@ -164,3 +164,16 @@ func TestIndependentSourceStreams(t *testing.T) {
 		t.Errorf("warmup = max(sources) = 40*3 = 120, got %d", g.WarmupBars())
 	}
 }
+
+func TestParseSlug(t *testing.T) {
+	gid, rev, ok := ParseSlug(StrategySlug("1049b555-dd31-4208-b90c-55be4235d046", 7))
+	if !ok || gid != "1049b555-dd31-4208-b90c-55be4235d046" || rev != 7 {
+		t.Fatalf("round-trip failed: %q %d %v", gid, rev, ok)
+	}
+	for _, bad := range []string{"", "graph:", "graph:abc:v1", "graph:1049b555-dd31-4208-b90c-55be4235d046:v0",
+		"graph:1049b555-dd31-4208-b90c-55be4235d046", "ema-cross", "graph:1049b555-dd31-4208-b90c-55be4235d046:v1x"} {
+		if _, _, ok := ParseSlug(bad); ok {
+			t.Fatalf("ParseSlug(%q) should reject", bad)
+		}
+	}
+}

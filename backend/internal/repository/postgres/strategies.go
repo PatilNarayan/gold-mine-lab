@@ -14,6 +14,12 @@ import (
 )
 
 func (s *Store) UpsertStrategy(ctx context.Context, d strategy.Definition) error {
+	return upsertStrategy(ctx, s.db, d)
+}
+
+// upsertStrategy runs against any pgx executor (pool or transaction) so graph
+// revision materialization can share a tx with the revision insert.
+func upsertStrategy(ctx context.Context, db dbtx, d strategy.Definition) error {
 	assets, err := json.Marshal(d.SupportedAssets)
 	if err != nil {
 		return fmt.Errorf("marshal supported_assets: %w", err)
@@ -34,7 +40,7 @@ func (s *Store) UpsertStrategy(ctx context.Context, d strategy.Definition) error
 		    supported_assets = EXCLUDED.supported_assets, timeframe = EXCLUDED.timeframe,
 		    supported_timeframes = EXCLUDED.supported_timeframes,
 		    parameters = EXCLUDED.parameters, status = EXCLUDED.status, updated_at = now()`
-	_, err = s.db.Exec(ctx, q, d.ID, d.Name, d.Version, d.Description, assets, d.Timeframe, tfs, params, d.Status)
+	_, err = db.Exec(ctx, q, d.ID, d.Name, d.Version, d.Description, assets, d.Timeframe, tfs, params, d.Status)
 	if err != nil {
 		return fmt.Errorf("upsert strategy %s: %w", d.ID, err)
 	}
