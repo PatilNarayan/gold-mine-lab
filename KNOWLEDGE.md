@@ -26,7 +26,7 @@ Both apps are separate projects sharing one REST contract (`VITE_DATA_MODE=api`)
 ## The pipeline (what actually happens when you use it)
 
 ```
-data/XAU_*_data.csv  (real Kaggle XAUUSD history, 2004→2026)
+data/XAU_*_data.csv  (HuggingFace mirror of Kaggle XAUUSD history, 2004-06-11→2025-09-30)
    ↓  CSVProvider: validated streaming reads (Tail for charts, Range+warmup for backtests)
 Strategy registry    (ema-cross + rsi-mean-reversion — pure math, no I/O)
    ↓  signals persisted to strategy_signals (idempotent)
@@ -41,7 +41,7 @@ React frontend       (charts, tables, run-history — reads, never computes)
 
 | Surface | Source | Honesty |
 |---|---|---|
-| Market candles, EMA overlays, volume | **Real** Kaggle XAUUSD CSVs | Real prices |
+| Market candles, EMA overlays, volume | **Real** XAUUSD CSVs from a HuggingFace mirror of the Kaggle MetaTrader export | Real prices |
 | BUY/SELL signal markers + signals table | **Real** — both strategies evaluated over real candles | Real crossovers/threshold crosses |
 | Backtest trades/metrics/equity curves | **Real** — engine replayed over real candles | Real simulated results (a real backtest, not fabricated) |
 | Strategy list / performance tiles | Real — latest completed run per strategy | Real |
@@ -114,10 +114,14 @@ Never Handler→SQL, never Strategy→I/O.
   `<asset>:<tf>@sha256:<64-hex>` — the full SHA-256 of the exact CSV
   used, cached per file per process (`CSVProvider.Fingerprint`). Runs
   before 000004 keep their recorded 16-hex identity; nothing is
-  rewritten. Source caveat: timestamps are naive date-only values stored
-  under the project's UTC convention — the upstream broker timezone is
-  NOT independently established (data came via a HuggingFace mirror of
-  the Kaggle MetaTrader XAUUSD history, assumed equivalent, not proven).
+  rewritten. The release data is a HuggingFace mirror
+  (`ZombitX64/xauusd-gold-price-historical-data-2004-2025`) of the Kaggle
+  MetaTrader XAUUSD export by novandraanugrah, covering 2004-06-11 through
+  2025-09-30. The expected daily fingerprint is
+  `xauusd:1d@sha256:5335b0dc2df9f9e980f4a6d32f70711f694eff7e461e092bb9e81e0fe619d802`.
+  Timestamps are naive date-only values stored under the project's UTC
+  convention — the upstream broker timezone is NOT independently
+  established.
 - **RSI (Wilder).** `indicators.RSI` / `RSIState`: seed = SMA of first
   `period` changes, then `avg = (prevAvg·(p−1)+x)/p`. Undefined (NaN) for
   index < period; avgLoss==0 → 100 (avgGain>0) or 50 (both zero = constant
@@ -387,8 +391,10 @@ metrics (run_id).
 - `frontend/.env` → `VITE_DATA_MODE=api`, `VITE_API_URL=http://localhost:8080`
   — gitignored; never commit.
 - `backend/.env.example` documents every var; `MARKET_DATA_DIR` is required.
-- Market data zip stays in `~/Downloads`; extracted CSVs live in `data/`
-  (gitignored — never commit the 470 MB).
+- Fetch market data with `./scripts/fetch-data.sh` or
+  `.\scripts\fetch-data.ps1`; verified CSVs live in `data/` (gitignored —
+  never commit the roughly 470 MB of datasets). `GML_DATA_BASE_URL` can
+  point the fetchers at a compatible mirror.
 - GitHub repo: `github.com/PatilNarayan/gold-mine-lab` (branch `main`).
 
 ## Verify / test commands
