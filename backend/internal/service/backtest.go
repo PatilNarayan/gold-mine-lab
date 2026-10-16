@@ -255,6 +255,9 @@ func (s *Service) validateRequest(ctx context.Context, req api.BacktestRequest) 
 	if _, ok := serveCaps[req.Timeframe]; !ok {
 		return verr("unsupported timeframe")
 	}
+	if err := s.checkHoldout(ctx, req.AssetID, req.Timeframe, req.StartDate, req.EndDate, ""); err != nil {
+		return repository.RunRow{}, nil, err
+	}
 	return repository.RunRow{
 		StrategyID: req.StrategyID, AssetID: req.AssetID, Timeframe: string(req.Timeframe),
 		StartDate: req.StartDate, EndDate: req.EndDate,

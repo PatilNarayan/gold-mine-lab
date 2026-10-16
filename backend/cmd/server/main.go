@@ -77,6 +77,7 @@ func run(shutdown <-chan os.Signal) error {
 	svc := service.New(service.Repositories{
 		Assets: store, Strategies: store, Signals: store,
 		Runs: store, Trades: store, Metrics: store, Comparisons: store, WalkForwards: store, StrategyGraphs: store, SignalResearch: store,
+		Studies: store,
 	}, data, reg, log)
 
 	// Seed asset/strategies, generate real signals, run seed backtests on an
@@ -96,6 +97,7 @@ func run(shutdown <-chan os.Signal) error {
 		WalkForwards:   svc,
 		StrategyGraphs: svc,
 		SignalResearch: svc,
+		Studies:        svc,
 		AllowedOrigins: cfg.HTTP.AllowedOrigins,
 		Env:            cfg.Env,
 	})

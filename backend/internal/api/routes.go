@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -9,6 +12,75 @@ import (
 
 	"github.com/gold-mine-lab/backend/internal/market"
 )
+
+func registerResearchStudyRoutes(g *gin.RouterGroup, svc ResearchStudyService) {
+	studies := g.Group("/research-studies")
+	studies.POST("", func(c *gin.Context) {
+		var req ResearchStudyRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid research study request")
+			return
+		}
+		out, err := svc.CreateStudy(c.Request.Context(), req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, out)
+	})
+	studies.GET("", func(c *gin.Context) {
+		out, err := svc.ListStudies(c.Request.Context())
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	studies.GET("/:id", func(c *gin.Context) {
+		out, err := svc.GetStudy(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	studies.PATCH("/:id", func(c *gin.Context) {
+		var req ResearchStudyRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request", "invalid research study request")
+			return
+		}
+		out, err := svc.UpdateStudy(c.Request.Context(), c.Param("id"), req)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	for _, action := range []struct {
+		path string
+		run  func(context.Context, string) (ResearchStudy, error)
+	}{
+		{path: "/:id/freeze", run: svc.FreezeStudy},
+		{path: "/:id/exploratory-runs", run: svc.RunStudyExploratory},
+		{path: "/:id/validate-holdout", run: svc.ValidateStudyHoldout},
+	} {
+		action := action
+		studies.POST(action.path, func(c *gin.Context) {
+			body, err := io.ReadAll(c.Request.Body)
+			if err != nil || len(bytes.TrimSpace(body)) != 0 {
+				writeError(c, http.StatusBadRequest, "invalid_request", "this action does not accept a request body")
+				return
+			}
+			out, err := action.run(c.Request.Context(), c.Param("id"))
+			if err != nil {
+				respondErr(c, err)
+				return
+			}
+			c.JSON(http.StatusOK, out)
+		})
+	}
+}
 
 // Handlers stay thin: parse request, call a service interface, write JSON.
 // Errors map to the standard envelope — internals are never leaked.

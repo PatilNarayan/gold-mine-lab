@@ -49,6 +49,7 @@ type Repositories struct {
 	WalkForwards   repository.WalkForwardRepository
 	StrategyGraphs repository.StrategyGraphRepository
 	SignalResearch repository.SignalResearchRepository
+	Studies        repository.ResearchStudyRepository
 }
 
 // Service implements api.MarketService/StrategyService/BacktestService/

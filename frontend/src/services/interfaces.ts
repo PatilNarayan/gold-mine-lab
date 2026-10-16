@@ -24,6 +24,8 @@ import type {
 	GraphDiagnostics, GraphDiagnosticsRequest, GraphRevision,
   StrategyGraph,
   ValidateGraphResponse,
+  ResearchStudy,
+  ResearchStudyRequest,
 } from '@/types/domain';
 import type { HealthStatus } from '@/types/api';
 
@@ -90,4 +92,14 @@ export interface SignalResearchService {
   run(request: SignalResearchRequest): Promise<SignalResearch>;
   list(): Promise<SignalResearch[]>;
   get(id: string): Promise<SignalResearch>;
+}
+
+export interface ResearchStudyService {
+  create(request: ResearchStudyRequest): Promise<ResearchStudy>;
+  update(id: string, request: ResearchStudyRequest): Promise<ResearchStudy>;
+  list(): Promise<ResearchStudy[]>;
+  get(id: string): Promise<ResearchStudy>;
+  freeze(id: string): Promise<ResearchStudy>;
+  runExploratory(id: string): Promise<ResearchStudy>;
+  validateHoldout(id: string): Promise<ResearchStudy>;
 }

@@ -36,10 +36,21 @@ const (
 var srHorizons = []int{1, 5, 10, 20}
 
 func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResearchRequest) (api.SignalResearch, error) {
+	if len(req.Legs) < 2 {
+		return api.SignalResearch{}, &api.ValidationError{Msg: "at least 2 candidates are required"}
+	}
+	return s.executeSignalResearch(ctx, req, "")
+}
+
+func (s *Service) executeSignalResearch(ctx context.Context, req api.SignalResearchRequest, bypassStudyID string) (api.SignalResearch, error) {
 	verr := func(m string) (api.SignalResearch, error) {
 		return api.SignalResearch{}, &api.ValidationError{Msg: m}
 	}
-	if len(req.Legs) < 2 {
+	minLegs := 2
+	if bypassStudyID != "" {
+		minLegs = 1
+	}
+	if len(req.Legs) < minLegs {
 		return verr("at least 2 candidates are required")
 	}
 	if len(req.Legs) > srMaxLegs {
@@ -58,6 +69,9 @@ func (s *Service) ExecuteSignalResearch(ctx context.Context, req api.SignalResea
 		return verr("unknown assetId")
 	}
 	if err != nil {
+		return api.SignalResearch{}, err
+	}
+	if err := s.checkHoldout(ctx, req.AssetID, req.Timeframe, req.StartDate, req.EndDate, bypassStudyID); err != nil {
 		return api.SignalResearch{}, err
 	}
 

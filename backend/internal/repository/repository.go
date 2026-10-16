@@ -279,3 +279,40 @@ type SignalResearchRepository interface {
 	GetSignalResearch(ctx context.Context, id string) (SignalResearchRow, error)
 	ListSignalResearch(ctx context.Context) ([]SignalResearchRow, error)
 }
+
+var ErrConflict = errors.New("repository: conflict")
+
+type ResearchStudyRow struct {
+	ID                     string
+	Status                 string
+	Name                   string
+	Description            string
+	Hypothesis             string
+	AssetID                string
+	Timeframe              string
+	DatasetFingerprint     string
+	DevStart               string
+	DevEnd                 string
+	HoldoutStart           string
+	HoldoutEnd             string
+	Spec                   []byte
+	SpecHash               string
+	ResearchCounts         []byte
+	Executions             []byte
+	LastError              *string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	FrozenAt               *time.Time
+	ExploratoryCompletedAt *time.Time
+	HoldoutConsumedAt      *time.Time
+}
+
+type ResearchStudyRepository interface {
+	CreateStudy(ctx context.Context, row ResearchStudyRow) (ResearchStudyRow, error)
+	UpdateStudyDraft(ctx context.Context, row ResearchStudyRow) (ResearchStudyRow, error)
+	GetStudy(ctx context.Context, id string) (ResearchStudyRow, error)
+	ListStudies(ctx context.Context) ([]ResearchStudyRow, error)
+	FreezeStudy(ctx context.Context, id string, counts []byte) (conflictID string, err error)
+	AppendStudyExecution(ctx context.Context, id, newStatus string, executionJSON []byte, errMsg *string) (ResearchStudyRow, error)
+	ActiveReservations(ctx context.Context, assetID, timeframe string) ([]ResearchStudyRow, error)
+}

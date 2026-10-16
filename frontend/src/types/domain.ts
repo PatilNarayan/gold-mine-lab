@@ -664,3 +664,95 @@ export type SignalHorizonBenchmark = z.infer<typeof signalHorizonBenchmarkSchema
 export type SignalBenchmarkMeta = z.infer<typeof signalBenchmarkMetaSchema>;
 export type SignalForwardResult = z.infer<typeof signalForwardResultSchema>;
 export type SignalResearch = z.infer<typeof signalResearchSchema>;
+
+export const studyCandidateSchema = z.object({
+  strategyId: z.string(),
+  parameters: z.record(z.union([z.number(), z.string(), z.boolean()])).optional(),
+  graphRevision: z.number().optional(),
+  definitionHash: z.string().optional(),
+  version: z.string().optional(),
+}).strict();
+export const studySpecSchema = z.object({
+  candidates: z.array(studyCandidateSchema),
+  primaryMetric: z.enum(['forward_mean_return', 'forward_event_control_diff']),
+  primaryHorizon: z.union([z.literal(1), z.literal(5), z.literal(10), z.literal(20)]),
+  regimeAnalysis: z.boolean(),
+  specVersion: z.string(),
+}).strict();
+export const researchStudyRequestSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  hypothesis: z.string(),
+  assetId: z.string(),
+  timeframe: timeframeSchema,
+  devStart: z.string(),
+  devEnd: z.string(),
+  holdoutStart: z.string(),
+  holdoutEnd: z.string(),
+  spec: studySpecSchema,
+}).strict();
+export const studyWindowSchema = z.object({ startDate: z.string(), endDate: z.string() }).strict();
+export const studyOutcomeSchema = z.object({
+  strategyId: z.string(),
+  label: z.enum(['primary', 'secondary']),
+  metric: z.string(),
+  horizon: z.number(),
+  value: z.number().nullable(),
+  ciStatus: z.string(),
+  ciLow: z.number().nullable().optional(),
+  ciHigh: z.number().nullable().optional(),
+  events: z.number(),
+  controls: z.number(),
+}).strict();
+export const studyExecutionSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['exploratory', 'confirmatory']),
+  status: z.enum(['completed', 'failed']),
+  startedAt: z.string(),
+  finishedAt: z.string(),
+  window: studyWindowSchema,
+  signalResearchId: z.string().optional(),
+  outcomes: z.array(studyOutcomeSchema),
+  error: z.string().nullable().optional(),
+}).strict();
+export const researchCountsSchema = z.object({
+  candidates: z.number(),
+  parameterConfigurations: z.number(),
+  graphRevisions: z.number(),
+  horizons: z.number(),
+  regimeCells: z.number(),
+  priorExploratory: z.number().optional(),
+  totalComparisons: z.number(),
+  notice: z.string(),
+}).strict();
+export const researchStudySchema = z.object({
+  id: z.string(),
+  status: z.enum(['draft', 'frozen', 'exploratory_complete', 'holdout_consumed']),
+  name: z.string(),
+  description: z.string(),
+  hypothesis: z.string(),
+  assetId: z.string(),
+  timeframe: timeframeSchema,
+  datasetFingerprint: z.string(),
+  devStart: z.string(),
+  devEnd: z.string(),
+  holdoutStart: z.string(),
+  holdoutEnd: z.string(),
+  spec: studySpecSchema,
+  specHash: z.string(),
+  researchCounts: researchCountsSchema.nullable().optional(),
+  executions: z.array(studyExecutionSchema),
+  lastError: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  frozenAt: z.string().nullable(),
+  exploratoryCompletedAt: z.string().nullable(),
+  holdoutConsumedAt: z.string().nullable(),
+}).strict();
+export type StudyCandidate = z.infer<typeof studyCandidateSchema>;
+export type StudySpec = z.infer<typeof studySpecSchema>;
+export type ResearchStudyRequest = z.infer<typeof researchStudyRequestSchema>;
+export type StudyExecution = z.infer<typeof studyExecutionSchema>;
+export type StudyOutcome = z.infer<typeof studyOutcomeSchema>;
+export type ResearchCounts = z.infer<typeof researchCountsSchema>;
+export type ResearchStudy = z.infer<typeof researchStudySchema>;

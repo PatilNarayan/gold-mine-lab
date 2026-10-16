@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Settings,
   Microscope,
+  ClipboardList,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -29,6 +30,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/walkforward', label: 'Walk-Forward', icon: Footprints },
   { to: '/graphs', label: 'Graphs', icon: GitFork },
   { to: '/research', label: 'Research', icon: Microscope },
+  { to: '/studies', label: 'Studies', icon: ClipboardList },
   { to: '/results', label: 'Results', icon: BarChart3 },
   { to: '/trades', label: 'Trades', icon: ArrowLeftRight },
   { to: '/settings', label: 'Settings', icon: Settings },

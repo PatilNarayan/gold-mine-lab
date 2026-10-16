@@ -304,6 +304,9 @@ func (s *Service) GraphDiagnostics(ctx context.Context, id string, revision int,
 	if e1 != nil || e2 != nil || !end.After(start) {
 		return verr("invalid startDate/endDate")
 	}
+	if err := s.checkHoldout(ctx, req.AssetID, req.Timeframe, req.StartDate, req.EndDate, ""); err != nil {
+		return api.GraphDiagnostics{}, err
+	}
 	limit := req.TraceLimit
 	if limit < 0 {
 		return verr("traceLimit must be >= 0")

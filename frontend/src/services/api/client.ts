@@ -5,7 +5,7 @@ import { getApiUrl } from '@/lib/config';
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -78,5 +78,9 @@ export const apiClient = {
 
   post<T>(path: string, body: unknown, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
     return this.request(path, schema, { ...opts, method: 'POST', body });
+  },
+
+  patch<T>(path: string, body: unknown, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
+    return this.request(path, schema, { ...opts, method: 'PATCH', body });
   },
 };

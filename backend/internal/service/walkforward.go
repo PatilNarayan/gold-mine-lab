@@ -137,6 +137,9 @@ func (s *Service) wfLegRequest(req api.WalkForwardRequest, leg api.ComparisonLeg
 // PreviewWalkForward validates the request and returns the fold boundaries
 // without persisting or running anything.
 func (s *Service) PreviewWalkForward(ctx context.Context, req api.WalkForwardRequest) (api.WalkForward, error) {
+	if err := s.checkHoldout(ctx, req.AssetID, req.Timeframe, req.StartDate, req.EndDate, ""); err != nil {
+		return api.WalkForward{}, err
+	}
 	folds, err := s.validateWalkForward(req)
 	if err != nil {
 		return api.WalkForward{}, err
@@ -171,6 +174,9 @@ func (s *Service) PreviewWalkForward(ctx context.Context, req api.WalkForwardReq
 // synchronously through Execute (folds are independent engine runs — no
 // position or state carries between folds or samples).
 func (s *Service) ExecuteWalkForward(ctx context.Context, req api.WalkForwardRequest) (api.WalkForward, error) {
+	if err := s.checkHoldout(ctx, req.AssetID, req.Timeframe, req.StartDate, req.EndDate, ""); err != nil {
+		return api.WalkForward{}, err
+	}
 	folds, err := s.validateWalkForward(req)
 	if err != nil {
 		return api.WalkForward{}, err

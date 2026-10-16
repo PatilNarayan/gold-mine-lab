@@ -174,6 +174,33 @@ Never Handler→SQL, never Strategy→I/O.
   for assets/strategies (`xauusd`, `ema-cross`).
 - **golang-migrate embedded** — schema travels with the binary; `migrations.Up`
   runs at startup; `ErrNoChange` is fine.
+- **Pre-registered research studies (Phase 12).** Studies move from `draft` to
+  `frozen`, then `exploratory_complete`, and finally `holdout_consumed`.
+  Draft edits are allowed; frozen specifications are immutable. Freeze stores
+  a SHA-256 hash of the normalized, ordered study specification, dataset
+  fingerprint, asset/timeframe, and both date windows. It also reserves the
+  inclusive holdout dates for that asset/timeframe. Freeze checks are
+  serialized with a PostgreSQL transaction advisory lock; reservations stay
+  active while frozen or exploratory-complete and are released only after
+  successful confirmatory consumption. Execution records append; failed
+  exploratory and confirmatory runs do not advance the lifecycle and may be
+  retried. A repeated confirmatory request after consumption returns the
+  saved study without creating another execution.
+- Study comparison counts record candidate configurations, immutable graph
+  revisions, horizon cells, and (when enabled) regime cells. Counts explicitly
+  say “this is how many comparisons were looked at; no correction applied”:
+  the application does not perform multiple-testing correction. The
+  preregistered primary metric at the primary horizon is labeled `primary`;
+  remaining horizons and regime-conditioned cells are `secondary`. A
+  confirmatory outcome is descriptive evidence, not proof of profitability or
+  removal of selection bias.
+- Application analytical endpoints reject evaluation windows that overlap an
+  active study holdout. Warm-up candles before the requested evaluation range
+  remain available and are not considered an overlap. Confirmatory runs may
+  bypass only their owning study's reservation. This is an application-level
+  policy, not an access-control boundary: researchers can still inspect or
+  analyze the raw CSV files outside the application, an unavoidable escape
+  hatch that must be disclosed when interpreting results.
 
 ## Execution model (the contract of every backtest)
 

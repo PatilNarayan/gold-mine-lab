@@ -23,6 +23,7 @@ type Deps struct {
 	WalkForwards   WalkForwardService
 	StrategyGraphs StrategyGraphService
 	SignalResearch SignalResearchService
+	Studies        ResearchStudyService
 	AllowedOrigins []string
 	// Env is "dev" | "prod" | "test" — controls gin's mode.
 	Env string
@@ -79,6 +80,9 @@ func NewRouter(d Deps) *gin.Engine {
 	}
 	if d.SignalResearch != nil {
 		registerSignalResearchRoutes(v1, d.SignalResearch)
+	}
+	if d.Studies != nil {
+		registerResearchStudyRoutes(v1, d.Studies)
 	}
 
 	return r

@@ -13,3 +13,7 @@ export { useHealth } from './useHealth';
 export { useComparisons, useComparison, useRunComparison } from './useComparisons';
 export { useWalkForwards, useWalkForward, usePreviewWalkForward, useRunWalkForward } from './useWalkForward';
 export { useSignalResearchList, useSignalResearch, useRunSignalResearch } from './useSignalResearch';
+export {
+  useResearchStudies, useResearchStudy, useCreateResearchStudy, useUpdateResearchStudy,
+  useFreezeResearchStudy, useRunStudyExploratory, useValidateStudyHoldout,
+} from './useResearchStudies';

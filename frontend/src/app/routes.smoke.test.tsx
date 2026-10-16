@@ -25,6 +25,7 @@ import Results from '@/pages/Results';
 import Trades from '@/pages/Trades';
 import Settings from '@/pages/Settings';
 import NotFound from '@/pages/NotFound';
+import Studies from '@/pages/Studies';
 
 function renderRoute(entry: string, routePath: string, element: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -104,6 +105,19 @@ describe('route smoke tests (mock data mode)', () => {
     renderRoute('/settings', '/settings', <Settings />);
     expect(await screen.findByLabelText('API URL', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByText('mock', { selector: 'span' })).toBeInTheDocument();
+  });
+
+  it('Studies builder renders in mock mode', async () => {
+    renderRoute('/studies/new', '/studies/new', <Studies />);
+    expect(await screen.findByText('Pre-register a study', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByLabelText('Primary metric')).toBeInTheDocument();
+    expect(screen.getByText(/does not prove profitability/i)).toBeInTheDocument();
+  });
+
+  it('Studies route lists mock studies and links to the builder', async () => {
+    renderRoute('/studies', '/studies', <Studies />);
+    expect(await screen.findByRole('heading', { name: 'Research studies' }, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'New study' })).toHaveAttribute('href', '/studies/new');
   });
 
   it('NotFound renders 404', async () => {

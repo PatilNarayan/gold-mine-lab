@@ -17,6 +17,7 @@ const ResultsRedirect = lazy(() => import('@/pages/ResultsRedirect'));
 const Trades = lazy(() => import('@/pages/Trades'));
 const Graphs = lazy(() => import('@/pages/Graphs'));
 const SignalResearch = lazy(() => import('@/pages/SignalResearch'));
+const Studies = lazy(() => import('@/pages/Studies'));
 const Settings = lazy(() => import('@/pages/Settings'));
 
 export const router = createBrowserRouter([
@@ -34,6 +35,9 @@ export const router = createBrowserRouter([
       { path: '/graphs', element: <Graphs /> },
       { path: '/research', element: <SignalResearch /> },
       { path: '/research/:id', element: <SignalResearch /> },
+      { path: '/studies', element: <Studies /> },
+      { path: '/studies/new', element: <Studies /> },
+      { path: '/studies/:id', element: <Studies /> },
       { path: '/graphs/:id', element: <Graphs /> },
       { path: '/walkforward/:id', element: <WalkForwardPage /> },
       { path: '/results', element: <ResultsRedirect /> },
