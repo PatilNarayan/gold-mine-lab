@@ -51,10 +51,13 @@ only polls the backend's cached state.
 Notes:
 
 - **XAUUSD is the only instrument.** Other assets are rejected with HTTP 400.
-- WebSocket streaming needs a Twelve Data plan that permits it (full access is
-  a Pro-tier feature; lower tiers may connect but only to trial symbols). The
-  status endpoint reports plan/auth failures truthfully — no fake prices.
-- REST `time_series` (used to seed/reconcile the live chart) requires Basic+.
+- **Plan requirements** (per Twelve Data's current pricing docs): XAU/USD is a
+  *commodity* — REST `time_series` for it requires a plan covering commodities
+  (**Grow+**; the free Basic tier covers only US stocks, forex, and crypto).
+  Full WebSocket streaming requires **Pro** (Basic/Grow get a limited set of
+  WS trial symbols only). The `demo` API key is rejected for XAU/USD on both
+  REST and WebSocket. The status endpoint reports plan/auth failures
+  truthfully — no fake prices.
 - Without a key or with `LIVE_MARKET_ENABLED=false`, the UI shows "Live data
   is not configured" and historical mode works exactly as before.
 

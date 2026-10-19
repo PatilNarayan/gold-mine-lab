@@ -2,9 +2,11 @@ package live
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -273,7 +275,9 @@ func TestSessionStreamsQuotes(t *testing.T) {
 	defer srv.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
-	p := testProvider(t, TwelveDataConfig{APIKey: "k", WSURL: wsURL, StaleAfter: time.Hour})
+	// RESTBaseURL also points at the test server — reconcile calls must never
+	// reach the real provider in tests.
+	p := testProvider(t, TwelveDataConfig{APIKey: "k", WSURL: wsURL, RESTBaseURL: srv.URL, StaleAfter: time.Hour})
 	now := time.Unix(1760000000, 0)
 	p.now = func() time.Time { return now }
 
@@ -304,4 +308,59 @@ func TestSessionStreamsQuotes(t *testing.T) {
 	if cs[0].Volume != nil {
 		t.Fatal("volume must stay nil when provider omits it")
 	}
+}
+
+// Each accepted connection sends a price of 2000+conn# then drops. The
+// provider must resubscribe after the drop and report the newer value.
+func TestReconnectAfterDrop(t *testing.T) {
+	var conns atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := conns.Add(1)
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close(websocket.StatusNormalClosure, "bye")
+		if _, _, err := c.Read(context.Background()); err != nil {
+			return
+		}
+		msgs := []string{
+			`{"event":"subscribe-status","status":"ok","success":[{"symbol":"XAU/USD"}],"fails":[]}`,
+			fmt.Sprintf(`{"event":"price","symbol":"XAU/USD","timestamp":1760000000,"price":%d}`, 2000+int(n)),
+		}
+		for _, m := range msgs {
+			if err := c.Write(context.Background(), websocket.MessageText, []byte(m)); err != nil {
+				return
+			}
+		}
+		// Abrupt drop — client must reconnect.
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	p := testProvider(t, TwelveDataConfig{APIKey: "k", WSURL: wsURL, RESTBaseURL: srv.URL, StaleAfter: time.Hour})
+	p.now = func() time.Time { return time.Unix(1760000000, 0) }
+	p.Start(context.Background())
+
+	waitPrice := func(above float64) bool {
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			if q, ok := p.LatestQuote(); ok && q.Price > above {
+				return true
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		return false
+	}
+
+	if !waitPrice(2000) {
+		t.Fatal("first connection price not observed")
+	}
+	// Any newer value proves a second session streamed after the drop —
+	// reconnects are fast, so an exact-price assertion races ahead of polls.
+	if !waitPrice(2001) {
+		q, _ := p.LatestQuote()
+		t.Fatalf("reconnect not observed; conns=%d price=%v status=%+v", conns.Load(), q.Price, p.Status())
+	}
+	// The server drops every connection, so the state flaps between
+	// connected/disconnected — the price progression is the assertion.
 }

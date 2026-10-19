@@ -372,10 +372,13 @@ func (t *TwelveData) Candles(ctx context.Context, tf string, limit int) ([]Candl
 	if limit <= 0 || limit > candleBookSize {
 		limit = candleBookSize
 	}
-	t.maybeReconcile(ctx, book, tf)
+	t.maybeReconcile(book, tf)
 	out := book.snapshot(limit)
-	if len(out) == 0 && t.cfg.APIKey == "" {
-		return nil, errors.New("live data not configured")
+	if len(out) == 0 {
+		// Consistent with LatestQuote: no data is unavailable, not success —
+		// a 200 with an empty list would mislead the UI into "waiting for
+		// data" when the provider cannot deliver any.
+		return nil, fmt.Errorf("no live candles available (state=%s)", t.Status().State)
 	}
 	return out, nil
 }
@@ -383,7 +386,7 @@ func (t *TwelveData) Candles(ctx context.Context, tf string, limit int) ([]Candl
 // maybeReconcile refetches a book when it has never been fetched or its cache
 // aged out, throttled to one in-flight fetch and minFetchGap between tries.
 // It is a no-op when the provider cannot fetch (disabled, bad config).
-func (t *TwelveData) maybeReconcile(ctx context.Context, book *candleBook, tf string) {
+func (t *TwelveData) maybeReconcile(book *candleBook, tf string) {
 	if t.cfg.APIKey == "" || t.Status().State == StateConfigError {
 		return
 	}
@@ -404,7 +407,11 @@ func (t *TwelveData) maybeReconcile(ctx context.Context, book *candleBook, tf st
 			book.fetching = false
 			book.mu.Unlock()
 		}()
-		cs, err := t.fetchTimeSeries(ctx, tf, candleBookSize)
+		// Detached from the HTTP request: a client disconnect must not abort
+		// a cache refill that later requests rely on.
+		fctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		cs, err := t.fetchTimeSeries(fctx, tf, candleBookSize)
 		if err != nil {
 			t.log.Warn("live candle reconcile failed", "timeframe", tf, "err", err)
 			t.setErr(fmt.Sprintf("candle fetch %s: %v", tf, err))
@@ -551,7 +558,7 @@ func (t *TwelveData) onSubscribeStatus(st wsSubscribeStatus) {
 			t.setState(StateConnected, "")
 			// (Re)fill candle books so the chart recovers any gap from a drop.
 			for tf, book := range t.books {
-				t.maybeReconcile(context.Background(), book, tf)
+				t.maybeReconcile(book, tf)
 			}
 			return
 		}
