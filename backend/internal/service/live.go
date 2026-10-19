@@ -51,16 +51,17 @@ func (s *LiveService) LiveStatus(_ context.Context) api.LiveStatusResponse {
 		return &v
 	}
 	return api.LiveStatusResponse{
-		Enabled:             st.Enabled,
-		State:               string(st.State),
-		Provider:            st.Provider,
-		Transport:           st.Transport,
-		Symbol:              st.Symbol,
-		LastQuoteAt:         fmtTime(st.LastQuoteAt),
-		LastFetchAt:         fmtTime(st.LastFetchAt),
-		LastError:           st.LastError,
-		StaleAfterSeconds:   int(st.StaleAfter.Seconds()),
-		PollIntervalSeconds: int(st.PollInterval.Seconds()),
+		Enabled:               st.Enabled,
+		State:                 string(st.State),
+		Provider:              st.Provider,
+		Transport:             st.Transport,
+		Symbol:                st.Symbol,
+		LastQuoteAt:           fmtTime(st.LastQuoteAt),
+		LastFetchAt:           fmtTime(st.LastFetchAt),
+		LastError:             st.LastError,
+		StaleAfterSeconds:     int(st.StaleAfter.Seconds()),
+		PollIntervalSeconds:   int(st.PollInterval.Seconds()),
+		EstimatedDailyCredits: st.EstimatedDailyCredits,
 	}
 }
 

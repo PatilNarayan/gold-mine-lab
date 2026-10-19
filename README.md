@@ -49,8 +49,25 @@ Endpoints: `GET /api/market/live/status` · `GET /api/market/live/quote?asset=xa
 · `GET /api/market/live/candles?asset=xauusd&timeframe=15m&limit=200`.
 Timeframes: 1m 5m 15m 1h 4h 1d. The API key stays server-side; the frontend
 only polls the backend's cached state. The status response reports the actual
-`transport` in use, last provider update, and last successful fetch — there is
-no silent fallback between transports.
+`transport` in use, last provider update, last successful fetch, and an
+`estimatedDailyCredits` figure — there is no silent fallback between transports.
+
+**Sample configurations**
+
+```bash
+# Limited trial / Basic account (~800 API credits/day) — run during market
+# hours only; ~2,016 credits/day continuous:
+LIVE_MARKET_POLL_INTERVAL=60s
+LIVE_MARKET_CANDLE_RECONCILE_INTERVAL=15m
+
+# Paid / higher-quota account (~10,368 credits/day continuous):
+LIVE_MARKET_POLL_INTERVAL=10s
+LIVE_MARKET_CANDLE_RECONCILE_INTERVAL=5m
+```
+
+The backend logs a warning at startup when the estimated daily usage exceeds
+`LIVE_MARKET_DAILY_CREDIT_LIMIT` (default 800). Estimate =
+`86400/poll + 6×86400/reconcile` upstream calls/day.
 
 **Transports**
 

@@ -75,7 +75,9 @@ backend/
 | `LIVE_MARKET_SYMBOL`    | `XAU/USD`                        | provider symbol for xauusd   |
 | `LIVE_MARKET_STALE_AFTER` | `30s`                          | quote age → `stale` state    |
 | `LIVE_MARKET_TRANSPORT` | `rest`                           | `rest` polls /quote; `websocket` streams ticks |
-| `LIVE_MARKET_POLL_INTERVAL` | `10s`                      | REST poll cadence (5s–10m); ≈6 credits/min at 10s |
+| `LIVE_MARKET_POLL_INTERVAL` | `10s`                      | REST quote cadence (5s–10m); ≈8,640 credits/day at 10s |
+| `LIVE_MARKET_CANDLE_RECONCILE_INTERVAL` | `5m`       | per-timeframe REST refresh (30s–1h); ≈1,728 credits/day at 5m |
+| `LIVE_MARKET_DAILY_CREDIT_LIMIT` | `800`                  | plan allowance for the startup usage warning |
 | `TWELVE_DATA_REST_URL`  | `https://api.twelvedata.com`     | override for tests/mocks     |
 | `TWELVE_DATA_WS_URL`    | `wss://ws.twelvedata.com/v1/quotes/price` | override for tests/mocks |
 

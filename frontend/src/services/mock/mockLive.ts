@@ -22,6 +22,7 @@ export const mockLiveService: LiveMarketService = {
       lastError: 'mock mode — live data is not simulated',
       staleAfterSeconds: 30,
       pollIntervalSeconds: 10,
+      estimatedDailyCredits: 0,
     };
   },
   async getQuote(_assetId: string): Promise<LiveQuote> {

@@ -88,6 +88,7 @@ export const liveStatusSchema = z.object({
   lastError: z.string(),
   staleAfterSeconds: z.number(),
   pollIntervalSeconds: z.number(),
+  estimatedDailyCredits: z.number(),
 });
 export type LiveStatus = z.infer<typeof liveStatusSchema>;
 

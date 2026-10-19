@@ -45,15 +45,17 @@ type DBConfig struct {
 // LiveConfig holds the optional live market-data provider settings. Live data
 // is observational only — it never feeds backtests or persisted research.
 type LiveConfig struct {
-	Enabled      bool          // LIVE_MARKET_ENABLED
-	Provider     string        // LIVE_MARKET_PROVIDER: only "twelvedata" supported
-	APIKey       string        // TWELVE_DATA_API_KEY — secret, never logged or served
-	Symbol       string        // LIVE_MARKET_SYMBOL — provider symbol, default XAU/USD
-	StaleAfter   time.Duration // LIVE_MARKET_STALE_AFTER — quote age → "stale"
-	Transport    string        // LIVE_MARKET_TRANSPORT: "rest" (default) | "websocket"
-	PollInterval time.Duration // LIVE_MARKET_POLL_INTERVAL — REST poll cadence
-	RESTBaseURL  string        // TWELVE_DATA_REST_URL — override for tests/mocks
-	WSURL        string        // TWELVE_DATA_WS_URL — override for tests/mocks
+	Enabled       bool          // LIVE_MARKET_ENABLED
+	Provider      string        // LIVE_MARKET_PROVIDER: only "twelvedata" supported
+	APIKey        string        // TWELVE_DATA_API_KEY — secret, never logged or served
+	Symbol        string        // LIVE_MARKET_SYMBOL — provider symbol, default XAU/USD
+	StaleAfter    time.Duration // LIVE_MARKET_STALE_AFTER — quote age → "stale"
+	Transport     string        // LIVE_MARKET_TRANSPORT: "rest" (default) | "websocket"
+	PollInterval  time.Duration // LIVE_MARKET_POLL_INTERVAL — REST quote cadence
+	CandleRefresh time.Duration // LIVE_MARKET_CANDLE_RECONCILE_INTERVAL — per-timeframe REST refresh
+	CreditLimit   int           // LIVE_MARKET_DAILY_CREDIT_LIMIT — plan allowance for usage warnings
+	RESTBaseURL   string        // TWELVE_DATA_REST_URL — override for tests/mocks
+	WSURL         string        // TWELVE_DATA_WS_URL — override for tests/mocks
 }
 
 // Load reads configuration from the environment, applies safe defaults for
@@ -126,6 +128,8 @@ func Load() (Config, error) {
 	cfg.Live.StaleAfter = envDuration("LIVE_MARKET_STALE_AFTER", 30*time.Second, &errs)
 	cfg.Live.Transport = envOr("LIVE_MARKET_TRANSPORT", "rest")
 	cfg.Live.PollInterval = envDuration("LIVE_MARKET_POLL_INTERVAL", 10*time.Second, &errs)
+	cfg.Live.CandleRefresh = envDuration("LIVE_MARKET_CANDLE_RECONCILE_INTERVAL", 5*time.Minute, &errs)
+	cfg.Live.CreditLimit = envInt("LIVE_MARKET_DAILY_CREDIT_LIMIT", 800, &errs)
 	cfg.Live.RESTBaseURL = envOr("TWELVE_DATA_REST_URL", "https://api.twelvedata.com")
 	cfg.Live.WSURL = envOr("TWELVE_DATA_WS_URL", "wss://ws.twelvedata.com/v1/quotes/price")
 	if cfg.Live.Provider != "twelvedata" {
@@ -138,6 +142,12 @@ func Load() (Config, error) {
 	}
 	if cfg.Live.PollInterval < 5*time.Second || cfg.Live.PollInterval > 10*time.Minute {
 		errs = append(errs, "LIVE_MARKET_POLL_INTERVAL must be between 5s and 10m")
+	}
+	if cfg.Live.CandleRefresh < 30*time.Second || cfg.Live.CandleRefresh > time.Hour {
+		errs = append(errs, "LIVE_MARKET_CANDLE_RECONCILE_INTERVAL must be between 30s and 1h")
+	}
+	if cfg.Live.CreditLimit <= 0 {
+		errs = append(errs, "LIVE_MARKET_DAILY_CREDIT_LIMIT must be > 0")
 	}
 	if cfg.Live.StaleAfter < time.Second {
 		errs = append(errs, "LIVE_MARKET_STALE_AFTER must be >= 1s")

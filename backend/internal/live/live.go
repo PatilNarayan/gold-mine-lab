@@ -59,6 +59,9 @@ type Status struct {
 	LastError    string     // operator-facing; never contains credentials
 	StaleAfter   time.Duration
 	PollInterval time.Duration // REST poll cadence; 0 for WebSocket
+	// EstimatedDailyCredits is the projected upstream API calls/day at the
+	// current intervals: 86400/poll quotes + books×86400/refresh candles.
+	EstimatedDailyCredits int
 }
 
 // Candle is one OHLC bar from the live provider. Volume is nil when the

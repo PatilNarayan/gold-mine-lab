@@ -93,22 +93,30 @@ func run(shutdown <-chan os.Signal) error {
 	var liveProvider live.Provider
 	if cfg.Live.Enabled {
 		p := live.NewTwelveData(live.TwelveDataConfig{
-			APIKey:       cfg.Live.APIKey,
-			Transport:    cfg.Live.Transport,
-			PollInterval: cfg.Live.PollInterval,
-			RESTBaseURL:  cfg.Live.RESTBaseURL,
-			WSURL:        cfg.Live.WSURL,
-			Symbol:       cfg.Live.Symbol,
-			AssetID:      market.CanonicalAssetID,
-			StaleAfter:   cfg.Live.StaleAfter,
-			Logger:       log,
+			APIKey:        cfg.Live.APIKey,
+			Transport:     cfg.Live.Transport,
+			PollInterval:  cfg.Live.PollInterval,
+			RESTBaseURL:   cfg.Live.RESTBaseURL,
+			WSURL:         cfg.Live.WSURL,
+			Symbol:        cfg.Live.Symbol,
+			AssetID:       market.CanonicalAssetID,
+			StaleAfter:    cfg.Live.StaleAfter,
+			CandleRefresh: cfg.Live.CandleRefresh,
+			Logger:        log,
 		})
 		p.Start(ctx)
 		defer func() { _ = p.Close() }()
 		liveProvider = p
+		est := p.Status().EstimatedDailyCredits
 		log.Info("live market data enabled", "provider", cfg.Live.Provider,
 			"transport", cfg.Live.Transport, "pollInterval", cfg.Live.PollInterval,
+			"candleRefresh", cfg.Live.CandleRefresh, "estDailyCredits", est,
 			"symbol", cfg.Live.Symbol)
+		if est > cfg.Live.CreditLimit {
+			log.Warn("estimated daily API credits exceed plan allowance — raise intervals or the plan",
+				"estDailyCredits", est, "dailyLimit", cfg.Live.CreditLimit,
+				"hint", "increase LIVE_MARKET_POLL_INTERVAL / LIVE_MARKET_CANDLE_RECONCILE_INTERVAL")
+		}
 	}
 	liveSvc := service.NewLiveService(liveProvider)
 

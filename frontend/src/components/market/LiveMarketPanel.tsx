@@ -123,7 +123,7 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
 
       <p className="text-2xs text-content-3">
         {st.transport === 'rest'
-          ? `REST polling every ${st.pollIntervalSeconds}s — periodic snapshots, not a tick-by-tick stream; the displayed time is the provider's quote time and may lag if the feed is delayed or the market is closed. `
+          ? `REST polling every ${st.pollIntervalSeconds}s (est. ${st.estimatedDailyCredits.toLocaleString()} API credits/day) — periodic snapshots, not a tick-by-tick stream; the displayed time is the provider's quote time and may lag if the feed is delayed or the market is closed. `
           : ''}
         Live prices are market observation only — not a backtest, recommendation, or trading
         capability. Volume is hidden when the provider does not supply it.

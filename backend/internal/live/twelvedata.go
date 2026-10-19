@@ -37,16 +37,17 @@ import (
 
 // TwelveDataConfig configures the managed Twelve Data provider.
 type TwelveDataConfig struct {
-	APIKey       string        // TWELVE_DATA_API_KEY — required when enabled
-	Transport    string        // "rest" (default) or "websocket"
-	PollInterval time.Duration // REST poll cadence — default 10s
-	RESTBaseURL  string        // default https://api.twelvedata.com
-	WSURL        string        // default wss://ws.twelvedata.com/v1/quotes/price
-	Symbol       string        // provider symbol — default "XAU/USD"
-	AssetID      string        // canonical asset id reported back — default "xauusd"
-	StaleAfter   time.Duration // quote age after which state reports "stale"
-	HTTPClient   *http.Client
-	Logger       *slog.Logger
+	APIKey        string        // TWELVE_DATA_API_KEY — required when enabled
+	Transport     string        // "rest" (default) or "websocket"
+	PollInterval  time.Duration // REST poll cadence — default 10s
+	RESTBaseURL   string        // default https://api.twelvedata.com
+	WSURL         string        // default wss://ws.twelvedata.com/v1/quotes/price
+	Symbol        string        // provider symbol — default "XAU/USD"
+	AssetID       string        // canonical asset id reported back — default "xauusd"
+	StaleAfter    time.Duration // quote age after which state reports "stale"
+	CandleRefresh time.Duration // per-timeframe REST reconcile TTL — default 5m
+	HTTPClient    *http.Client
+	Logger        *slog.Logger
 }
 
 // intervalDef maps an app timeframe to the provider interval and bar length.
@@ -69,7 +70,7 @@ var supportedTimeframes = map[string]intervalDef{
 const (
 	candleBookSize     = 500              // max candles retained per timeframe
 	minFetchGap        = 30 * time.Second // min spacing between REST reconciles
-	cacheRefreshAfter  = 60 * time.Second // serve cache younger than this
+	cacheRefreshAfter  = 5 * time.Minute  // default per-timeframe REST refresh TTL
 	maxReconnectDelay  = 60 * time.Second
 	initReconnectDelay = time.Second
 	heartbeatInterval  = 10 * time.Second // provider-recommended cadence
@@ -269,6 +270,9 @@ func NewTwelveData(cfg TwelveDataConfig) *TwelveData {
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 10 * time.Second
 	}
+	if cfg.CandleRefresh <= 0 {
+		cfg.CandleRefresh = cacheRefreshAfter
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -346,14 +350,15 @@ func (t *TwelveData) Status() Status {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	st := Status{
-		Enabled:      true,
-		State:        t.state,
-		Provider:     "twelvedata",
-		Transport:    t.cfg.Transport,
-		Symbol:       t.cfg.Symbol,
-		LastError:    t.lastErr,
-		StaleAfter:   t.cfg.StaleAfter,
-		PollInterval: t.cfg.PollInterval,
+		Enabled:               true,
+		State:                 t.state,
+		Provider:              "twelvedata",
+		Transport:             t.cfg.Transport,
+		Symbol:                t.cfg.Symbol,
+		LastError:             t.lastErr,
+		StaleAfter:            t.cfg.StaleAfter,
+		PollInterval:          t.cfg.PollInterval,
+		EstimatedDailyCredits: t.estimatedDailyCredits(),
 	}
 	if t.quote != nil {
 		st.LastQuoteAt = t.quote.ProviderTime
@@ -367,6 +372,23 @@ func (t *TwelveData) Status() Status {
 		st.State = StateStale
 	}
 	return st
+}
+
+// estimatedDailyCredits projects upstream API calls/day: one /quote per poll
+// (REST transport only) plus one /time_series per timeframe per refresh —
+// assuming every timeframe's book is viewed. Retries and failures are not
+// counted; the real figure is at most this plus failure backoffs.
+func (t *TwelveData) estimatedDailyCredits() int {
+	const day = int(24 * time.Hour)
+	quotes := 0
+	if t.cfg.Transport == "rest" && t.cfg.PollInterval > 0 {
+		quotes = day / int(t.cfg.PollInterval)
+	}
+	candles := 0
+	if t.cfg.CandleRefresh > 0 {
+		candles = len(t.books) * day / int(t.cfg.CandleRefresh)
+	}
+	return quotes + candles
 }
 
 // LatestQuote returns the newest validated quote.
@@ -409,7 +431,7 @@ func (t *TwelveData) maybeReconcile(book *candleBook, tf string) {
 		return
 	}
 	book.mu.Lock()
-	stale := book.fetched.IsZero() || t.now().Sub(book.fetched) > cacheRefreshAfter
+	stale := book.fetched.IsZero() || t.now().Sub(book.fetched) > t.cfg.CandleRefresh
 	canTry := stale && !book.fetching && t.now().Sub(book.lastTry) > minFetchGap
 	if canTry {
 		book.fetching = true

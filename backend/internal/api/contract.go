@@ -742,16 +742,17 @@ var ErrUnavailable = errors.New("unavailable")
 // LiveStatusResponse reports the managed provider connection truthfully:
 // enabled/state/provider/symbol/lastQuoteAt/lastError — never the API key.
 type LiveStatusResponse struct {
-	Enabled             bool    `json:"enabled"`
-	State               string  `json:"state"` // disabled|config_error|connecting|connected|stale|disconnected
-	Provider            string  `json:"provider"`
-	Transport           string  `json:"transport"` // "rest" | "websocket" — actual transport in use
-	Symbol              string  `json:"symbol"`
-	LastQuoteAt         *string `json:"lastQuoteAt"`
-	LastFetchAt         *string `json:"lastFetchAt"`
-	LastError           string  `json:"lastError"`
-	StaleAfterSeconds   int     `json:"staleAfterSeconds"`
-	PollIntervalSeconds int     `json:"pollIntervalSeconds"` // REST cadence; 0 for WebSocket
+	Enabled               bool    `json:"enabled"`
+	State                 string  `json:"state"` // disabled|config_error|connecting|connected|stale|disconnected
+	Provider              string  `json:"provider"`
+	Transport             string  `json:"transport"` // "rest" | "websocket" — actual transport in use
+	Symbol                string  `json:"symbol"`
+	LastQuoteAt           *string `json:"lastQuoteAt"`
+	LastFetchAt           *string `json:"lastFetchAt"`
+	LastError             string  `json:"lastError"`
+	StaleAfterSeconds     int     `json:"staleAfterSeconds"`
+	PollIntervalSeconds   int     `json:"pollIntervalSeconds"`   // REST cadence; 0 for WebSocket
+	EstimatedDailyCredits int     `json:"estimatedDailyCredits"` // projected upstream calls/day at current intervals
 }
 
 // LiveQuoteResponse is the latest provider quote. Bid/Ask/DayVolume are null
