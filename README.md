@@ -92,6 +92,36 @@ Notes:
 - Without a key or with `LIVE_MARKET_ENABLED=false`, the UI shows "Live data
   is not configured" and historical mode works exactly as before.
 
+## Refreshing historical data
+
+`scripts/sync-xauusd-history.ps1` (or `.sh`) produces a **new versioned
+snapshot** of the CSV dataset extended through the latest completed
+Twelve Data candles — the original `data/` files are never modified.
+
+```powershell
+.\scripts\sync-xauusd-history.ps1                          # incremental sync → data-twelvedata-v2\
+.\scripts\sync-xauusd-history.ps1 -DryRun                  # preview request count, no writes
+.\scripts\sync-xauusd-history.ps1 -Out data-twelvedata-v3 -Timeframes 15m,1h -MaxRequests 20
+```
+
+- Fetches `time_series` in bounded ≤4000-bar UTC windows with request pacing
+  (`-RequestInterval`, default 8s) and a hard request cap (`-MaxRequests`).
+- **Convention**: the dataset is MT5 broker time (EET/EEST ≈ `Europe/Kyiv`);
+  provider UTC bars are relabeled for 15m/1h and re-aggregated into Kyiv
+  buckets for 4h/1d. An overlap probe must match ≥3 source rows within
+  0.15% before any splice happens — otherwise the timeframe aborts.
+- Validation rejects duplicates, out-of-order, and implausible OHLC; market
+  closures are reported as gaps, never filled. Appended volume is `0`
+  (the provider supplies none) — documented in `manifest.json`.
+- `manifest.json` records source/result SHA-256 per file, date ranges,
+  request count, and any discontinuities found in the source.
+- Idempotent: re-running appends only newer bars. Select a snapshot at run
+  time with `MARKET_DATA_DIR=data-twelvedata-v2`; every backtest records
+  the exact dataset fingerprint it used, so runs on old snapshots stay
+  attributable.
+- `TWELVE_DATA_API_KEY` is read from the environment or `backend/.env`
+  (never a CLI flag, log, or manifest field).
+
 ## Market data
 
 From the repository root, fetch and verify the historical CSVs with one command:
