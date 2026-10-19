@@ -40,13 +40,27 @@ feeds backtests, strategies, or persisted research.
 ```bash
 # backend/.env
 LIVE_MARKET_ENABLED=true
+LIVE_MARKET_TRANSPORT=rest            # rest | websocket — rest is the default
+LIVE_MARKET_POLL_INTERVAL=10s         # 5s–10m; ≈6 API credits/min at 10s
 TWELVE_DATA_API_KEY=<your key from https://twelvedata.com>
 ```
 
 Endpoints: `GET /api/market/live/status` · `GET /api/market/live/quote?asset=xauusd`
 · `GET /api/market/live/candles?asset=xauusd&timeframe=15m&limit=200`.
 Timeframes: 1m 5m 15m 1h 4h 1d. The API key stays server-side; the frontend
-only polls the backend's cached state.
+only polls the backend's cached state. The status response reports the actual
+`transport` in use, last provider update, and last successful fetch — there is
+no silent fallback between transports.
+
+**Transports**
+
+- `rest` (default): one managed worker polls `GET /quote` on the configured
+  interval (1 API credit/call) and feeds the same quote/candle caches. Works
+  on any plan that covers XAU/USD — no WebSocket entitlement needed. It is a
+  periodic snapshot, not a tick stream; the UI shows the cadence and the
+  provider's own timestamp.
+- `websocket`: streams tick prices over `wss://ws.twelvedata.com/v1/quotes/price`
+  — requires a plan with WebSocket access (full access is Pro-tier).
 
 Notes:
 

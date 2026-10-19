@@ -277,7 +277,7 @@ func TestSessionStreamsQuotes(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
 	// RESTBaseURL also points at the test server — reconcile calls must never
 	// reach the real provider in tests.
-	p := testProvider(t, TwelveDataConfig{APIKey: "k", WSURL: wsURL, RESTBaseURL: srv.URL, StaleAfter: time.Hour})
+	p := testProvider(t, TwelveDataConfig{APIKey: "k", WSURL: wsURL, RESTBaseURL: srv.URL, Transport: "websocket", StaleAfter: time.Hour})
 	now := time.Unix(1760000000, 0)
 	p.now = func() time.Time { return now }
 
@@ -338,7 +338,7 @@ func TestReconnectAfterDrop(t *testing.T) {
 	defer srv.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
-	p := testProvider(t, TwelveDataConfig{APIKey: "k", WSURL: wsURL, RESTBaseURL: srv.URL, StaleAfter: time.Hour})
+	p := testProvider(t, TwelveDataConfig{APIKey: "k", WSURL: wsURL, RESTBaseURL: srv.URL, Transport: "websocket", StaleAfter: time.Hour})
 	p.now = func() time.Time { return time.Unix(1760000000, 0) }
 	p.Start(context.Background())
 
@@ -363,4 +363,230 @@ func TestReconnectAfterDrop(t *testing.T) {
 	}
 	// The server drops every connection, so the state flaps between
 	// connected/disconnected — the price progression is the assertion.
+}
+
+// --- REST polling -----------------------------------------------------------
+
+// quoteServer counts /quote hits; the handler decides what to return.
+// /time_series gets a minimal valid payload so reconcile calls stay local.
+func quoteServer(t *testing.T, quoteHits *atomic.Int32, respond func(n int32) (int, string)) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/quote":
+			n := quoteHits.Add(1)
+			code, body := respond(n)
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(body))
+		case "/time_series":
+			_, _ = w.Write([]byte(`{"meta":{"symbol":"XAU/USD","interval":"15min"},"values":[{"datetime":"2025-10-17 14:30:00","open":"1","high":"2","low":"0.5","close":"1.5"}],"status":"ok"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func goodQuote(ts int64, close string) (int, string) {
+	return http.StatusOK, fmt.Sprintf(`{"symbol":"XAU/USD","name":"Gold Spot","currency":"USD","datetime":"2025-10-09 08:53:20","timestamp":%d,"last_quote_at":%d,"close":"%s","volume":"12345","is_market_open":true}`, ts, ts, close)
+}
+
+func TestFetchQuoteParses(t *testing.T) {
+	var hits atomic.Int32
+	srv := quoteServer(t, &hits, func(int32) (int, string) { return goodQuote(1760000000, "4101.25") })
+	defer srv.Close()
+
+	p := testProvider(t, TwelveDataConfig{APIKey: "k", RESTBaseURL: srv.URL})
+	p.now = func() time.Time { return time.Unix(1760000000, 0) }
+	q, err := p.fetchQuote(context.Background())
+	if err != nil {
+		t.Fatalf("fetchQuote: %v", err)
+	}
+	if q.Price != 4101.25 || q.Symbol != "XAU/USD" || q.AssetID != "xauusd" {
+		t.Fatalf("quote = %+v", q)
+	}
+	if q.ProviderTime == nil || q.ProviderTime.Unix() != 1760000000 {
+		t.Fatalf("providerTime = %v", q.ProviderTime)
+	}
+	if q.DayVolume == nil || *q.DayVolume != 12345 {
+		t.Fatalf("dayVolume = %v", q.DayVolume)
+	}
+}
+
+func TestFetchQuoteHonestWhenNoTimestamp(t *testing.T) {
+	var hits atomic.Int32
+	srv := quoteServer(t, &hits, func(int32) (int, string) {
+		return http.StatusOK, `{"symbol":"XAU/USD","close":"4101.0","datetime":"2025-10-09"}`
+	})
+	defer srv.Close()
+	p := testProvider(t, TwelveDataConfig{APIKey: "k", RESTBaseURL: srv.URL})
+	q, err := p.fetchQuote(context.Background())
+	if err != nil {
+		t.Fatalf("fetchQuote: %v", err)
+	}
+	if q.ProviderTime != nil {
+		t.Fatal("missing provider timestamp must stay nil, not be invented")
+	}
+}
+
+func TestFetchQuoteRejectsBadPayloads(t *testing.T) {
+	var hits atomic.Int32
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"error payload", `{"code":400,"message":"symbol not supported on plan","status":"error"}`},
+		{"wrong symbol", `{"symbol":"EUR/USD","close":"1.1","timestamp":1760000000}`},
+		{"bad price", `{"symbol":"XAU/USD","close":"abc","timestamp":1760000000}`},
+		{"negative price", `{"symbol":"XAU/USD","close":"-5","timestamp":1760000000}`},
+		{"implausible ts", `{"symbol":"XAU/USD","close":"4100","timestamp":99999999999}`},
+	}
+	for _, tc := range cases {
+		srv := quoteServer(t, &hits, func(int32) (int, string) { return http.StatusOK, tc.body })
+		p := testProvider(t, TwelveDataConfig{APIKey: "k", RESTBaseURL: srv.URL})
+		if _, err := p.fetchQuote(context.Background()); err == nil {
+			t.Fatalf("%s: expected error", tc.name)
+		}
+		srv.Close()
+	}
+}
+
+func TestPollSuperviseCadenceAndSharedCache(t *testing.T) {
+	var hits atomic.Int32
+	var tsHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/quote" {
+			hits.Add(1)
+			_, body := goodQuote(1760000000, "4100.0")
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		tsHits.Add(1)
+		_, _ = w.Write([]byte(`{"status":"error","code":403,"message":"plan lacks access"}`))
+	}))
+	defer srv.Close()
+
+	p := testProvider(t, TwelveDataConfig{
+		APIKey: "k", RESTBaseURL: srv.URL, Transport: "rest",
+		PollInterval: 60 * time.Millisecond, StaleAfter: time.Hour,
+	})
+	p.now = func() time.Time { return time.Unix(1760000000, 0) }
+	p.Start(context.Background())
+
+	time.Sleep(380 * time.Millisecond)
+	n := hits.Load()
+	if n < 3 || n > 9 {
+		t.Fatalf("poll cadence wrong: %d /quote calls in ~380ms at 60ms interval", n)
+	}
+	q, ok := p.LatestQuote()
+	if !ok || q.Price != 4100.0 {
+		t.Fatalf("quote not cached: %+v ok=%v", q, ok)
+	}
+	st := p.Status()
+	if st.State != StateConnected || st.Transport != "rest" {
+		t.Fatalf("status = %+v, want connected+rest", st)
+	}
+	if st.LastFetchAt == nil {
+		t.Fatal("LastFetchAt not set")
+	}
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	after := hits.Load()
+	time.Sleep(200 * time.Millisecond)
+	if hits.Load() != after {
+		t.Fatal("poll worker did not stop on Close")
+	}
+}
+
+func TestPollRecoveryAfterFailures(t *testing.T) {
+	var hits atomic.Int32
+	srv := quoteServer(t, &hits, func(n int32) (int, string) {
+		if n <= 2 {
+			return http.StatusInternalServerError, `{"status":"error"}`
+		}
+		return goodQuote(1760000000, "4102.0")
+	})
+	defer srv.Close()
+
+	p := testProvider(t, TwelveDataConfig{
+		APIKey: "k", RESTBaseURL: srv.URL, Transport: "rest",
+		PollInterval: 40 * time.Millisecond, StaleAfter: time.Hour,
+	})
+	p.now = func() time.Time { return time.Unix(1760000000, 0) }
+	p.Start(context.Background())
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if st := p.Status(); st.State == StateConnected {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("provider never recovered: %+v", p.Status())
+}
+
+func TestPollAuthErrorParks(t *testing.T) {
+	var hits atomic.Int32
+	srv := quoteServer(t, &hits, func(int32) (int, string) {
+		return http.StatusOK, `{"code":401,"message":"invalid api key","status":"error"}`
+	})
+	defer srv.Close()
+
+	p := testProvider(t, TwelveDataConfig{
+		APIKey: "k", RESTBaseURL: srv.URL, Transport: "rest",
+		PollInterval: 30 * time.Millisecond,
+	})
+	p.Start(context.Background())
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if p.Status().State == StateConfigError {
+			before := hits.Load()
+			time.Sleep(150 * time.Millisecond)
+			if hits.Load() > before+1 {
+				t.Fatal("kept polling after auth failure")
+			}
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("expected config_error, got %+v", p.Status())
+}
+
+func TestPollDedupeSameTimestamp(t *testing.T) {
+	var hits atomic.Int32
+	var tick atomic.Int32
+	srv := quoteServer(t, &hits, func(int32) (int, string) {
+		// Same provider timestamp every poll; close inches up.
+		n := tick.Add(1)
+		return goodQuote(1760000000, fmt.Sprintf("410%d", n))
+	})
+	defer srv.Close()
+
+	p := testProvider(t, TwelveDataConfig{
+		APIKey: "k", RESTBaseURL: srv.URL, Transport: "rest",
+		PollInterval: 30 * time.Millisecond, StaleAfter: time.Hour,
+	})
+	p.now = func() time.Time { return time.Unix(1760000000, 0) }
+	p.Start(context.Background())
+	time.Sleep(220 * time.Millisecond)
+
+	cs, err := p.Candles(context.Background(), "15m", 10)
+	if err != nil {
+		t.Fatalf("Candles: %v", err)
+	}
+	// One forming candle at the provider bucket; close reflects the last poll.
+	var forming *Candle
+	for i := range cs {
+		if cs[i].Time.Equal(time.Unix(1760000000, 0).Truncate(15 * time.Minute)) {
+			forming = &cs[i]
+		}
+	}
+	if forming == nil {
+		t.Fatalf("no forming candle at provider bucket: %+v", cs)
+	}
+	last, _ := p.LatestQuote()
+	if forming.Close != last.Price {
+		t.Fatalf("forming close %v != latest price %v", forming.Close, last.Price)
+	}
 }

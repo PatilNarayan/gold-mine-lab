@@ -15,10 +15,13 @@ export const mockLiveService: LiveMarketService = {
       enabled: false,
       state: 'disabled',
       provider: 'twelvedata',
+      transport: 'rest',
       symbol: 'XAU/USD',
       lastQuoteAt: null,
+      lastFetchAt: null,
       lastError: 'mock mode — live data is not simulated',
       staleAfterSeconds: 30,
+      pollIntervalSeconds: 10,
     };
   },
   async getQuote(_assetId: string): Promise<LiveQuote> {

@@ -77,9 +77,10 @@ func TestLiveQuoteNoDataYet(t *testing.T) {
 
 func TestLiveQuoteFreshAndStale(t *testing.T) {
 	p := connectedProvider()
+	pt := time.Now().Add(-time.Second)
 	p.quote = &live.Quote{
 		AssetID: "xauusd", Symbol: "XAU/USD", Price: 4100.5,
-		ProviderTime: time.Now().Add(-time.Second), ReceivedAt: time.Now().Add(-time.Second),
+		ProviderTime: &pt, ReceivedAt: pt,
 	}
 	s := NewLiveService(p)
 	q, err := s.LiveQuote(context.Background(), "xauusd")

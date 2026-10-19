@@ -742,13 +742,16 @@ var ErrUnavailable = errors.New("unavailable")
 // LiveStatusResponse reports the managed provider connection truthfully:
 // enabled/state/provider/symbol/lastQuoteAt/lastError — never the API key.
 type LiveStatusResponse struct {
-	Enabled           bool    `json:"enabled"`
-	State             string  `json:"state"` // disabled|config_error|connecting|connected|stale|disconnected
-	Provider          string  `json:"provider"`
-	Symbol            string  `json:"symbol"`
-	LastQuoteAt       *string `json:"lastQuoteAt"`
-	LastError         string  `json:"lastError"`
-	StaleAfterSeconds int     `json:"staleAfterSeconds"`
+	Enabled             bool    `json:"enabled"`
+	State               string  `json:"state"` // disabled|config_error|connecting|connected|stale|disconnected
+	Provider            string  `json:"provider"`
+	Transport           string  `json:"transport"` // "rest" | "websocket" — actual transport in use
+	Symbol              string  `json:"symbol"`
+	LastQuoteAt         *string `json:"lastQuoteAt"`
+	LastFetchAt         *string `json:"lastFetchAt"`
+	LastError           string  `json:"lastError"`
+	StaleAfterSeconds   int     `json:"staleAfterSeconds"`
+	PollIntervalSeconds int     `json:"pollIntervalSeconds"` // REST cadence; 0 for WebSocket
 }
 
 // LiveQuoteResponse is the latest provider quote. Bid/Ask/DayVolume are null
@@ -761,7 +764,7 @@ type LiveQuoteResponse struct {
 	Bid               *float64 `json:"bid"`
 	Ask               *float64 `json:"ask"`
 	DayVolume         *float64 `json:"dayVolume"`
-	ProviderTimestamp string   `json:"providerTimestamp"`
+	ProviderTimestamp *string  `json:"providerTimestamp"` // null when the provider supplies no timestamp
 	ReceivedAt        string   `json:"receivedAt"`
 	Status            string   `json:"status"` // "fresh" | "stale"
 }

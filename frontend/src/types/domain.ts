@@ -81,10 +81,13 @@ export const liveStatusSchema = z.object({
   enabled: z.boolean(),
   state: liveStateSchema,
   provider: z.string(),
+  transport: z.string(),
   symbol: z.string(),
   lastQuoteAt: z.string().nullable(),
+  lastFetchAt: z.string().nullable(),
   lastError: z.string(),
   staleAfterSeconds: z.number(),
+  pollIntervalSeconds: z.number(),
 });
 export type LiveStatus = z.infer<typeof liveStatusSchema>;
 
@@ -96,7 +99,7 @@ export const liveQuoteSchema = z.object({
   bid: z.number().nullable(),
   ask: z.number().nullable(),
   dayVolume: z.number().nullable(),
-  providerTimestamp: z.string(),
+  providerTimestamp: z.string().nullable(),
   receivedAt: z.string(),
   status: z.enum(['fresh', 'stale']),
 });

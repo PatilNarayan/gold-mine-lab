@@ -33,27 +33,32 @@ const (
 )
 
 // Quote is the latest provider price update. Bid/Ask/Volume stay nil when the
-// provider does not supply them — they are never fabricated.
+// provider does not supply them — they are never fabricated. ProviderTime is
+// nil when the source supplies no meaningful timestamp; consumers must not
+// substitute the receive time for it.
 type Quote struct {
-	AssetID      string    // canonical asset id, e.g. "xauusd"
-	Symbol       string    // provider symbol, e.g. "XAU/USD"
-	Price        float64   // last traded/streamed price
-	Bid          *float64  // provider bid when supplied
-	Ask          *float64  // provider ask when supplied
-	DayVolume    *float64  // provider day_volume when supplied
-	ProviderTime time.Time // provider event timestamp (UTC)
-	ReceivedAt   time.Time // local receipt timestamp (UTC)
+	AssetID      string     // canonical asset id, e.g. "xauusd"
+	Symbol       string     // provider symbol, e.g. "XAU/USD"
+	Price        float64    // last traded/streamed price
+	Bid          *float64   // provider bid when supplied
+	Ask          *float64   // provider ask when supplied
+	DayVolume    *float64   // provider day_volume when supplied
+	ProviderTime *time.Time // provider event timestamp (UTC) when supplied
+	ReceivedAt   time.Time  // local receipt timestamp (UTC)
 }
 
 // Status is a point-in-time snapshot of the managed provider.
 type Status struct {
-	Enabled     bool
-	State       State
-	Provider    string // e.g. "twelvedata"
-	Symbol      string // provider symbol actually subscribed
-	LastQuoteAt *time.Time
-	LastError   string // operator-facing; never contains credentials
-	StaleAfter  time.Duration
+	Enabled      bool
+	State        State
+	Provider     string     // e.g. "twelvedata"
+	Transport    string     // "websocket" | "rest" — the actual transport in use
+	Symbol       string     // provider symbol actually subscribed
+	LastQuoteAt  *time.Time // provider timestamp of newest quote
+	LastFetchAt  *time.Time // last successful upstream fetch (poll or tick)
+	LastError    string     // operator-facing; never contains credentials
+	StaleAfter   time.Duration
+	PollInterval time.Duration // REST poll cadence; 0 for WebSocket
 }
 
 // Candle is one OHLC bar from the live provider. Volume is nil when the

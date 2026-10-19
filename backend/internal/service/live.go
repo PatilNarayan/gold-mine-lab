@@ -43,19 +43,24 @@ func (s *LiveService) LiveStatus(_ context.Context) api.LiveStatusResponse {
 		}
 	}
 	st := s.provider.Status()
-	var last *string
-	if st.LastQuoteAt != nil {
-		v := st.LastQuoteAt.UTC().Format(time.RFC3339)
-		last = &v
+	fmtTime := func(t *time.Time) *string {
+		if t == nil {
+			return nil
+		}
+		v := t.UTC().Format(time.RFC3339)
+		return &v
 	}
 	return api.LiveStatusResponse{
-		Enabled:           st.Enabled,
-		State:             string(st.State),
-		Provider:          st.Provider,
-		Symbol:            st.Symbol,
-		LastQuoteAt:       last,
-		LastError:         st.LastError,
-		StaleAfterSeconds: int(st.StaleAfter.Seconds()),
+		Enabled:             st.Enabled,
+		State:               string(st.State),
+		Provider:            st.Provider,
+		Transport:           st.Transport,
+		Symbol:              st.Symbol,
+		LastQuoteAt:         fmtTime(st.LastQuoteAt),
+		LastFetchAt:         fmtTime(st.LastFetchAt),
+		LastError:           st.LastError,
+		StaleAfterSeconds:   int(st.StaleAfter.Seconds()),
+		PollIntervalSeconds: int(st.PollInterval.Seconds()),
 	}
 }
 
@@ -74,6 +79,11 @@ func (s *LiveService) LiveQuote(ctx context.Context, assetID string) (api.LiveQu
 	if time.Since(q.ReceivedAt) > s.staleAfter {
 		status = "stale"
 	}
+	var provTS *string
+	if q.ProviderTime != nil {
+		v := q.ProviderTime.UTC().Format(time.RFC3339)
+		provTS = &v
+	}
 	return api.LiveQuoteResponse{
 		AssetID:           q.AssetID,
 		Provider:          st.Provider,
@@ -82,7 +92,7 @@ func (s *LiveService) LiveQuote(ctx context.Context, assetID string) (api.LiveQu
 		Bid:               q.Bid,
 		Ask:               q.Ask,
 		DayVolume:         q.DayVolume,
-		ProviderTimestamp: q.ProviderTime.UTC().Format(time.RFC3339),
+		ProviderTimestamp: provTS,
 		ReceivedAt:        q.ReceivedAt.UTC().Format(time.RFC3339),
 		Status:            status,
 	}, nil

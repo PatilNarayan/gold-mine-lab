@@ -57,6 +57,9 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border border-line bg-surface-1 px-3 py-2">
         <StatusDot status={stateDot[st.state]} label={stateLabel[st.state] ?? st.state} />
         <Badge tone="info">{st.provider}</Badge>
+        <Badge tone="neutral">
+          {st.transport === 'websocket' ? 'WebSocket' : `REST ${st.pollIntervalSeconds}s poll`}
+        </Badge>
         <span className="tnum text-xs text-content-3">{st.symbol}</span>
         {quote.data ? (
           <span className="tnum text-sm font-semibold text-content-1">
@@ -83,8 +86,15 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
             </span>
           ) : null}
           {quote.data ? (
-            <span className="tnum" title={`received ${quote.data.receivedAt}`}>
-              {quote.data.providerTimestamp}
+            <span
+              className="tnum"
+              title={
+                quote.data.providerTimestamp
+                  ? `provider ts ${quote.data.providerTimestamp} — fetched ${st.lastFetchAt ?? quote.data.receivedAt}`
+                  : `no provider timestamp — fetched ${st.lastFetchAt ?? quote.data.receivedAt}`
+              }
+            >
+              {quote.data.providerTimestamp ?? 'provider ts n/a'}
             </span>
           ) : null}
         </span>
@@ -112,6 +122,9 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
       </section>
 
       <p className="text-2xs text-content-3">
+        {st.transport === 'rest'
+          ? `REST polling every ${st.pollIntervalSeconds}s — periodic snapshots, not a tick-by-tick stream; the displayed time is the provider's quote time and may lag if the feed is delayed or the market is closed. `
+          : ''}
         Live prices are market observation only — not a backtest, recommendation, or trading
         capability. Volume is hidden when the provider does not supply it.
       </p>

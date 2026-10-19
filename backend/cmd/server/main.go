@@ -93,18 +93,22 @@ func run(shutdown <-chan os.Signal) error {
 	var liveProvider live.Provider
 	if cfg.Live.Enabled {
 		p := live.NewTwelveData(live.TwelveDataConfig{
-			APIKey:      cfg.Live.APIKey,
-			RESTBaseURL: cfg.Live.RESTBaseURL,
-			WSURL:       cfg.Live.WSURL,
-			Symbol:      cfg.Live.Symbol,
-			AssetID:     market.CanonicalAssetID,
-			StaleAfter:  cfg.Live.StaleAfter,
-			Logger:      log,
+			APIKey:       cfg.Live.APIKey,
+			Transport:    cfg.Live.Transport,
+			PollInterval: cfg.Live.PollInterval,
+			RESTBaseURL:  cfg.Live.RESTBaseURL,
+			WSURL:        cfg.Live.WSURL,
+			Symbol:       cfg.Live.Symbol,
+			AssetID:      market.CanonicalAssetID,
+			StaleAfter:   cfg.Live.StaleAfter,
+			Logger:       log,
 		})
 		p.Start(ctx)
 		defer func() { _ = p.Close() }()
 		liveProvider = p
-		log.Info("live market data enabled", "provider", cfg.Live.Provider, "symbol", cfg.Live.Symbol)
+		log.Info("live market data enabled", "provider", cfg.Live.Provider,
+			"transport", cfg.Live.Transport, "pollInterval", cfg.Live.PollInterval,
+			"symbol", cfg.Live.Symbol)
 	}
 	liveSvc := service.NewLiveService(liveProvider)
 

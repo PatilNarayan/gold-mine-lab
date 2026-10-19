@@ -45,13 +45,15 @@ type DBConfig struct {
 // LiveConfig holds the optional live market-data provider settings. Live data
 // is observational only — it never feeds backtests or persisted research.
 type LiveConfig struct {
-	Enabled     bool          // LIVE_MARKET_ENABLED
-	Provider    string        // LIVE_MARKET_PROVIDER: only "twelvedata" supported
-	APIKey      string        // TWELVE_DATA_API_KEY — secret, never logged or served
-	Symbol      string        // LIVE_MARKET_SYMBOL — provider symbol, default XAU/USD
-	StaleAfter  time.Duration // LIVE_MARKET_STALE_AFTER — quote age → "stale"
-	RESTBaseURL string        // TWELVE_DATA_REST_URL — override for tests/mocks
-	WSURL       string        // TWELVE_DATA_WS_URL — override for tests/mocks
+	Enabled      bool          // LIVE_MARKET_ENABLED
+	Provider     string        // LIVE_MARKET_PROVIDER: only "twelvedata" supported
+	APIKey       string        // TWELVE_DATA_API_KEY — secret, never logged or served
+	Symbol       string        // LIVE_MARKET_SYMBOL — provider symbol, default XAU/USD
+	StaleAfter   time.Duration // LIVE_MARKET_STALE_AFTER — quote age → "stale"
+	Transport    string        // LIVE_MARKET_TRANSPORT: "rest" (default) | "websocket"
+	PollInterval time.Duration // LIVE_MARKET_POLL_INTERVAL — REST poll cadence
+	RESTBaseURL  string        // TWELVE_DATA_REST_URL — override for tests/mocks
+	WSURL        string        // TWELVE_DATA_WS_URL — override for tests/mocks
 }
 
 // Load reads configuration from the environment, applies safe defaults for
@@ -122,10 +124,20 @@ func Load() (Config, error) {
 	cfg.Live.APIKey = os.Getenv("TWELVE_DATA_API_KEY")
 	cfg.Live.Symbol = envOr("LIVE_MARKET_SYMBOL", "XAU/USD")
 	cfg.Live.StaleAfter = envDuration("LIVE_MARKET_STALE_AFTER", 30*time.Second, &errs)
+	cfg.Live.Transport = envOr("LIVE_MARKET_TRANSPORT", "rest")
+	cfg.Live.PollInterval = envDuration("LIVE_MARKET_POLL_INTERVAL", 10*time.Second, &errs)
 	cfg.Live.RESTBaseURL = envOr("TWELVE_DATA_REST_URL", "https://api.twelvedata.com")
 	cfg.Live.WSURL = envOr("TWELVE_DATA_WS_URL", "wss://ws.twelvedata.com/v1/quotes/price")
 	if cfg.Live.Provider != "twelvedata" {
 		errs = append(errs, fmt.Sprintf("LIVE_MARKET_PROVIDER must be twelvedata, got %q", cfg.Live.Provider))
+	}
+	switch cfg.Live.Transport {
+	case "rest", "websocket":
+	default:
+		errs = append(errs, fmt.Sprintf("LIVE_MARKET_TRANSPORT must be rest|websocket, got %q", cfg.Live.Transport))
+	}
+	if cfg.Live.PollInterval < 5*time.Second || cfg.Live.PollInterval > 10*time.Minute {
+		errs = append(errs, "LIVE_MARKET_POLL_INTERVAL must be between 5s and 10m")
 	}
 	if cfg.Live.StaleAfter < time.Second {
 		errs = append(errs, "LIVE_MARKET_STALE_AFTER must be >= 1s")

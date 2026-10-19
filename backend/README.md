@@ -74,19 +74,30 @@ backend/
 | `TWELVE_DATA_API_KEY`   | —                                | secret; required when enabled, never logged/served |
 | `LIVE_MARKET_SYMBOL`    | `XAU/USD`                        | provider symbol for xauusd   |
 | `LIVE_MARKET_STALE_AFTER` | `30s`                          | quote age → `stale` state    |
+| `LIVE_MARKET_TRANSPORT` | `rest`                           | `rest` polls /quote; `websocket` streams ticks |
+| `LIVE_MARKET_POLL_INTERVAL` | `10s`                      | REST poll cadence (5s–10m); ≈6 credits/min at 10s |
 | `TWELVE_DATA_REST_URL`  | `https://api.twelvedata.com`     | override for tests/mocks     |
 | `TWELVE_DATA_WS_URL`    | `wss://ws.twelvedata.com/v1/quotes/price` | override for tests/mocks |
 
 ## Live market data (`internal/live`)
 
-One managed WebSocket subscription streams XAU/USD tick prices into a
-thread-safe quote cache and per-timeframe forming candles. REST
-`/time_series` seeds/reconciles candle books on connect (bounded, ≥30s apart).
-Reconnection uses exponential backoff (1s→60s + jitter); credential/plan
-failures park the provider in `config_error`. Ticks are validated (finite
-positive price, plausible timestamp, monotonic); bid/ask/day_volume pass
-through as null when the provider omits them. States:
-`disabled|config_error|connecting|connected|stale|disconnected`.
+Two transports feed the same quote cache and per-timeframe candle books:
+
+- `rest` (default, `LIVE_MARKET_TRANSPORT=rest`): one managed worker polls
+  `GET /quote` every `LIVE_MARKET_POLL_INTERVAL` (1 credit/call — 10s ≈
+  6 credits/min). No WebSocket entitlement needed. Failures back off
+  exponentially; auth rejections park in `config_error`.
+- `websocket` (`LIVE_MARKET_TRANSPORT=websocket`): one WS subscription
+  streams tick prices (requires a plan with WS access). Reconnects with
+  1s→60s backoff + jitter; refused handshakes escalate to `config_error`.
+
+REST `/time_series` seeds/reconciles candle books on a bounded schedule in
+both modes (≥30s between fetches, ≥60s cache TTL per timeframe). Quotes are
+validated (finite positive price, plausible+monotonic provider timestamp);
+missing provider timestamps stay null rather than being invented; bid/ask/
+volume pass through only when supplied. States:
+`disabled|config_error|connecting|connected|stale|disconnected`, plus the
+actual `transport` in the status response.
 
 Live data is strictly observational — it never enters the CSV provider, the
 engine, strategies, or the database. `xauusd` is the only served asset;

@@ -37,14 +37,16 @@ import (
 
 // TwelveDataConfig configures the managed Twelve Data provider.
 type TwelveDataConfig struct {
-	APIKey      string        // TWELVE_DATA_API_KEY — required when enabled
-	RESTBaseURL string        // default https://api.twelvedata.com
-	WSURL       string        // default wss://ws.twelvedata.com/v1/quotes/price
-	Symbol      string        // provider symbol — default "XAU/USD"
-	AssetID     string        // canonical asset id reported back — default "xauusd"
-	StaleAfter  time.Duration // quote age after which state reports "stale"
-	HTTPClient  *http.Client
-	Logger      *slog.Logger
+	APIKey       string        // TWELVE_DATA_API_KEY — required when enabled
+	Transport    string        // "rest" (default) or "websocket"
+	PollInterval time.Duration // REST poll cadence — default 10s
+	RESTBaseURL  string        // default https://api.twelvedata.com
+	WSURL        string        // default wss://ws.twelvedata.com/v1/quotes/price
+	Symbol       string        // provider symbol — default "XAU/USD"
+	AssetID      string        // canonical asset id reported back — default "xauusd"
+	StaleAfter   time.Duration // quote age after which state reports "stale"
+	HTTPClient   *http.Client
+	Logger       *slog.Logger
 }
 
 // intervalDef maps an app timeframe to the provider interval and bar length.
@@ -233,14 +235,15 @@ type TwelveData struct {
 	once    sync.Once
 	started bool
 
-	mu       sync.Mutex
-	state    State
-	lastErr  string
-	quote    *Quote
-	lastTick time.Time // newest accepted provider timestamp
-	books    map[string]*candleBook
-	connMu   sync.Mutex
-	conn     *websocket.Conn
+	mu        sync.Mutex
+	state     State
+	lastErr   string
+	quote     *Quote
+	lastFetch time.Time // last successful upstream fetch
+	lastTick  time.Time // newest accepted provider timestamp
+	books     map[string]*candleBook
+	connMu    sync.Mutex
+	conn      *websocket.Conn
 }
 
 // NewTwelveData builds the provider. It does not connect until Start.
@@ -259,6 +262,12 @@ func NewTwelveData(cfg TwelveDataConfig) *TwelveData {
 	}
 	if cfg.StaleAfter <= 0 {
 		cfg.StaleAfter = 30 * time.Second
+	}
+	if cfg.Transport == "" {
+		cfg.Transport = "rest"
+	}
+	if cfg.PollInterval <= 0 {
+		cfg.PollInterval = 10 * time.Second
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -299,7 +308,11 @@ func (t *TwelveData) Start(ctx context.Context) {
 		t.mu.Lock()
 		t.started = true
 		t.mu.Unlock()
-		go t.supervise(cctx)
+		if t.cfg.Transport == "websocket" {
+			go t.wsSupervise(cctx)
+		} else {
+			go t.pollSupervise(cctx)
+		}
 	})
 }
 
@@ -333,16 +346,21 @@ func (t *TwelveData) Status() Status {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	st := Status{
-		Enabled:    true,
-		State:      t.state,
-		Provider:   "twelvedata",
-		Symbol:     t.cfg.Symbol,
-		LastError:  t.lastErr,
-		StaleAfter: t.cfg.StaleAfter,
+		Enabled:      true,
+		State:        t.state,
+		Provider:     "twelvedata",
+		Transport:    t.cfg.Transport,
+		Symbol:       t.cfg.Symbol,
+		LastError:    t.lastErr,
+		StaleAfter:   t.cfg.StaleAfter,
+		PollInterval: t.cfg.PollInterval,
 	}
 	if t.quote != nil {
-		ts := t.quote.ProviderTime
-		st.LastQuoteAt = &ts
+		st.LastQuoteAt = t.quote.ProviderTime
+	}
+	if !t.lastFetch.IsZero() {
+		f := t.lastFetch
+		st.LastFetchAt = &f
 	}
 	if t.state == StateConnected && t.quote != nil &&
 		t.now().Sub(t.quote.ReceivedAt) > t.cfg.StaleAfter {
@@ -421,10 +439,10 @@ func (t *TwelveData) maybeReconcile(book *candleBook, tf string) {
 	}()
 }
 
-// supervise owns the WS lifecycle: connect → subscribe → read; on failure
+// wsSupervise owns the WS lifecycle: connect → subscribe → read; on failure
 // it reschedules with bounded exponential backoff + jitter. Auth-style
 // failures park the provider in config_error — retrying won't fix a bad key.
-func (t *TwelveData) supervise(ctx context.Context) {
+func (t *TwelveData) wsSupervise(ctx context.Context) {
 	defer close(t.done)
 	delay := initReconnectDelay
 	dialFails := 0
@@ -586,30 +604,45 @@ func (t *TwelveData) onPrice(p wsPrice) {
 		return
 	}
 
-	t.mu.Lock()
-	if !t.lastTick.IsZero() && ts.Before(t.lastTick) {
-		t.mu.Unlock()
-		return // out-of-order tick
-	}
-	t.lastTick = ts
-	q := Quote{
+	t.applyQuote(Quote{
 		AssetID:      t.cfg.AssetID,
 		Symbol:       p.Symbol,
 		Price:        p.Price,
 		Bid:          p.Bid,
 		Ask:          p.Ask,
 		DayVolume:    p.DayVolume,
-		ProviderTime: ts,
+		ProviderTime: &ts,
 		ReceivedAt:   t.now().UTC(),
+	})
+}
+
+// applyQuote commits a validated quote: it drops out-of-order provider
+// timestamps, refreshes the cache and lastFetch, marks the provider
+// connected, and folds the price into every timeframe's forming candle.
+// Book buckets use the provider timestamp; only when the source supplies
+// none does our own receive time define the bucket.
+func (t *TwelveData) applyQuote(q Quote) {
+	t.mu.Lock()
+	if q.ProviderTime != nil && !t.lastTick.IsZero() && q.ProviderTime.Before(t.lastTick) {
+		t.mu.Unlock()
+		return // out-of-order update
+	}
+	if q.ProviderTime != nil {
+		t.lastTick = *q.ProviderTime
 	}
 	t.quote = &q
+	t.lastFetch = q.ReceivedAt
 	if t.state != StateConnected {
 		t.state = StateConnected
 	}
 	t.mu.Unlock()
 
+	bucket := q.ReceivedAt
+	if q.ProviderTime != nil {
+		bucket = *q.ProviderTime
+	}
 	for _, book := range t.books {
-		book.onTick(ts, p.Price)
+		book.onTick(bucket, q.Price)
 	}
 }
 
@@ -663,17 +696,7 @@ func (t *TwelveData) fetchTimeSeries(ctx context.Context, tf string, limit int) 
 		return nil, fmt.Errorf("malformed provider response: %w", err)
 	}
 	if ts.Status == "error" || ts.Code != 0 {
-		msg := ts.Message
-		if msg == "" {
-			msg = "provider error"
-		}
-		if ts.Code == http.StatusUnauthorized || ts.Code == http.StatusForbidden {
-			return nil, &authError{err: errors.New(msg)}
-		}
-		if ts.Code == http.StatusTooManyRequests {
-			return nil, errors.New("provider rate limit exceeded (429) — retry later")
-		}
-		return nil, fmt.Errorf("provider error %d: %s", ts.Code, msg)
+		return nil, tdError(ts.Code, ts.Message)
 	}
 
 	out := make([]Candle, 0, len(ts.Values))
@@ -725,6 +748,180 @@ func parseTDCandle(dt, o, h, l, c, vol string) (Candle, error) {
 		}
 	}
 	return cv, nil
+}
+
+// --- REST polling -----------------------------------------------------------
+
+// tdQuote is the Twelve Data /quote response. Most numeric fields arrive as
+// strings; timestamp/last_quote_at are unix seconds. 1 API credit per call.
+// For XAU/USD (a commodity) several fields may be absent — we keep what the
+// provider actually sends and leave the rest nil.
+type tdQuote struct {
+	Symbol       string `json:"symbol"`
+	Datetime     string `json:"datetime"`
+	Timestamp    *int64 `json:"timestamp"`
+	LastQuoteAt  *int64 `json:"last_quote_at"`
+	Close        string `json:"close"`
+	Volume       string `json:"volume"`
+	IsMarketOpen *bool  `json:"is_market_open"`
+	Status       string `json:"status"`
+	Code         int    `json:"code"`
+	Message      string `json:"message"`
+}
+
+// pollSupervise is the REST transport: one managed worker polling /quote on a
+// fixed cadence — never per-browser-request. Failures back off exponentially
+// (bounded) with jitter; auth-style rejections park in config_error.
+func (t *TwelveData) pollSupervise(ctx context.Context) {
+	defer close(t.done)
+	interval := t.cfg.PollInterval
+	delay := interval
+	fails := 0
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		err := t.pollOnce(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		switch {
+		case err == nil:
+			fails = 0
+			delay = interval
+			// Seed/reconcile candle books — the books' own throttle (≥30s
+			// between fetches, ≥60s cache TTL) bounds the upstream cost.
+			for tf, book := range t.books {
+				t.maybeReconcile(book, tf)
+			}
+		case isAuthFailure(err):
+			t.setState(StateConfigError,
+				fmt.Sprintf("provider rejected credentials or plan access: %v", err))
+			return
+		default:
+			fails++
+			t.setState(StateDisconnected, fmt.Sprintf("poll failed: %v", err))
+			// Back off 2^fails × interval, capped — a rate limit or outage
+			// must not be hammered.
+			backoff := interval << min(fails, 4)
+			if backoff > maxReconnectDelay {
+				backoff = maxReconnectDelay
+			}
+			delay = backoff + time.Duration(rand.Int63n(int64(backoff)/4))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
+}
+
+// pollOnce performs one quote fetch and applies the result.
+func (t *TwelveData) pollOnce(ctx context.Context) error {
+	q, err := t.fetchQuote(ctx)
+	if err != nil {
+		return err
+	}
+	t.applyQuote(q)
+	return nil
+}
+
+// fetchQuote calls GET /quote for the configured symbol and maps the
+// provider fields onto a Quote. Missing provider timestamps stay nil —
+// the status surface reports that limitation instead of inventing one.
+func (t *TwelveData) fetchQuote(ctx context.Context) (Quote, error) {
+	u, err := url.Parse(t.cfg.RESTBaseURL + "/quote")
+	if err != nil {
+		return Quote{}, err
+	}
+	q := u.Query()
+	q.Set("symbol", t.cfg.Symbol)
+	q.Set("apikey", t.cfg.APIKey)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return Quote{}, err
+	}
+	resp, err := t.http.Do(req)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			return Quote{}, fmt.Errorf("provider request failed: %w", ue.Err)
+		}
+		return Quote{}, errors.New("provider request failed")
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return Quote{}, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return Quote{}, &authError{err: fmt.Errorf("HTTP %d", resp.StatusCode)}
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return Quote{}, errors.New("provider rate limit exceeded (429) — retry later")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return Quote{}, fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
+	}
+
+	var tq tdQuote
+	if err := json.Unmarshal(body, &tq); err != nil {
+		return Quote{}, fmt.Errorf("malformed provider response: %w", err)
+	}
+	if tq.Status == "error" || tq.Code != 0 {
+		return Quote{}, tdError(tq.Code, tq.Message)
+	}
+	if tq.Symbol != t.cfg.Symbol {
+		return Quote{}, fmt.Errorf("provider returned symbol %q, expected %q", tq.Symbol, t.cfg.Symbol)
+	}
+	price, err := strconv.ParseFloat(tq.Close, 64)
+	if err != nil || math.IsNaN(price) || math.IsInf(price, 0) || price <= 0 {
+		return Quote{}, fmt.Errorf("invalid provider close price %q", tq.Close)
+	}
+
+	quote := Quote{
+		AssetID:    t.cfg.AssetID,
+		Symbol:     tq.Symbol,
+		Price:      price,
+		ReceivedAt: t.now().UTC(),
+	}
+	// Provider timestamp: prefer last_quote_at (actual quote time), then the
+	// row timestamp. None supplied → stays nil, honestly.
+	src := tq.LastQuoteAt
+	if src == nil {
+		src = tq.Timestamp
+	}
+	if src != nil {
+		ts := time.Unix(*src, 0).UTC()
+		if d := t.now().Sub(ts); d > 24*time.Hour || d < -24*time.Hour {
+			return Quote{}, fmt.Errorf("implausible provider timestamp %s", ts)
+		}
+		quote.ProviderTime = &ts
+	}
+	if tq.Volume != "" {
+		if f, err := strconv.ParseFloat(tq.Volume, 64); err == nil && !math.IsNaN(f) && f >= 0 {
+			quote.DayVolume = &f
+		}
+	}
+	return quote, nil
+}
+
+// tdError classifies a provider error body: auth/plan rejections are
+// authError (no retry will help), 429 is a distinct rate-limit message.
+func tdError(code int, msg string) error {
+	if msg == "" {
+		msg = "provider error"
+	}
+	if code == http.StatusUnauthorized || code == http.StatusForbidden {
+		return &authError{err: errors.New(msg)}
+	}
+	if code == http.StatusTooManyRequests {
+		return errors.New("provider rate limit exceeded (429) — retry later")
+	}
+	return fmt.Errorf("provider error %d: %s", code, msg)
 }
 
 // --- helpers ----------------------------------------------------------------
