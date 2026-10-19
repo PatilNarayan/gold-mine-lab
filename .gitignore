@@ -11,3 +11,6 @@ Desktop.ini
 
 # Market data CSVs — large, kept out of the repo
 data/
+
+# App launcher runtime state + logs (scripts/app.ps1)
+scripts/.run/
