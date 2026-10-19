@@ -33,7 +33,7 @@ export function CandlestickChart({
   markers = [],
   height = 440,
 }: {
-  candles: Candle[];
+  candles: (Omit<Candle, 'volume'> & { volume: number | null })[];
   ema20: SeriesPoint[];
   ema50: SeriesPoint[];
   markers?: ChartMarker[];
@@ -94,18 +94,23 @@ export function CandlestickChart({
     const e50 = chart.addSeries(LineSeries, { ...lineOpts, color: p.warning });
     e50.setData(ema50.map((pt) => ({ time: toUtc(pt.time), value: pt.value })));
 
-    const volume = chart.addSeries(HistogramSeries, {
-      priceScaleId: 'vol',
-      priceFormat: { type: 'volume' },
-    });
-    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    volume.setData(
-      candles.map((c) => ({
-        time: toUtc(c.time),
-        value: c.volume,
-        color: c.close >= c.open ? p.buy : p.sell,
-      })),
-    );
+    // Volume histogram only when the source actually supplies volume —
+    // providers that don't report it (e.g. live XAU/USD) get no fake bars.
+    const withVolume = candles.filter((c) => c.volume != null);
+    if (withVolume.length === candles.length && withVolume.length > 0) {
+      const volume = chart.addSeries(HistogramSeries, {
+        priceScaleId: 'vol',
+        priceFormat: { type: 'volume' },
+      });
+      chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+      volume.setData(
+        candles.map((c) => ({
+          time: toUtc(c.time),
+          value: c.volume as number,
+          color: c.close >= c.open ? p.buy : p.sell,
+        })),
+      );
+    }
 
     // Markers must land on an existing bar — lightweight-charts clamps
     // unmatched times to the edge, stacking labels there. Snap to the

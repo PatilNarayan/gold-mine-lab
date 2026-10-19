@@ -5,6 +5,7 @@ go 1.23.0
 toolchain go1.25.3
 
 require (
+	github.com/coder/websocket v1.8.12
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-gonic/gin v1.10.1
 	github.com/golang-migrate/migrate/v4 v4.18.3

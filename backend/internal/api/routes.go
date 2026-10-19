@@ -92,6 +92,8 @@ func respondErr(c *gin.Context, err error) {
 		writeError(c, http.StatusNotFound, "not_found", "resource not found")
 	case errors.As(err, &ve):
 		writeError(c, http.StatusBadRequest, "invalid_request", ve.Msg)
+	case errors.Is(err, ErrUnavailable):
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "live market data is not currently available")
 	default:
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
 	}
@@ -450,6 +452,49 @@ func registerSignalResearchRoutes(g *gin.RouterGroup, svc SignalResearchService)
 	})
 	g.GET("/signal-research/:id", func(c *gin.Context) {
 		out, err := svc.GetSignalResearch(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+}
+
+// registerLiveMarketRoutes mounts the provider-backed live endpoints.
+// They are registered before /market/candles in code order only — Gin routes
+// on distinct path segments so there is no shadowing.
+func registerLiveMarketRoutes(g *gin.RouterGroup, svc LiveMarketService) {
+	live := g.Group("/market/live")
+	live.GET("/status", func(c *gin.Context) {
+		c.JSON(http.StatusOK, svc.LiveStatus(c.Request.Context()))
+	})
+	live.GET("/quote", func(c *gin.Context) {
+		asset := c.Query("asset")
+		if asset == "" {
+			writeError(c, http.StatusBadRequest, "invalid_request", "asset query param is required")
+			return
+		}
+		out, err := svc.LiveQuote(c.Request.Context(), asset)
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	live.GET("/candles", func(c *gin.Context) {
+		asset := c.Query("asset")
+		tf := c.Query("timeframe")
+		if asset == "" || tf == "" {
+			writeError(c, http.StatusBadRequest, "invalid_request", "asset and timeframe query params are required")
+			return
+		}
+		limit := 200
+		if s := c.Query("limit"); s != "" {
+			if n, err := strconv.Atoi(s); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		out, err := svc.LiveCandles(c.Request.Context(), asset, market.Timeframe(tf), limit)
 		if err != nil {
 			respondErr(c, err)
 			return

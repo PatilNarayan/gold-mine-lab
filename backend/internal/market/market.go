@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+// CanonicalAssetID is the single instrument this deployment serves.
+// The platform is XAUUSD-only by product decision: catalog, selectors, and
+// all endpoints (historical and live) reject anything else with a clear
+// error rather than silently substituting another symbol.
+const CanonicalAssetID = "xauusd"
+
 // Asset is a tradeable instrument. Asset-agnostic by design — symbols like
 // XAUUSD, XAGUSD, MSFT or TSLA are data, never literals in code.
 // JSON tags match the API contract the frontend expects.

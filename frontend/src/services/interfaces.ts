@@ -6,6 +6,9 @@ import type {
   CandleSeries,
   Comparison,
   ComparisonRequest,
+  LiveCandles,
+  LiveQuote,
+  LiveStatus,
   WalkForward,
   WalkForwardRequest,
   SignalResearch,
@@ -39,6 +42,17 @@ export interface MarketService {
   getAssets(): Promise<Asset[]>;
   getCandles(assetId: string, timeframe: Timeframe): Promise<CandleSeries>;
   getMarketSummary(assetId: string, timeframe: Timeframe): Promise<MarketSummary>;
+}
+
+/**
+ * Provider-backed live market observation (XAUUSD only). Distinct from
+ * MarketService on purpose: historical research data and live market
+ * observation never share a path.
+ */
+export interface LiveMarketService {
+  getStatus(): Promise<LiveStatus>;
+  getQuote(assetId: string): Promise<LiveQuote>;
+  getCandles(assetId: string, timeframe: Timeframe, limit?: number): Promise<LiveCandles>;
 }
 
 export interface StrategyService {

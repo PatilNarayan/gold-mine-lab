@@ -1,6 +1,8 @@
 import { Suspense, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { useUiStore } from '@/stores/useUiStore';
+import { useAssetStore } from '@/stores/useAssetStore';
+import { useAssets } from '@/hooks';
 import { Skeleton } from '@/components/common/Skeleton';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
@@ -19,10 +21,23 @@ function RouteFallback() {
 /** App chrome: sidebar + header + routed content area. */
 export function AppShell() {
   const theme = useUiStore((s) => s.theme);
+  const assetId = useAssetStore((s) => s.assetId);
+  const setAssetId = useAssetStore((s) => s.setAssetId);
+  const assets = useAssets();
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  // The app serves a single instrument (XAUUSD). A stale selection persisted
+  // in localStorage (e.g. from an older multi-asset build) snaps back to the
+  // catalog's asset instead of querying a rejected symbol.
+  useEffect(() => {
+    const list = assets.data;
+    if (list?.length && !list.some((a) => a.id === assetId)) {
+      setAssetId(list[0].id);
+    }
+  }, [assets.data, assetId, setAssetId]);
 
   return (
     <div className="flex h-full">

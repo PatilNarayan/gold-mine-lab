@@ -15,6 +15,7 @@ import (
 	"github.com/gold-mine-lab/backend/internal/api"
 	"github.com/gold-mine-lab/backend/internal/config"
 	"github.com/gold-mine-lab/backend/internal/database"
+	"github.com/gold-mine-lab/backend/internal/live"
 	"github.com/gold-mine-lab/backend/internal/market"
 	"github.com/gold-mine-lab/backend/internal/repository/postgres"
 	"github.com/gold-mine-lab/backend/internal/service"
@@ -86,6 +87,27 @@ func run(shutdown <-chan os.Signal) error {
 		pool.Close()
 		return fmt.Errorf("bootstrap: %w", err)
 	}
+	// Live market data: one managed upstream connection feeding quote + candle
+	// caches. Observational only — never touches the research pipeline. When
+	// disabled or unconfigured the provider reports its state truthfully.
+	var liveProvider live.Provider
+	if cfg.Live.Enabled {
+		p := live.NewTwelveData(live.TwelveDataConfig{
+			APIKey:      cfg.Live.APIKey,
+			RESTBaseURL: cfg.Live.RESTBaseURL,
+			WSURL:       cfg.Live.WSURL,
+			Symbol:      cfg.Live.Symbol,
+			AssetID:     market.CanonicalAssetID,
+			StaleAfter:  cfg.Live.StaleAfter,
+			Logger:      log,
+		})
+		p.Start(ctx)
+		defer func() { _ = p.Close() }()
+		liveProvider = p
+		log.Info("live market data enabled", "provider", cfg.Live.Provider, "symbol", cfg.Live.Symbol)
+	}
+	liveSvc := service.NewLiveService(liveProvider)
+
 	router := api.NewRouter(api.Deps{
 		Logger:         log,
 		Health:         pool,
@@ -98,6 +120,7 @@ func run(shutdown <-chan os.Signal) error {
 		StrategyGraphs: svc,
 		SignalResearch: svc,
 		Studies:        svc,
+		Live:           liveSvc,
 		AllowedOrigins: cfg.HTTP.AllowedOrigins,
 		Env:            cfg.Env,
 	})

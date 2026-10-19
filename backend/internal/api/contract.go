@@ -731,3 +731,66 @@ type SignalResearchService interface {
 	ListSignalResearch(ctx context.Context) ([]SignalResearch, error)
 	GetSignalResearch(ctx context.Context, id string) (SignalResearch, error)
 }
+
+// --- Live market data ---------------------------------------------------------
+
+// ErrUnavailable is returned by services when a capability exists but is not
+// currently usable — e.g. live data disabled or the provider has no data
+// yet. Mapped to HTTP 503.
+var ErrUnavailable = errors.New("unavailable")
+
+// LiveStatusResponse reports the managed provider connection truthfully:
+// enabled/state/provider/symbol/lastQuoteAt/lastError — never the API key.
+type LiveStatusResponse struct {
+	Enabled           bool    `json:"enabled"`
+	State             string  `json:"state"` // disabled|config_error|connecting|connected|stale|disconnected
+	Provider          string  `json:"provider"`
+	Symbol            string  `json:"symbol"`
+	LastQuoteAt       *string `json:"lastQuoteAt"`
+	LastError         string  `json:"lastError"`
+	StaleAfterSeconds int     `json:"staleAfterSeconds"`
+}
+
+// LiveQuoteResponse is the latest provider quote. Bid/Ask/DayVolume are null
+// when the provider does not supply them — never a midpoint or a guess.
+type LiveQuoteResponse struct {
+	AssetID           string   `json:"assetId"`
+	Provider          string   `json:"provider"`
+	Symbol            string   `json:"symbol"`
+	Price             float64  `json:"price"`
+	Bid               *float64 `json:"bid"`
+	Ask               *float64 `json:"ask"`
+	DayVolume         *float64 `json:"dayVolume"`
+	ProviderTimestamp string   `json:"providerTimestamp"`
+	ReceivedAt        string   `json:"receivedAt"`
+	Status            string   `json:"status"` // "fresh" | "stale"
+}
+
+// LiveCandle is one provider candle; Volume is null when not supplied.
+type LiveCandle struct {
+	Time   string   `json:"time"`
+	Open   float64  `json:"open"`
+	High   float64  `json:"high"`
+	Low    float64  `json:"low"`
+	Close  float64  `json:"close"`
+	Volume *float64 `json:"volume"`
+}
+
+// LiveCandlesResponse is a coherent recent window from the live provider —
+// never stitched onto the historical CSV series.
+type LiveCandlesResponse struct {
+	AssetID   string           `json:"assetId"`
+	Provider  string           `json:"provider"`
+	Symbol    string           `json:"symbol"`
+	Timeframe market.Timeframe `json:"timeframe"`
+	Status    string           `json:"status"`
+	Candles   []LiveCandle     `json:"candles"`
+}
+
+// LiveMarketService serves provider-backed live market observation. Live data
+// never feeds backtests or persisted research.
+type LiveMarketService interface {
+	LiveStatus(ctx context.Context) LiveStatusResponse
+	LiveQuote(ctx context.Context, assetID string) (LiveQuoteResponse, error)
+	LiveCandles(ctx context.Context, assetID string, tf market.Timeframe, limit int) (LiveCandlesResponse, error)
+}

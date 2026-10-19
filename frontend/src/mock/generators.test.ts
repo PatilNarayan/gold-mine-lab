@@ -20,7 +20,7 @@ describe('seeded generators', () => {
   });
 
   it('produces well-formed candles (high >= low, ohlc consistent)', () => {
-    const { candles } = generateCandleSeries('tsla', '15m');
+    const { candles } = generateCandleSeries('xauusd', '15m');
     expect(candles.length).toBeGreaterThan(100);
     for (const c of candles) {
       expect(c.high).toBeGreaterThanOrEqual(c.low);

@@ -1,5 +1,6 @@
 import type {
   BacktestService,
+  LiveMarketService,
   SignalResearchService,
   ResearchStudyService,
   GraphService,
@@ -21,6 +22,8 @@ import { mockTradeService } from './mock/mockTrade';
 import { mockHealthService } from './mock/mockHealth';
 
 import { httpMarketService } from './api/httpMarket';
+import { httpLiveService } from './api/httpLive';
+import { mockLiveService } from './mock/mockLive';
 import { httpStrategyService } from './api/httpStrategy';
 import { httpBacktestService } from './api/httpBacktest';
 import { httpTradeService } from './api/httpTrade';
@@ -38,6 +41,7 @@ import { mockResearchStudyService } from './mock/mockResearchStudies';
 
 export interface Services {
   market: MarketService;
+  live: LiveMarketService;
   strategy: StrategyService;
   backtest: BacktestService;
   trade: TradeService;
@@ -59,6 +63,7 @@ export function createServices(mode: DataMode = dataMode): Services {
   if (mode === 'api') {
     return {
       market: httpMarketService,
+      live: httpLiveService,
       strategy: httpStrategyService,
       backtest: httpBacktestService,
       trade: httpTradeService,
@@ -73,6 +78,7 @@ export function createServices(mode: DataMode = dataMode): Services {
   }
   return {
     market: mockMarketService,
+    live: mockLiveService,
     strategy: mockStrategyService,
     backtest: mockBacktestService,
     trade: mockTradeService,

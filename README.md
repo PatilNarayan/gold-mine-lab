@@ -28,7 +28,35 @@ npm run dev
 ```
 
 Frontend connects to the backend via `VITE_API_URL` + `VITE_DATA_MODE=api`
-(see `frontend/.env.example`).
+(see `frontend/.env.example`). Or use `.\scripts\app.ps1 start` to launch
+Postgres + backend + frontend together (API mode is selected automatically).
+
+## Live market data (optional)
+
+The app can stream real XAU/USD quotes from [Twelve Data](https://twelvedata.com)
+into the Market page's **Live** mode. This is strictly observational — it never
+feeds backtests, strategies, or persisted research.
+
+```bash
+# backend/.env
+LIVE_MARKET_ENABLED=true
+TWELVE_DATA_API_KEY=<your key from https://twelvedata.com>
+```
+
+Endpoints: `GET /api/market/live/status` · `GET /api/market/live/quote?asset=xauusd`
+· `GET /api/market/live/candles?asset=xauusd&timeframe=15m&limit=200`.
+Timeframes: 1m 5m 15m 1h 4h 1d. The API key stays server-side; the frontend
+only polls the backend's cached state.
+
+Notes:
+
+- **XAUUSD is the only instrument.** Other assets are rejected with HTTP 400.
+- WebSocket streaming needs a Twelve Data plan that permits it (full access is
+  a Pro-tier feature; lower tiers may connect but only to trial symbols). The
+  status endpoint reports plan/auth failures truthfully — no fake prices.
+- REST `time_series` (used to seed/reconcile the live chart) requires Basic+.
+- Without a key or with `LIVE_MARKET_ENABLED=false`, the UI shows "Live data
+  is not configured" and historical mode works exactly as before.
 
 ## Market data
 

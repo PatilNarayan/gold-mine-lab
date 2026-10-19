@@ -37,12 +37,12 @@ interface SeedSpec {
 
 const SEED_SPECS: SeedSpec[] = [
   { strategyId: 'ema-cross', assetId: 'xauusd', status: 'completed', startDate: '2024-02-01', endDate: '2024-11-30', daysAgo: 10 },
-  { strategyId: 'ema-cross', assetId: 'xagusd', status: 'completed', startDate: '2024-03-01', endDate: '2024-12-15', daysAgo: 8 },
+  { strategyId: 'ema-cross', assetId: 'xauusd', status: 'completed', startDate: '2024-03-01', endDate: '2024-12-15', daysAgo: 8 },
   { strategyId: 'rsi-mean-reversion', assetId: 'xauusd', status: 'completed', startDate: '2024-04-01', endDate: '2024-10-31', daysAgo: 6 },
-  { strategyId: 'macd-trend', assetId: 'msft', status: 'completed', startDate: '2024-01-10', endDate: '2024-12-01', daysAgo: 5 },
-  { strategyId: 'macd-trend', assetId: 'tsla', status: 'completed', startDate: '2024-02-15', endDate: '2024-12-20', daysAgo: 4 },
+  { strategyId: 'macd-trend', assetId: 'xauusd', status: 'completed', startDate: '2024-01-10', endDate: '2024-12-01', daysAgo: 5 },
+  { strategyId: 'macd-trend', assetId: 'xauusd', status: 'completed', startDate: '2024-02-15', endDate: '2024-12-20', daysAgo: 4 },
   { strategyId: 'atr-breakout', assetId: 'xauusd', status: 'completed', startDate: '2024-05-01', endDate: '2024-11-15', daysAgo: 3 },
-  { strategyId: 'bollinger-squeeze', assetId: 'xagusd', status: 'failed', startDate: '2024-06-01', endDate: '2024-12-01', daysAgo: 2 },
+  { strategyId: 'bollinger-squeeze', assetId: 'xauusd', status: 'failed', startDate: '2024-06-01', endDate: '2024-12-01', daysAgo: 2 },
   { strategyId: 'rsi-mean-reversion', assetId: 'xauusd', status: 'completed', startDate: '2024-07-01', endDate: '2024-12-28', daysAgo: 1 },
 ];
 

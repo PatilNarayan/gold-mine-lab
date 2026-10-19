@@ -117,6 +117,21 @@ src/
    `{ type, channel, timestamp, payload }` envelope, then swap
    `NoopRealtimeClient` in `src/services/index.ts`.
 
+## Live market data
+
+The Market page has a **Historical | Live** source toggle. Live mode renders
+provider-backed XAU/USD data from the backend's managed Twelve Data feed
+(`/api/market/live/*`) — the API key never reaches the browser and the page
+only polls the backend's cached state (status 10s, quote 5s, candles 10s).
+
+- Live mode requires `LIVE_MARKET_ENABLED=true` + `TWELVE_DATA_API_KEY` on the
+  backend; otherwise the panel reports "Live data is not configured".
+- Connection, stale-data, and provider errors surface truthfully (no fake
+  prices); bid/ask/day volume only render when the provider supplies them.
+- Mock mode reports live as disabled — demo prices are never presented as
+  live data.
+- XAUUSD is the only instrument; other assets are rejected by the backend.
+
 ## Known limitations (Phase 1)
 
 - No real WebSocket — `NoopRealtimeClient` reports `Realtime: disabled`.

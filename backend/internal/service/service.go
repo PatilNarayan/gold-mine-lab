@@ -75,6 +75,9 @@ func (s *Service) Assets(ctx context.Context) ([]market.Asset, error) {
 }
 
 func (s *Service) Candles(ctx context.Context, assetID string, tf market.Timeframe) (api.CandleSeries, error) {
+	if assetID != market.CanonicalAssetID {
+		return api.CandleSeries{}, &api.ValidationError{Msg: fmt.Sprintf("unsupported asset %q — only %s (XAUUSD) is supported", assetID, market.CanonicalAssetID)}
+	}
 	asset, err := s.repos.Assets.GetAsset(ctx, assetID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -90,6 +93,9 @@ func (s *Service) Candles(ctx context.Context, assetID string, tf market.Timefra
 }
 
 func (s *Service) MarketSummary(ctx context.Context, assetID string, tf market.Timeframe) (api.MarketSummary, error) {
+	if assetID != market.CanonicalAssetID {
+		return api.MarketSummary{}, &api.ValidationError{Msg: fmt.Sprintf("unsupported asset %q — only %s (XAUUSD) is supported", assetID, market.CanonicalAssetID)}
+	}
 	asset, err := s.repos.Assets.GetAsset(ctx, assetID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {

@@ -63,6 +63,65 @@ export const marketSummarySchema = z.object({
 });
 export type MarketSummary = z.infer<typeof marketSummarySchema>;
 
+// --- Live market data -------------------------------------------------------
+// Provider-backed real-time observation. Null means "provider did not supply
+// it" — never a fabricated value. Separate from the historical dataset.
+
+export const liveStateSchema = z.enum([
+  'disabled',
+  'config_error',
+  'connecting',
+  'connected',
+  'stale',
+  'disconnected',
+]);
+export type LiveState = z.infer<typeof liveStateSchema>;
+
+export const liveStatusSchema = z.object({
+  enabled: z.boolean(),
+  state: liveStateSchema,
+  provider: z.string(),
+  symbol: z.string(),
+  lastQuoteAt: z.string().nullable(),
+  lastError: z.string(),
+  staleAfterSeconds: z.number(),
+});
+export type LiveStatus = z.infer<typeof liveStatusSchema>;
+
+export const liveQuoteSchema = z.object({
+  assetId: z.string(),
+  provider: z.string(),
+  symbol: z.string(),
+  price: z.number(),
+  bid: z.number().nullable(),
+  ask: z.number().nullable(),
+  dayVolume: z.number().nullable(),
+  providerTimestamp: z.string(),
+  receivedAt: z.string(),
+  status: z.enum(['fresh', 'stale']),
+});
+export type LiveQuote = z.infer<typeof liveQuoteSchema>;
+
+export const liveCandleSchema = z.object({
+  time: z.string(),
+  open: z.number(),
+  high: z.number(),
+  low: z.number(),
+  close: z.number(),
+  volume: z.number().nullable(),
+});
+export type LiveCandle = z.infer<typeof liveCandleSchema>;
+
+export const liveCandlesSchema = z.object({
+  assetId: z.string(),
+  provider: z.string(),
+  symbol: z.string(),
+  timeframe: timeframeSchema,
+  status: liveStateSchema,
+  candles: z.array(liveCandleSchema),
+});
+export type LiveCandles = z.infer<typeof liveCandlesSchema>;
+
 export const parameterFieldSchema = z.object({
   name: z.string(),
   label: z.string(),

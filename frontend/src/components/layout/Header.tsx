@@ -1,5 +1,5 @@
 import { Menu } from 'lucide-react';
-import { useAssets, useHealth } from '@/hooks';
+import { useAssets, useHealth, useLiveStatus } from '@/hooks';
 import { useAssetStore } from '@/stores/useAssetStore';
 import { useTimeframeStore } from '@/stores/useTimeframeStore';
 import { useUiStore } from '@/stores/useUiStore';
@@ -19,6 +19,24 @@ export function Header() {
   const setTimeframe = useTimeframeStore((s) => s.setTimeframe);
   const assets = useAssets();
   const health = useHealth();
+  const live = useLiveStatus(dataMode === 'api');
+
+  const liveDot = (() => {
+    const st = live.data;
+    if (dataMode !== 'api' || !st?.enabled) {
+      return <StatusDot status="muted" label="Live: off" />;
+    }
+    switch (st.state) {
+      case 'connected':
+        return <StatusDot status="ok" label="Live" />;
+      case 'stale':
+        return <StatusDot status="warn" label="Live: stale" />;
+      case 'connecting':
+        return <StatusDot status="warn" label="Live: connecting" />;
+      default:
+        return <StatusDot status="error" label={`Live: ${st.state.replace('_', ' ')}`} />;
+    }
+  })();
 
   const status =
     dataMode === 'mock' ? (
@@ -84,7 +102,7 @@ export function Header() {
 
         <div className="hidden items-center gap-3 border-l border-line pl-3 sm:flex">
           {status}
-          <StatusDot status="muted" label="Realtime: disabled" />
+          {liveDot}
         </div>
       </div>
     </header>

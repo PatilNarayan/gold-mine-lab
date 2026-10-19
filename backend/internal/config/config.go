@@ -18,6 +18,7 @@ type Config struct {
 	HTTP          HTTPConfig
 	Log           LogConfig
 	DB            DBConfig
+	Live          LiveConfig
 }
 
 // HTTPConfig holds HTTP server settings.
@@ -39,6 +40,18 @@ type DBConfig struct {
 	URL      string // DATABASE_URL — required, no default (contains credentials)
 	MaxConns int32  // DB_MAX_CONNS
 	MinConns int32  // DB_MIN_CONNS
+}
+
+// LiveConfig holds the optional live market-data provider settings. Live data
+// is observational only — it never feeds backtests or persisted research.
+type LiveConfig struct {
+	Enabled     bool          // LIVE_MARKET_ENABLED
+	Provider    string        // LIVE_MARKET_PROVIDER: only "twelvedata" supported
+	APIKey      string        // TWELVE_DATA_API_KEY — secret, never logged or served
+	Symbol      string        // LIVE_MARKET_SYMBOL — provider symbol, default XAU/USD
+	StaleAfter  time.Duration // LIVE_MARKET_STALE_AFTER — quote age → "stale"
+	RESTBaseURL string        // TWELVE_DATA_REST_URL — override for tests/mocks
+	WSURL       string        // TWELVE_DATA_WS_URL — override for tests/mocks
 }
 
 // Load reads configuration from the environment, applies safe defaults for
@@ -104,6 +117,22 @@ func Load() (Config, error) {
 		errs = append(errs, "CORS_ALLOWED_ORIGINS must list at least one origin")
 	}
 
+	cfg.Live.Enabled = envBool("LIVE_MARKET_ENABLED", false, &errs)
+	cfg.Live.Provider = envOr("LIVE_MARKET_PROVIDER", "twelvedata")
+	cfg.Live.APIKey = os.Getenv("TWELVE_DATA_API_KEY")
+	cfg.Live.Symbol = envOr("LIVE_MARKET_SYMBOL", "XAU/USD")
+	cfg.Live.StaleAfter = envDuration("LIVE_MARKET_STALE_AFTER", 30*time.Second, &errs)
+	cfg.Live.RESTBaseURL = envOr("TWELVE_DATA_REST_URL", "https://api.twelvedata.com")
+	cfg.Live.WSURL = envOr("TWELVE_DATA_WS_URL", "wss://ws.twelvedata.com/v1/quotes/price")
+	if cfg.Live.Provider != "twelvedata" {
+		errs = append(errs, fmt.Sprintf("LIVE_MARKET_PROVIDER must be twelvedata, got %q", cfg.Live.Provider))
+	}
+	if cfg.Live.StaleAfter < time.Second {
+		errs = append(errs, "LIVE_MARKET_STALE_AFTER must be >= 1s")
+	}
+	// A missing TWELVE_DATA_API_KEY is NOT a config error: the provider parks
+	// in the config_error state at runtime and history keeps working.
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("invalid configuration:\n  - %s", strings.Join(errs, "\n  - "))
 	}
@@ -115,6 +144,19 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envBool(key string, def bool, errs *[]string) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		*errs = append(*errs, fmt.Sprintf("%s must be a boolean (true|false), got %q", key, v))
+		return def
+	}
+	return b
 }
 
 func envInt(key string, def int, errs *[]string) int {

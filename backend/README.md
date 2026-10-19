@@ -69,6 +69,28 @@ backend/
 | `SHUTDOWN_TIMEOUT`      | `15s`                            | drain window on SIGINT/TERM  |
 | `CORS_ALLOWED_ORIGINS`  | `http://localhost:5173`          | comma-separated              |
 | `MARKET_DATA_DIR`       | — **required**                   | dir of historical CSVs       |
+| `LIVE_MARKET_ENABLED`   | `false`                          | enable live XAU/USD feed     |
+| `LIVE_MARKET_PROVIDER`  | `twelvedata`                     | only supported provider      |
+| `TWELVE_DATA_API_KEY`   | —                                | secret; required when enabled, never logged/served |
+| `LIVE_MARKET_SYMBOL`    | `XAU/USD`                        | provider symbol for xauusd   |
+| `LIVE_MARKET_STALE_AFTER` | `30s`                          | quote age → `stale` state    |
+| `TWELVE_DATA_REST_URL`  | `https://api.twelvedata.com`     | override for tests/mocks     |
+| `TWELVE_DATA_WS_URL`    | `wss://ws.twelvedata.com/v1/quotes/price` | override for tests/mocks |
+
+## Live market data (`internal/live`)
+
+One managed WebSocket subscription streams XAU/USD tick prices into a
+thread-safe quote cache and per-timeframe forming candles. REST
+`/time_series` seeds/reconciles candle books on connect (bounded, ≥30s apart).
+Reconnection uses exponential backoff (1s→60s + jitter); credential/plan
+failures park the provider in `config_error`. Ticks are validated (finite
+positive price, plausible timestamp, monotonic); bid/ask/day_volume pass
+through as null when the provider omits them. States:
+`disabled|config_error|connecting|connected|stale|disconnected`.
+
+Live data is strictly observational — it never enters the CSV provider, the
+engine, strategies, or the database. `xauusd` is the only served asset;
+anything else gets HTTP 400.
 
 ## Run it
 
@@ -230,7 +252,10 @@ Same contract as before — thin handlers → `service` → repos/engine:
 | GET    | `/api/health` | liveness + DB check |
 | GET    | `/api/assets` | from `assets` table |
 | GET    | `/api/market/candles?asset&timeframe` | real CSV candles + EMA overlays |
-| GET    | `/api/market/summary` | real last candle close / change (status `Historical` — no live feed) |
+| GET    | `/api/market/summary` | real last candle close / change (status `Historical`) |
+| GET    | `/api/market/live/status` | live provider state + last quote/error |
+| GET    | `/api/market/live/quote?asset` | latest provider quote (bid/ask when supplied) |
+| GET    | `/api/market/live/candles?asset&timeframe&limit` | provider-backed live candles |
 | GET    | `/api/strategies` | defs + latest signal + latest-run metrics per strategy |
 | POST   | `/api/comparisons` | run 2–4 strategies under identical assumptions; optional OOS window |
 | GET    | `/api/comparisons` | saved comparisons (newest first) |
@@ -278,5 +303,6 @@ generation, market-data config, and DB errors — each carrying `run_id`,
   they're labeled `engine_version='legacy'`, not retroactively corrected.
 - Dashboard shows the latest run only; no portfolio view exists yet.
 - Sharpe/benchmark metrics deferred until return frequency is defined.
-- No live market data — every price is historical.
+- Live market data is observational only (XAU/USD via Twelve Data when
+  configured); it never feeds research or execution paths.
 - No auth, no websockets, no async job queue — by design for now.

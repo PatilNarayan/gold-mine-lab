@@ -13,20 +13,14 @@ export interface MockAssetMeta {
   baseVolume: number;
 }
 
+// Demo mode is XAUUSD-only — same single-asset policy as the real API.
+// Demo prices are generated, never presented as market data.
 export const MOCK_ASSETS: Asset[] = [
-  { id: 'xauusd', symbol: 'XAUUSD', name: 'Gold Spot', assetClass: 'metal', quoteCurrency: 'USD' },
-  { id: 'xagusd', symbol: 'XAGUSD', name: 'Silver Spot', assetClass: 'metal', quoteCurrency: 'USD' },
-  { id: 'msft', symbol: 'MSFT', name: 'Microsoft Corp', assetClass: 'equity', quoteCurrency: 'USD' },
-  { id: 'tsla', symbol: 'TSLA', name: 'Tesla Inc', assetClass: 'equity', quoteCurrency: 'USD' },
-  { id: 'eurusd', symbol: 'EURUSD', name: 'Euro / US Dollar', assetClass: 'forex', quoteCurrency: 'USD' },
+  { id: 'xauusd', symbol: 'XAUUSD', name: 'Gold Spot (Demo)', assetClass: 'metal', quoteCurrency: 'USD' },
 ];
 
 export const MOCK_ASSET_META: Record<string, MockAssetMeta> = {
   xauusd: { basePrice: 2320, digits: 2, volatility: 0.0075, baseVolume: 185_000 },
-  xagusd: { basePrice: 29.4, digits: 3, volatility: 0.011, baseVolume: 62_000 },
-  msft: { basePrice: 428, digits: 2, volatility: 0.009, baseVolume: 4_200_000 },
-  tsla: { basePrice: 246, digits: 2, volatility: 0.019, baseVolume: 18_500_000 },
-  eurusd: { basePrice: 1.0852, digits: 4, volatility: 0.0028, baseVolume: 310_000 },
 };
 
 export function assetById(id: string): Asset | undefined {

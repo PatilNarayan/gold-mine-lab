@@ -11,7 +11,7 @@ export const MOCK_STRATEGIES: Strategy[] = [
     version: '1.2.0',
     description:
       'Trend-following system that enters long on EMA20/EMA50 bullish crosses and shorts bearish crosses, with an ATR-based stop.',
-    supportedAssets: ['xauusd', 'xagusd'],
+    supportedAssets: ['xauusd'],
     timeframe: '1h',
     status: 'active',
     parameters: [
@@ -65,7 +65,7 @@ export const MOCK_STRATEGIES: Strategy[] = [
     version: '0.9.0',
     description:
       'Enters on range breakouts confirmed by ATR expansion; trails stops with a chandelier exit.',
-    supportedAssets: ['xauusd', 'msft'],
+    supportedAssets: ['xauusd'],
     timeframe: '4h',
     status: 'inactive',
     parameters: [
@@ -80,7 +80,7 @@ export const MOCK_STRATEGIES: Strategy[] = [
     version: '1.0.0',
     description:
       'Daily trend system using MACD signal-line crosses filtered by a 200-day moving average.',
-    supportedAssets: ['msft', 'tsla'],
+    supportedAssets: ['xauusd'],
     timeframe: '1d',
     status: 'active',
     parameters: [
@@ -96,7 +96,7 @@ export const MOCK_STRATEGIES: Strategy[] = [
     version: '1.1.0',
     description:
       'Trades volatility expansions after Bollinger Band squeezes, confirmed by momentum direction.',
-    supportedAssets: ['xagusd', 'eurusd'],
+    supportedAssets: ['xauusd'],
     timeframe: '1h',
     status: 'inactive',
     parameters: [
