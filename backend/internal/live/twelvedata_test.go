@@ -590,3 +590,42 @@ func TestPollDedupeSameTimestamp(t *testing.T) {
 		t.Fatalf("forming close %v != latest price %v", forming.Close, last.Price)
 	}
 }
+
+func TestReconcileDoesNotDuplicateFormingBucket(t *testing.T) {
+	var hits atomic.Int32
+	// Seed row at the forming bucket (19:15) plus one older candle.
+	srv := quoteServer(t, &hits, func(int32) (int, string) { return goodQuote(1792437200, "4144.5") })
+	defer srv.Close()
+
+	p := testProvider(t, TwelveDataConfig{
+		APIKey: "k", RESTBaseURL: srv.URL, Transport: "rest",
+		PollInterval: 10 * time.Second, StaleAfter: time.Hour, CandleRefresh: time.Hour,
+	})
+	p.now = func() time.Time { return time.Unix(1792437300, 0) } // 19:15:00Z
+
+	// Fold a tick into the 19:15 bucket, then reconcile over it with a
+	// provider response that includes a row for the same bucket.
+	ts := time.Unix(1792437300, 0)
+	p.applyQuote(Quote{AssetID: "xauusd", Symbol: "XAU/USD", Price: 4144.5,
+		ProviderTime: &ts, ReceivedAt: ts})
+	book := p.books["15m"]
+	book.replace([]Candle{
+		{Time: ts.Truncate(15 * time.Minute).Add(-15 * time.Minute), Open: 1, High: 2, Low: .5, Close: 1.5},
+		{Time: ts.Truncate(15 * time.Minute), Open: 3, High: 4, Low: 2.5, Close: 3.5},
+	}, ts)
+
+	got := book.snapshot(10)
+	seen := map[time.Time]int{}
+	for _, c := range got {
+		seen[c.Time]++
+	}
+	for tm, n := range seen {
+		if n > 1 {
+			t.Fatalf("bucket %s emitted %d times: %+v", tm, n, got)
+		}
+	}
+	last := got[len(got)-1]
+	if !last.Time.Equal(ts.Truncate(15*time.Minute)) || last.Close != 3.5 {
+		t.Fatalf("forming bucket not adopted from provider row: %+v", last)
+	}
+}

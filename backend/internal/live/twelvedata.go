@@ -158,9 +158,11 @@ func (b *candleBook) replace(cs []Candle, at time.Time) {
 	if b.forming != nil {
 		for i := len(cs) - 1; i >= 0; i-- {
 			if cs[i].Time.Equal(b.forming.Time) {
-				// Provider row for the forming bucket: adopt it only if it is
-				// richer (has volume we lack); streamed ticks keep refining it.
+				// Provider row for the forming bucket: adopt it into the
+				// forming bar (ticks keep refining it) and drop the history
+				// copy — otherwise snapshot emits the bucket twice.
 				b.forming = &cs[i]
+				cs = append(cs[:i:i], cs[i+1:]...)
 				break
 			}
 		}

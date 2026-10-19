@@ -152,6 +152,15 @@ func Load() (Config, error) {
 	if cfg.Live.StaleAfter < time.Second {
 		errs = append(errs, "LIVE_MARKET_STALE_AFTER must be >= 1s")
 	}
+	// REST quotes refresh once per poll — a staleness window shorter than the
+	// cadence would flap every quote connected→stale→connected within a single
+	// cycle. Clamp to two polls so a quote is stale only when a refresh was
+	// genuinely missed.
+	if cfg.Live.Transport == "rest" {
+		if min := 2 * cfg.Live.PollInterval; cfg.Live.StaleAfter < min {
+			cfg.Live.StaleAfter = min
+		}
+	}
 	// A missing TWELVE_DATA_API_KEY is NOT a config error: the provider parks
 	// in the config_error state at runtime and history keeps working.
 
