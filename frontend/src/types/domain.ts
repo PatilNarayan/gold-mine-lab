@@ -124,8 +124,26 @@ export const liveCandlesSchema = z.object({
   timeframe: timeframeSchema,
   status: liveStateSchema,
   candles: z.array(liveCandleSchema),
+  overlays: z.object({ ema20: z.array(seriesPointSchema), ema50: z.array(seriesPointSchema) }),
 });
 export type LiveCandles = z.infer<typeof liveCandlesSchema>;
+
+// Frames pushed over GET /api/market/live/stream — driven by provider ticks,
+// never by polling.
+export const liveBarUpdateSchema = z.object({
+  timeframe: z.string(),
+  candle: liveCandleSchema.optional(),
+  ema20: seriesPointSchema.optional(),
+  ema50: seriesPointSchema.optional(),
+});
+export type LiveBarUpdate = z.infer<typeof liveBarUpdateSchema>;
+
+export const liveStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('status'), status: liveStatusSchema }),
+  z.object({ type: z.literal('quote'), quote: liveQuoteSchema }),
+  z.object({ type: z.literal('bars'), updates: z.array(liveBarUpdateSchema) }),
+]);
+export type LiveStreamEvent = z.infer<typeof liveStreamEventSchema>;
 
 export const parameterFieldSchema = z.object({
   name: z.string(),

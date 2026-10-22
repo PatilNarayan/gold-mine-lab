@@ -126,6 +126,7 @@ type Tiingo struct {
 	connMu    sync.Mutex
 	conn      *websocket.Conn
 	lastFrame atomic.Int64 // unix nanos of the most recent inbound frame
+	subs      *quoteSubs
 }
 
 // NewTiingo builds the provider. It does not connect until Start.
@@ -165,6 +166,7 @@ func NewTiingo(cfg TiingoConfig) *Tiingo {
 		state: StateDisabled,
 		books: make(map[string]*candleBook),
 		done:  make(chan struct{}),
+		subs:  &quoteSubs{},
 	}
 	if p.http == nil {
 		p.http = &http.Client{Timeout: 15 * time.Second}
@@ -257,6 +259,11 @@ func (p *Tiingo) estimatedDailyCredits() int {
 	return len(p.books) * int(24*time.Hour) / int(p.cfg.CandleRefresh)
 }
 
+// SubscribeQuotes registers fn for every accepted quote; see Provider.
+func (p *Tiingo) SubscribeQuotes(fn func(Quote)) func() {
+	return p.subs.add(fn)
+}
+
 // LatestQuote returns the newest validated quote.
 func (p *Tiingo) LatestQuote() (Quote, bool) {
 	p.mu.Lock()
@@ -310,7 +317,7 @@ func (p *Tiingo) maybeReconcile(book *candleBook, tf string) {
 		}()
 		fctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		cs, err := p.fetchPrices(fctx, tf, candleBookSize)
+		cs, err := p.fetchPrices(fctx, tf, supportedTimeframes[tf].seedRows())
 		if err != nil {
 			p.log.Warn("tiingo candle reconcile failed", "timeframe", tf, "err", err)
 			p.setErr(fmt.Sprintf("candle fetch %s: %v", tf, err))
@@ -574,6 +581,7 @@ func (p *Tiingo) applyQuote(q Quote) {
 	for _, book := range p.books {
 		book.onTick(bucket, q.Price)
 	}
+	p.subs.notify(q)
 }
 
 // fetchPrices pulls recent candles from REST /tiingo/fx/{ticker}/prices with
@@ -589,8 +597,9 @@ func (p *Tiingo) fetchPrices(ctx context.Context, tf string, limit int) ([]Candl
 		return nil, err
 	}
 	q := u.Query()
-	// Fetch a window covering `limit` bars plus buffer for closures.
-	start := p.now().Add(-def.bar * time.Duration(limit) * 2)
+	// Fetch a window covering `limit` SEED-interval rows plus buffer for
+	// closures — session books seed from 1h rows, not their own bar width.
+	start := p.now().Add(-def.seedBar() * time.Duration(limit) * 2)
 	q.Set("startDate", start.Format("2006-01-02"))
 	q.Set("resampleFreq", def.tiFreq)
 	u.RawQuery = q.Encode()
@@ -635,6 +644,11 @@ func (p *Tiingo) fetchPrices(ctx context.Context, tf string, limit int) ([]Candl
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	// Session books (4h/1d) fetched 1h seed rows — re-bucket into the
+	// platform's Kyiv civil-session labels before trimming.
+	if def.session {
+		out = aggregateSession(out, def)
 	}
 	if len(out) > limit {
 		out = out[len(out)-limit:]

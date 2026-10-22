@@ -8,7 +8,13 @@ import {
   HistogramSeries,
   LineSeries,
 } from 'lightweight-charts';
-import type { IChartApi, UTCTimestamp } from 'lightweight-charts';
+import type {
+  IChartApi,
+  ISeriesApi,
+  CandlestickData,
+  LineData,
+  UTCTimestamp,
+} from 'lightweight-charts';
 import type { Candle, SeriesPoint, SignalAction } from '@/types/domain';
 import { getChartPalette } from '@/charts/theme';
 import { useUiStore } from '@/stores/useUiStore';
@@ -21,10 +27,66 @@ export interface ChartMarker {
 
 const toUtc = (iso: string) => Math.floor(Date.parse(iso) / 1000) as UTCTimestamp;
 
+type Bar = Omit<Candle, 'volume'> & { volume: number | null };
+
+interface ChartState {
+  cs: ISeriesApi<'Candlestick'>;
+  e20: ISeriesApi<'Line'>;
+  e50: ISeriesApi<'Line'>;
+  applied: { candles: Bar[]; ema20: SeriesPoint[]; ema50: SeriesPoint[] };
+}
+
+const toBar = (c: Bar): CandlestickData => ({
+  time: toUtc(c.time),
+  open: c.open,
+  high: c.high,
+  low: c.low,
+  close: c.close,
+});
+
+const toPt = (p: SeriesPoint): LineData => ({ time: toUtc(p.time), value: p.value });
+
+/**
+ * Incremental tail update for the streaming path: when `next` is `prev` plus
+ * an in-place rewrite of the forming bar (or one appended bucket), update()
+ * moves just that bar. Any larger divergence (bootstrap, timeframe switch,
+ * window roll) gets a full setData.
+ */
+function applyBars(series: ISeriesApi<'Candlestick'>, prev: Bar[] | undefined, next: Bar[]) {
+  const sameWindow =
+    prev &&
+    prev.length > 0 &&
+    next.length > 0 &&
+    toUtc(next[0].time) === toUtc(prev[0].time) &&
+    Math.abs(next.length - prev.length) <= 1;
+  if (!sameWindow) {
+    series.setData(next.map(toBar));
+    return;
+  }
+  series.update(toBar(next[next.length - 1]));
+}
+
+function applyPoints(series: ISeriesApi<'Line'>, prev: SeriesPoint[] | undefined, next: SeriesPoint[]) {
+  const sameWindow =
+    prev &&
+    prev.length > 0 &&
+    next.length > 0 &&
+    toUtc(next[0].time) === toUtc(prev[0].time) &&
+    Math.abs(next.length - prev.length) <= 1;
+  if (!sameWindow) {
+    series.setData(next.map(toPt));
+    return;
+  }
+  series.update(toPt(next[next.length - 1]));
+}
+
 /**
  * Candlestick chart with EMA overlays, volume and BUY/SELL markers.
  * Uses the lightweight-charts v5 API (`addSeries` + `createSeriesMarkers`).
- * Theme is re-read from CSS tokens whenever the app theme changes.
+ * The chart instance is created once per (height, theme); data changes update
+ * series in place — the forming bar moves via series.update(), it never
+ * rebuilds the chart per tick. Theme is re-read from CSS tokens whenever the
+ * app theme changes.
  */
 export function CandlestickChart({
   candles,
@@ -33,7 +95,7 @@ export function CandlestickChart({
   markers = [],
   height = 440,
 }: {
-  candles: (Omit<Candle, 'volume'> & { volume: number | null })[];
+  candles: Bar[];
   ema20: SeriesPoint[];
   ema50: SeriesPoint[];
   markers?: ChartMarker[];
@@ -41,7 +103,9 @@ export function CandlestickChart({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const theme = useUiStore((s) => s.theme);
+  const stateRef = useRef<ChartState | null>(null);
 
+  // Create the chart + series once; populate with the props at mount time.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -78,21 +142,13 @@ export function CandlestickChart({
       wickDownColor: p.sell,
       borderVisible: false,
     });
-    candlesSeries.setData(
-      candles.map((c) => ({
-        time: toUtc(c.time),
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      })),
-    );
+    candlesSeries.setData(candles.map(toBar));
 
     const lineOpts = { lineWidth: 1 as const, crosshairMarkerVisible: false, priceLineVisible: false };
     const e20 = chart.addSeries(LineSeries, { ...lineOpts, color: p.info });
-    e20.setData(ema20.map((pt) => ({ time: toUtc(pt.time), value: pt.value })));
+    e20.setData(ema20.map(toPt));
     const e50 = chart.addSeries(LineSeries, { ...lineOpts, color: p.warning });
-    e50.setData(ema50.map((pt) => ({ time: toUtc(pt.time), value: pt.value })));
+    e50.setData(ema50.map(toPt));
 
     // Volume histogram only when the source actually supplies volume —
     // providers that don't report it (e.g. live XAU/USD) get no fake bars.
@@ -148,6 +204,8 @@ export function CandlestickChart({
 
     chart.timeScale().fitContent();
 
+    stateRef.current = { cs: candlesSeries, e20, e50, applied: { candles, ema20, ema50 } };
+
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(() => chart.resize(el.clientWidth, el.clientHeight));
@@ -155,9 +213,25 @@ export function CandlestickChart({
     }
     return () => {
       ro?.disconnect();
+      stateRef.current = null;
       chart.remove();
     };
-  }, [candles, ema20, ema50, markers, height, theme]);
+    // Chart is rebuilt only when layout-relevant props change; data flows
+    // through the incremental effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [height, theme]);
+
+  // Incremental data path: fold prop changes into the existing series —
+  // forming-bar ticks use series.update(); bootstrap/timeframe changes
+  // fall back to setData on the same chart instance.
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!s) return;
+    if (s.applied.candles !== candles) applyBars(s.cs, s.applied.candles, candles);
+    if (s.applied.ema20 !== ema20) applyPoints(s.e20, s.applied.ema20, ema20);
+    if (s.applied.ema50 !== ema50) applyPoints(s.e50, s.applied.ema50, ema50);
+    s.applied = { candles, ema20, ema50 };
+  }, [candles, ema20, ema50]);
 
   return (
     <div className="relative">

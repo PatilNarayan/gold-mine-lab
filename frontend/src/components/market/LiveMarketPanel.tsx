@@ -1,4 +1,4 @@
-import { useLiveCandles, useLiveQuote, useLiveStatus } from '@/hooks';
+import { useLiveCandles, useLiveQuote, useLiveStatus, useLiveStream } from '@/hooks';
 import type { Timeframe } from '@/types/domain';
 import { Badge } from '@/components/common/Badge';
 import { StatusDot } from '@/components/common/StatusDot';
@@ -38,6 +38,7 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
 
   const quote = useLiveQuote(assetId, active);
   const candles = useLiveCandles(assetId, timeframe, active);
+  const stream = useLiveStream(assetId, active);
 
   if (status.isLoading) {
     return <Skeleton className="h-[440px] w-full" />;
@@ -59,6 +60,9 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
         <Badge tone="info">{st.provider}</Badge>
         <Badge tone="neutral">
           {st.transport === 'websocket' ? 'WebSocket' : `REST ${st.pollIntervalSeconds}s poll`}
+        </Badge>
+        <Badge tone={stream === 'open' ? 'buy' : 'neutral'}>
+          feed {stream === 'open' ? 'live' : stream}
         </Badge>
         <span className="tnum text-xs text-content-3">{st.symbol}</span>
         {quote.data ? (
@@ -120,7 +124,12 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
         ) : candles.isError ? (
           <ErrorState error={candles.error} onRetry={() => candles.refetch()} />
         ) : candles.data && candles.data.candles.length ? (
-          <CandlestickChart candles={candles.data.candles} ema20={[]} ema50={[]} height={440} />
+          <CandlestickChart
+            candles={candles.data.candles}
+            ema20={candles.data.overlays.ema20}
+            ema50={candles.data.overlays.ema50}
+            height={440}
+          />
         ) : (
           <EmptyState
             title="No live candles yet"

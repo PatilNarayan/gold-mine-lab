@@ -3,15 +3,18 @@ import { services } from '@/services';
 import type { Timeframe } from '@/types/domain';
 
 /**
- * Live-market queries poll the BACKEND's cached provider state only — the
- * frontend never talks to Twelve Data. Intervals are bounded and queries are
- * disabled when the live view is not active.
+ * Live-market queries bootstrap from the BACKEND's cached provider state —
+ * the frontend never talks to the upstream provider. After bootstrap,
+ * updates arrive over the WebSocket stream (useLiveStream) which writes
+ * these same query keys; these hooks intentionally do NOT poll for ticks.
+ * Status keeps a slow backstop interval so a silent stream drop still
+ * surfaces honest connectivity state.
  */
 export function useLiveStatus(enabled = true) {
   return useQuery({
     queryKey: ['liveStatus'],
     queryFn: () => services.live.getStatus(),
-    refetchInterval: 10_000,
+    refetchInterval: 15_000,
     enabled,
   });
 }
@@ -20,7 +23,6 @@ export function useLiveQuote(assetId: string, enabled = true) {
   return useQuery({
     queryKey: ['liveQuote', assetId],
     queryFn: () => services.live.getQuote(assetId),
-    refetchInterval: 5_000,
     enabled,
     retry: 1,
   });
@@ -30,7 +32,6 @@ export function useLiveCandles(assetId: string, timeframe: Timeframe, enabled = 
   return useQuery({
     queryKey: ['liveCandles', assetId, timeframe, limit],
     queryFn: () => services.live.getCandles(assetId, timeframe, limit),
-    refetchInterval: 10_000,
     enabled,
     retry: 1,
   });

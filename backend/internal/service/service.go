@@ -128,7 +128,7 @@ func seriesFromCandles(assetID string, tf market.Timeframe, candles []market.Can
 		closes[i] = c.Close
 	}
 	toPoints := func(vals []float64, warmup int) []api.SeriesPoint {
-		pts := make([]api.SeriesPoint, 0, len(vals)-warmup+1)
+		pts := make([]api.SeriesPoint, 0, max(0, len(vals)-warmup+1))
 		for i := warmup - 1; i < len(vals); i++ {
 			pts = append(pts, api.SeriesPoint{
 				Time:  candles[i].Time.UTC().Format(time.RFC3339),

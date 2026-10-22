@@ -784,7 +784,8 @@ type LiveCandle struct {
 }
 
 // LiveCandlesResponse is a coherent recent window from the live provider —
-// never stitched onto the historical CSV series.
+// never stitched onto the historical CSV series. Overlays are computed over
+// the same closed+forming candles the response carries.
 type LiveCandlesResponse struct {
 	AssetID   string           `json:"assetId"`
 	Provider  string           `json:"provider"`
@@ -792,6 +793,25 @@ type LiveCandlesResponse struct {
 	Timeframe market.Timeframe `json:"timeframe"`
 	Status    string           `json:"status"`
 	Candles   []LiveCandle     `json:"candles"`
+	Overlays  Overlays         `json:"overlays"`
+}
+
+// LiveBarUpdate is one timeframe's newest bar (usually the forming candle)
+// plus its EMA overlay points — pushed to stream subscribers per quote tick.
+type LiveBarUpdate struct {
+	Timeframe string       `json:"timeframe"`
+	Candle    *LiveCandle  `json:"candle,omitempty"`
+	EMA20     *SeriesPoint `json:"ema20,omitempty"`
+	EMA50     *SeriesPoint `json:"ema50,omitempty"`
+}
+
+// LiveStreamEvent is one frame on GET /api/market/live/stream. Type is
+// "status" | "quote" | "bars"; only the matching fields are set.
+type LiveStreamEvent struct {
+	Type    string              `json:"type"`
+	Status  *LiveStatusResponse `json:"status,omitempty"`
+	Quote   *LiveQuoteResponse  `json:"quote,omitempty"`
+	Updates []LiveBarUpdate     `json:"updates,omitempty"`
 }
 
 // LiveMarketService serves provider-backed live market observation. Live data
@@ -800,4 +820,8 @@ type LiveMarketService interface {
 	LiveStatus(ctx context.Context) LiveStatusResponse
 	LiveQuote(ctx context.Context, assetID string) (LiveQuoteResponse, error)
 	LiveCandles(ctx context.Context, assetID string, tf market.Timeframe, limit int) (LiveCandlesResponse, error)
+	// LiveStream returns a channel of provider-driven events plus an
+	// unsubscribe func. Each event is a complete snapshot of what changed —
+	// frames may be dropped for slow consumers without corrupting state.
+	LiveStream(ctx context.Context) (<-chan LiveStreamEvent, func(), error)
 }

@@ -310,6 +310,124 @@ func TestSessionStreamsQuotes(t *testing.T) {
 	}
 }
 
+// book.replace must merge the provider's row for the forming bucket instead
+// of adopting it wholesale — a reconcile issued before the newest ticks
+// arrived must not regress tick-accumulated high/low/close.
+func TestReplaceMergesFormingWithProviderRow(t *testing.T) {
+	b := &candleBook{def: supportedTimeframes["15m"]}
+	base := time.Unix(1760000100, 0).UTC().Truncate(15 * time.Minute)
+	// Ticks built a forming bar with a wide range.
+	b.onTick(base.Add(time.Minute), 100)
+	b.onTick(base.Add(2*time.Minute), 120) // high 120
+	b.onTick(base.Add(3*time.Minute), 95)  // low 95, close 95
+	// Provider row for the same bucket saw none of that range.
+	b.replace([]Candle{
+		{Time: base.Add(-15 * time.Minute), Open: 90, High: 91, Low: 89, Close: 90},
+		{Time: base, Open: 99, High: 102, Low: 98, Close: 101},
+	}, time.Now())
+	out := b.snapshot(10)
+	if len(out) != 2 {
+		t.Fatalf("snapshot = %+v", out)
+	}
+	f := out[1]
+	if f.Open != 99 {
+		t.Fatalf("provider open must win: %+v", f)
+	}
+	if f.High != 120 || f.Low != 95 || f.Close != 95 {
+		t.Fatalf("tick-accumulated range lost: %+v", f)
+	}
+}
+
+// Session books bucket on Kyiv civil boundaries and emit the platform's
+// naive-label convention — the same label the CSV provider produces for
+// broker wall time.
+func TestSessionBucketKyivCivilDay(t *testing.T) {
+	def := supportedTimeframes["1d"]
+	// 2026-10-22 is still EEST (UTC+3): the Kyiv day runs 21:00Z→21:00Z.
+	for _, tc := range []struct {
+		ts   string
+		want string
+	}{
+		{"2026-10-22T20:59:59Z", "2026-10-22T00:00:00Z"},
+		{"2026-10-22T21:00:00Z", "2026-10-23T00:00:00Z"},
+		{"2026-10-23T12:34:00Z", "2026-10-23T00:00:00Z"},
+		// After the Oct-26 fall-back (EET, UTC+2): boundary moves to 22:00Z.
+		{"2026-10-26T21:59:59Z", "2026-10-26T00:00:00Z"},
+		{"2026-10-26T22:00:00Z", "2026-10-27T00:00:00Z"},
+	} {
+		ts, _ := time.Parse(time.RFC3339, tc.ts)
+		got := sessionBucket(ts, def)
+		if got.Format(time.RFC3339) != tc.want {
+			t.Fatalf("sessionBucket(%s) = %s, want %s", tc.ts, got.Format(time.RFC3339), tc.want)
+		}
+	}
+}
+
+func TestSessionBucketKyiv4h(t *testing.T) {
+	def := supportedTimeframes["4h"]
+	// EEST (+3): Kyiv 03:30 → 4h bucket 00:00 Kyiv → label 00:00Z.
+	ts, _ := time.Parse(time.RFC3339, "2026-10-22T00:30:00Z")
+	if got := sessionBucket(ts, def); got.Format(time.RFC3339) != "2026-10-22T00:00:00Z" {
+		t.Fatalf("4h label = %s", got.Format(time.RFC3339))
+	}
+	// Kyiv 05:10 → 4h bucket 04:00 Kyiv → label 04:00Z.
+	ts, _ = time.Parse(time.RFC3339, "2026-10-22T02:10:00Z")
+	if got := sessionBucket(ts, def); got.Format(time.RFC3339) != "2026-10-22T04:00:00Z" {
+		t.Fatalf("4h label = %s", got.Format(time.RFC3339))
+	}
+}
+
+func TestAggregateSessionFromSeedRows(t *testing.T) {
+	def := supportedTimeframes["1d"]
+	h := func(ts string, o, hi, lo, c float64) Candle {
+		tm, _ := time.Parse(time.RFC3339, ts)
+		return Candle{Time: tm, Open: o, High: hi, Low: lo, Close: c}
+	}
+	rows := []Candle{
+		h("2026-10-22T20:00:00Z", 10, 11, 9, 10),  // Kyiv Oct-22 (EEST 23:00)
+		h("2026-10-22T21:00:00Z", 20, 22, 19, 21), // Kyiv Oct-23 00:00
+		h("2026-10-22T23:00:00Z", 30, 35, 28, 33), // Kyiv Oct-23 02:00
+	}
+	out := aggregateSession(rows, def)
+	if len(out) != 2 {
+		t.Fatalf("aggregated = %+v", out)
+	}
+	if out[0].Time.Format(time.RFC3339) != "2026-10-22T00:00:00Z" || out[0].Open != 10 || out[0].Close != 10 {
+		t.Fatalf("first session candle wrong: %+v", out[0])
+	}
+	if out[1].Time.Format(time.RFC3339) != "2026-10-23T00:00:00Z" ||
+		out[1].Open != 20 || out[1].High != 35 || out[1].Low != 19 || out[1].Close != 33 {
+		t.Fatalf("second session candle wrong: %+v", out[1])
+	}
+}
+
+// A session book rolls its forming candle on the Kyiv boundary, not the UTC
+// boundary — the same rollover the historical convention implies.
+func TestSessionBookRolloverKyivMidnight(t *testing.T) {
+	b := &candleBook{def: supportedTimeframes["1d"]}
+	b.onTick(mustRFC("2026-10-22T20:00:00Z"), 4000)
+	b.onTick(mustRFC("2026-10-22T20:59:00Z"), 4005) // still Kyiv Oct-22
+	b.onTick(mustRFC("2026-10-22T21:01:00Z"), 4010) // Kyiv Oct-23 00:01 → rollover
+	out := b.snapshot(10)
+	if len(out) != 2 {
+		t.Fatalf("snapshot = %+v", out)
+	}
+	if out[0].Time.Format(time.RFC3339) != "2026-10-22T00:00:00Z" || out[0].High != 4005 {
+		t.Fatalf("closed session candle wrong: %+v", out[0])
+	}
+	if out[1].Time.Format(time.RFC3339) != "2026-10-23T00:00:00Z" || out[1].Open != 4010 {
+		t.Fatalf("forming session candle wrong: %+v", out[1])
+	}
+}
+
+func mustRFC(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
 // Each accepted connection sends a price of 2000+conn# then drops. The
 // provider must resubscribe after the drop and report the newer value.
 func TestReconnectAfterDrop(t *testing.T) {
@@ -624,8 +742,12 @@ func TestReconcileDoesNotDuplicateFormingBucket(t *testing.T) {
 			t.Fatalf("bucket %s emitted %d times: %+v", tm, n, got)
 		}
 	}
+	// Merged, not adopted: provider open/bucket win, tick-accumulated
+	// high/low/close survive the reconcile.
 	last := got[len(got)-1]
-	if !last.Time.Equal(ts.Truncate(15*time.Minute)) || last.Close != 3.5 {
-		t.Fatalf("forming bucket not adopted from provider row: %+v", last)
+	want := Candle{Time: ts.Truncate(15 * time.Minute), Open: 3, High: 4144.5, Low: 2.5, Close: 4144.5}
+	if !last.Time.Equal(want.Time) || last.Open != want.Open || last.High != want.High ||
+		last.Low != want.Low || last.Close != want.Close {
+		t.Fatalf("forming bucket merge wrong: got %+v want %+v", last, want)
 	}
 }

@@ -154,7 +154,7 @@ graph TD
 | GET `/strategy-graphs`, `/:id`, `/:id/versions` · POST `/strategy-graphs`, `/validate`, `/:id/versions`, `/:id/versions/:v/backtests`, `/:id/versions/:v/diagnostics` | graph | CRUD + validate + run + signal inspector |
 | GET `/trades` | trade | filtered paginated fills |
 | GET `/signal-research`, `/:id` · POST `/signal-research` | signalResearch | cross-strategy replay stats + forward study + bootstrap |
-| GET `/market/live/status` · `/market/live/quote?asset` · `/market/live/candles?asset&timeframe&limit` | live | provider-backed XAU/USD quote/candles; xauusd only, else 400 |
+| GET `/market/live/status` · `/market/live/quote?asset` · `/market/live/candles?asset&timeframe&limit` · WS `/market/live/stream` | live | provider-backed XAU/USD quote/candles; xauusd only, else 400. `/stream` pushes `status`/`quote`/`bars` frames per provider tick (fan-out hub, snapshot semantics) — drives the browser chart without polling |
 | GET `/research-studies`, `/:id` · POST ``, `/:id/freeze`, `/:id/exploratory-runs`, `/:id/validate-holdout` · PATCH `/:id` | researchStudy | pre-registration lifecycle + holdout management |
 
 ## 5. Frontend route map

@@ -7,18 +7,23 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/gold-mine-lab/backend/internal/market"
 )
 
 type fakeLive struct {
-	status  LiveStatusResponse
-	quote   LiveQuoteResponse
-	qErr    error
-	candles LiveCandlesResponse
-	cErr    error
+	status    LiveStatusResponse
+	quote     LiveQuoteResponse
+	qErr      error
+	candles   LiveCandlesResponse
+	cErr      error
+	events    chan LiveStreamEvent
+	streamErr error
 }
 
 func (f fakeLive) LiveStatus(context.Context) LiveStatusResponse { return f.status }
@@ -28,6 +33,9 @@ func (f fakeLive) LiveQuote(_ context.Context, asset string) (LiveQuoteResponse,
 func (f fakeLive) LiveCandles(_ context.Context, _ string, _ market.Timeframe, _ int) (LiveCandlesResponse, error) {
 	return f.candles, f.cErr
 }
+func (f fakeLive) LiveStream(_ context.Context) (<-chan LiveStreamEvent, func(), error) {
+	return f.events, func() {}, f.streamErr
+}
 
 func liveRouter(svc LiveMarketService) *gin.Engine {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -35,6 +43,30 @@ func liveRouter(svc LiveMarketService) *gin.Engine {
 		Logger: log, Health: fakeChecker{}, Live: svc,
 		AllowedOrigins: []string{"http://localhost:5173"}, Env: "test",
 	})
+}
+
+func TestLiveStreamEndpoint(t *testing.T) {
+	events := make(chan LiveStreamEvent, 10)
+	svc := fakeLive{events: events}
+	srv := httptest.NewServer(liveRouter(svc))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/market/live/stream"
+	conn, resp, err := websocket.Dial(context.Background(), wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v (status=%v)", err, resp)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	events <- LiveStreamEvent{Type: "status", Status: &LiveStatusResponse{State: "connected", Provider: "tiingo"}}
+	_, data, err := conn.Read(context.Background())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var ev LiveStreamEvent
+	if err := json.Unmarshal(data, &ev); err != nil || ev.Type != "status" || ev.Status.Provider != "tiingo" {
+		t.Fatalf("frame = %s err=%v", data, err)
+	}
 }
 
 func TestLiveStatusEndpoint(t *testing.T) {

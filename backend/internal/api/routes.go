@@ -3,11 +3,14 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
+	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 
 	"github.com/gold-mine-lab/backend/internal/market"
@@ -463,7 +466,7 @@ func registerSignalResearchRoutes(g *gin.RouterGroup, svc SignalResearchService)
 // registerLiveMarketRoutes mounts the provider-backed live endpoints.
 // They are registered before /market/candles in code order only — Gin routes
 // on distinct path segments so there is no shadowing.
-func registerLiveMarketRoutes(g *gin.RouterGroup, svc LiveMarketService) {
+func registerLiveMarketRoutes(g *gin.RouterGroup, svc LiveMarketService, wsOrigins []string) {
 	live := g.Group("/market/live")
 	live.GET("/status", func(c *gin.Context) {
 		c.JSON(http.StatusOK, svc.LiveStatus(c.Request.Context()))
@@ -500,5 +503,55 @@ func registerLiveMarketRoutes(g *gin.RouterGroup, svc LiveMarketService) {
 			return
 		}
 		c.JSON(http.StatusOK, out)
+	})
+	// /stream pushes normalized live events (status/quote/bars) to the browser
+	// over WebSocket — the provider's ticks drive the feed; nothing polls the
+	// upstream per client. One upstream subscription is shared by all clients.
+	live.GET("/stream", func(c *gin.Context) {
+		conn, err := websocket.Accept(c.Writer, c.Request, &websocket.AcceptOptions{
+			OriginPatterns: wsOrigins,
+		})
+		if err != nil {
+			return // handshake already failed truthfully
+		}
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+		events, unsub, err := svc.LiveStream(ctx)
+		if err != nil {
+			_ = conn.Close(websocket.StatusInternalError, "live stream unavailable")
+			return
+		}
+		defer unsub()
+		defer conn.Close(websocket.StatusNormalClosure, "bye")
+
+		// Detect client disconnects: a read pump that exits on any close/error.
+		go func() {
+			for {
+				if _, _, err := conn.Read(ctx); err != nil {
+					cancel()
+					return
+				}
+			}
+		}()
+		for {
+			select {
+			case ev, ok := <-events:
+				if !ok {
+					return
+				}
+				b, err := json.Marshal(ev)
+				if err != nil {
+					continue
+				}
+				wctx, wc := context.WithTimeout(ctx, 10*time.Second)
+				err = conn.Write(wctx, websocket.MessageText, b)
+				wc()
+				if err != nil {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
 	})
 }

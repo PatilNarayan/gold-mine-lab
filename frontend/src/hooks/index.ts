@@ -1,5 +1,7 @@
 export { useAssets, useCandles, useMarketSummary } from './useMarket';
 export { useLiveStatus, useLiveQuote, useLiveCandles } from './useLiveMarket';
+export { useLiveStream } from './useLiveStream';
+export type { StreamState } from './useLiveStream';
 export { useStrategies, useStrategy, useSignals } from './useStrategies';
 export {
   useBacktestRuns,

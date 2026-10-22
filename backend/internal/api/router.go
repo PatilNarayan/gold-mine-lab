@@ -5,11 +5,25 @@ package api
 
 import (
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
+
+// wsOriginPatterns maps CORS origins (http(s) URLs) to WebSocket Origin
+// host:port patterns — the WS handshake has no CORS preflight, so the same
+// allowlist is enforced at upgrade time.
+func wsOriginPatterns(origins []string) []string {
+	out := make([]string, 0, len(origins))
+	for _, o := range origins {
+		if u, err := url.Parse(o); err == nil && u.Host != "" {
+			out = append(out, u.Host)
+		}
+	}
+	return out
+}
 
 // Deps are the router's dependencies, injected by the caller.
 type Deps struct {
@@ -86,7 +100,7 @@ func NewRouter(d Deps) *gin.Engine {
 		registerResearchStudyRoutes(v1, d.Studies)
 	}
 	if d.Live != nil {
-		registerLiveMarketRoutes(v1, d.Live)
+		registerLiveMarketRoutes(v1, d.Live, wsOriginPatterns(d.AllowedOrigins))
 	}
 
 	return r

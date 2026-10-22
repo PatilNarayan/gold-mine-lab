@@ -124,6 +124,26 @@ Live data is strictly observational — it never enters the CSV provider, the
 engine, strategies, or the database. `xauusd` is the only served asset;
 anything else gets HTTP 400.
 
+**Session convention**: 1m–1h books bucket on absolute UTC boundaries (any
+whole-hour convention coincides). The 4h and 1d books use the platform's
+market-session convention — MT5 broker civil time (Europe/Kyiv, EET/EEST) —
+matching the historical CSV dataset exactly: provider-native 4h/1d rows are
+UTC-bucketed and incompatible, so session books seed from the provider's 1h
+series and aggregate into Kyiv civil buckets, emitting the same naive
+session labels the CSV provider produces. Daily and 4h live candles are
+therefore directly comparable to their historical counterparts, including
+across DST transitions.
+
+**Browser delivery**: `GET /api/market/live/stream` upgrades to WebSocket and
+pushes normalized frames — `status` (on transitions), `quote` (per provider
+tick), and `bars` (the newest bar + EMA20/EMA50 point per timeframe, computed
+over the same closed+forming window REST returns). One upstream provider
+subscription feeds every connected browser via an internal fan-out hub;
+per-client buffers are bounded and frames are snapshots, so a dropped frame
+self-heals on the next tick. The frontend bootstraps via REST, then applies
+stream frames to the same query cache — no browser refresh or REST polling
+drives the chart.
+
 ## Run it
 
 ```bash

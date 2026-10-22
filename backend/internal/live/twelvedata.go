@@ -53,25 +53,53 @@ type TwelveDataConfig struct {
 // intervalDef maps an app timeframe to each provider's interval parameter and
 // the bar length used for forming candles.
 type intervalDef struct {
-	tdInterval string        // Twelve Data "interval" param
-	tiFreq     string        // Tiingo "resampleFreq" param
+	tdInterval string        // Twelve Data "interval" param (seed interval when session)
+	tiFreq     string        // Tiingo "resampleFreq" param (seed interval when session)
 	bar        time.Duration // bucket length for forming candles
+	session    bool          // Kyiv civil-session buckets, naive labels (4h, 1d)
+}
+
+// seedBar is the REST bar duration to fetch for this book — the session
+// interval itself for UTC books, 1h rows to re-bucket for session books.
+func (d intervalDef) seedBar() time.Duration {
+	if d.session {
+		return time.Hour
+	}
+	return d.bar
+}
+
+// seedRows is how many seed-interval rows to fetch per reconcile. Session
+// books need ~24 1h rows per daily candle, so they pull a larger window.
+func (d intervalDef) seedRows() int {
+	if d.session {
+		return sessionSeedRows
+	}
+	return candleBookSize
 }
 
 // supportedTimeframes bounds what the live feed exposes. Twelve Data
 // intervals: 1min 5min 15min 30min 45min 1h 2h 4h 8h 1day 1week 1month.
 // Tiingo resampleFreq: 1min 5min 15min 30min 1hour 4hour 1day.
+//
+// Session books (4h, 1d) bucket on the platform's market-session convention —
+// MT5 broker civil time (Europe/Kyiv, EET/EEST), matching the historical CSV
+// dataset whose timestamps are broker wall time. Provider-native 4h/1d rows
+// are UTC-bucketed and therefore incompatible; session books seed from the
+// provider's 1h series and aggregate into Kyiv civil buckets instead. Candle
+// Time values are naive session labels (Kyiv civil boundary rendered as UTC),
+// identical to what the CSV provider produces.
 var supportedTimeframes = map[string]intervalDef{
-	"1m":  {"1min", "1min", time.Minute},
-	"5m":  {"5min", "5min", 5 * time.Minute},
-	"15m": {"15min", "15min", 15 * time.Minute},
-	"1h":  {"1h", "1hour", time.Hour},
-	"4h":  {"4h", "4hour", 4 * time.Hour},
-	"1d":  {"1day", "1day", 24 * time.Hour},
+	"1m":  {"1min", "1min", time.Minute, false},
+	"5m":  {"5min", "5min", 5 * time.Minute, false},
+	"15m": {"15min", "15min", 15 * time.Minute, false},
+	"1h":  {"1h", "1hour", time.Hour, false},
+	"4h":  {"1h", "1hour", 4 * time.Hour, true},
+	"1d":  {"1h", "1hour", 24 * time.Hour, true},
 }
 
 const (
 	candleBookSize     = 500              // max candles retained per timeframe
+	sessionSeedRows    = 2500             // 1h seed rows per session-book fetch (~100d)
 	minFetchGap        = 30 * time.Second // min spacing between REST reconciles
 	cacheRefreshAfter  = 5 * time.Minute  // default per-timeframe REST refresh TTL
 	maxReconnectDelay  = 60 * time.Second
@@ -117,12 +145,21 @@ func (b *candleBook) snapshot(limit int) []Candle {
 	return out
 }
 
+// bucket maps a quote timestamp to this book's bucket label — absolute
+// truncate for UTC books, the Kyiv civil boundary for session books.
+func (b *candleBook) bucket(ts time.Time) time.Time {
+	if b.def.session {
+		return sessionBucket(ts, b.def)
+	}
+	return ts.Truncate(b.def.bar)
+}
+
 // onTick folds a validated quote into the forming candle. Ticks that map to
 // an older bucket are ignored (out-of-order protection happens upstream too).
 func (b *candleBook) onTick(ts time.Time, price float64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	bucket := ts.Truncate(b.barDur())
+	bucket := b.bucket(ts)
 	if b.forming != nil {
 		switch {
 		case bucket.Equal(b.forming.Time):
@@ -146,13 +183,6 @@ func (b *candleBook) onTick(ts time.Time, price float64) {
 	b.forming = &Candle{Time: bucket, Open: price, High: price, Low: price, Close: price}
 }
 
-func (b *candleBook) barDur() time.Duration {
-	if b.def.tdInterval == "" {
-		return time.Minute
-	}
-	return b.def.bar
-}
-
 // replace swaps the book's history with provider candles (reconcile path).
 // The forming bar is kept unless the fetch already covers its bucket.
 func (b *candleBook) replace(cs []Candle, at time.Time) {
@@ -161,10 +191,19 @@ func (b *candleBook) replace(cs []Candle, at time.Time) {
 	if b.forming != nil {
 		for i := len(cs) - 1; i >= 0; i-- {
 			if cs[i].Time.Equal(b.forming.Time) {
-				// Provider row for the forming bucket: adopt it into the
-				// forming bar (ticks keep refining it) and drop the history
-				// copy — otherwise snapshot emits the bucket twice.
-				b.forming = &cs[i]
+				// Provider row for the forming bucket: merge rather than adopt —
+				// the fetch was issued before the newest ticks arrived, so
+				// tick-accumulated high/low/close are fresher than the row.
+				// The provider's open stays authoritative for the bucket.
+				merged := cs[i]
+				if b.forming.High > merged.High {
+					merged.High = b.forming.High
+				}
+				if b.forming.Low < merged.Low {
+					merged.Low = b.forming.Low
+				}
+				merged.Close = b.forming.Close
+				b.forming = &merged
 				cs = append(cs[:i:i], cs[i+1:]...)
 				break
 			}
@@ -250,6 +289,7 @@ type TwelveData struct {
 	books     map[string]*candleBook
 	connMu    sync.Mutex
 	conn      *websocket.Conn
+	subs      *quoteSubs
 }
 
 // NewTwelveData builds the provider. It does not connect until Start.
@@ -292,6 +332,7 @@ func NewTwelveData(cfg TwelveDataConfig) *TwelveData {
 		state: StateDisabled,
 		books: make(map[string]*candleBook),
 		done:  make(chan struct{}),
+		subs:  &quoteSubs{},
 	}
 	if t.http == nil {
 		t.http = &http.Client{Timeout: 15 * time.Second}
@@ -396,6 +437,11 @@ func (t *TwelveData) estimatedDailyCredits() int {
 	return quotes + candles
 }
 
+// SubscribeQuotes registers fn for every accepted quote; see Provider.
+func (t *TwelveData) SubscribeQuotes(fn func(Quote)) func() {
+	return t.subs.add(fn)
+}
+
 // LatestQuote returns the newest validated quote.
 func (t *TwelveData) LatestQuote() (Quote, bool) {
 	t.mu.Lock()
@@ -456,7 +502,7 @@ func (t *TwelveData) maybeReconcile(book *candleBook, tf string) {
 		// a cache refill that later requests rely on.
 		fctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		cs, err := t.fetchTimeSeries(fctx, tf, candleBookSize)
+		cs, err := t.fetchTimeSeries(fctx, tf, supportedTimeframes[tf].seedRows())
 		if err != nil {
 			t.log.Warn("live candle reconcile failed", "timeframe", tf, "err", err)
 			t.setErr(fmt.Sprintf("candle fetch %s: %v", tf, err))
@@ -672,6 +718,7 @@ func (t *TwelveData) applyQuote(q Quote) {
 	for _, book := range t.books {
 		book.onTick(bucket, q.Price)
 	}
+	t.subs.notify(q)
 }
 
 // fetchTimeSeries pulls recent candles from REST /time_series.
@@ -735,6 +782,11 @@ func (t *TwelveData) fetchTimeSeries(ctx context.Context, tf string, limit int) 
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	// Session books (4h/1d) fetched 1h seed rows — re-bucket into the
+	// platform's Kyiv civil-session labels.
+	if def.session {
+		out = aggregateSession(out, def)
 	}
 	return out, nil
 }

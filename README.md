@@ -66,11 +66,22 @@ The Tiingo token travels in the WS subscribe-frame body and the REST
 logged URLs.
 
 Endpoints: `GET /api/market/live/status` · `GET /api/market/live/quote?asset=xauusd`
-· `GET /api/market/live/candles?asset=xauusd&timeframe=15m&limit=200`.
-Timeframes: 1m 5m 15m 1h 4h 1d. The API key stays server-side; the frontend
-only polls the backend's cached state. The status response reports the actual
-`transport` in use, last provider update, last successful fetch, and an
-`estimatedDailyCredits` figure — there is no silent fallback between transports.
+· `GET /api/market/live/candles?asset=xauusd&timeframe=15m&limit=200`
+· `WS /api/market/live/stream`.
+Timeframes: 1m 5m 15m 1h 4h 1d. The API key stays server-side; the browser
+bootstraps quote/candles over REST, then receives every provider tick over
+the `/stream` WebSocket — the forming candle and its EMA20/EMA50 overlays are
+recomputed per tick by the backend and pushed as incremental frames, so the
+chart updates without polling or page refresh. The status response reports
+the actual `transport` in use, last provider update, last successful fetch,
+and an `estimatedDailyCredits` figure — there is no silent fallback between
+transports.
+
+Daily and 4h candles follow the dataset's broker-session convention (Kyiv
+civil time, EET/EEST): provider 1h rows are aggregated into Kyiv civil
+buckets so live 1d/4h candles match the historical files' session
+boundaries, DST transitions included. 1m–1h use absolute UTC boundaries,
+which coincide with every whole-hour convention.
 
 **Sample configurations**
 
