@@ -46,16 +46,19 @@ type DBConfig struct {
 // is observational only — it never feeds backtests or persisted research.
 type LiveConfig struct {
 	Enabled       bool          // LIVE_MARKET_ENABLED
-	Provider      string        // LIVE_MARKET_PROVIDER: only "twelvedata" supported
+	Provider      string        // LIVE_MARKET_PROVIDER: "twelvedata" (default) | "tiingo"
 	APIKey        string        // TWELVE_DATA_API_KEY — secret, never logged or served
-	Symbol        string        // LIVE_MARKET_SYMBOL — provider symbol, default XAU/USD
+	TiingoToken   string        // TIINGO_API_TOKEN — secret, never logged or served
+	Symbol        string        // LIVE_MARKET_SYMBOL — Twelve Data symbol, default XAU/USD
 	StaleAfter    time.Duration // LIVE_MARKET_STALE_AFTER — quote age → "stale"
-	Transport     string        // LIVE_MARKET_TRANSPORT: "rest" (default) | "websocket"
+	Transport     string        // LIVE_MARKET_TRANSPORT: "rest" (default for twelvedata) | "websocket"
 	PollInterval  time.Duration // LIVE_MARKET_POLL_INTERVAL — REST quote cadence
 	CandleRefresh time.Duration // LIVE_MARKET_CANDLE_RECONCILE_INTERVAL — per-timeframe REST refresh
 	CreditLimit   int           // LIVE_MARKET_DAILY_CREDIT_LIMIT — plan allowance for usage warnings
 	RESTBaseURL   string        // TWELVE_DATA_REST_URL — override for tests/mocks
 	WSURL         string        // TWELVE_DATA_WS_URL — override for tests/mocks
+	TiingoWSURL   string        // TIINGO_WS_URL — override for tests/mocks
+	TiingoRESTURL string        // TIINGO_REST_URL — override for tests/mocks
 }
 
 // Load reads configuration from the environment, applies safe defaults for
@@ -124,21 +127,36 @@ func Load() (Config, error) {
 	cfg.Live.Enabled = envBool("LIVE_MARKET_ENABLED", false, &errs)
 	cfg.Live.Provider = envOr("LIVE_MARKET_PROVIDER", "twelvedata")
 	cfg.Live.APIKey = os.Getenv("TWELVE_DATA_API_KEY")
+	cfg.Live.TiingoToken = os.Getenv("TIINGO_API_TOKEN")
 	cfg.Live.Symbol = envOr("LIVE_MARKET_SYMBOL", "XAU/USD")
 	cfg.Live.StaleAfter = envDuration("LIVE_MARKET_STALE_AFTER", 30*time.Second, &errs)
-	cfg.Live.Transport = envOr("LIVE_MARKET_TRANSPORT", "rest")
+	switch cfg.Live.Provider {
+	case "twelvedata", "tiingo":
+	default:
+		errs = append(errs, fmt.Sprintf("LIVE_MARKET_PROVIDER must be twelvedata|tiingo, got %q", cfg.Live.Provider))
+	}
+	// Twelve Data supports rest+websocket; Tiingo's firehose is websocket-only —
+	// its default is websocket, and an explicit "rest" is a config error rather
+	// than a silent transport swap.
+	defaultTransport := "rest"
+	if cfg.Live.Provider == "tiingo" {
+		defaultTransport = "websocket"
+	}
+	cfg.Live.Transport = envOr("LIVE_MARKET_TRANSPORT", defaultTransport)
 	cfg.Live.PollInterval = envDuration("LIVE_MARKET_POLL_INTERVAL", 10*time.Second, &errs)
 	cfg.Live.CandleRefresh = envDuration("LIVE_MARKET_CANDLE_RECONCILE_INTERVAL", 5*time.Minute, &errs)
 	cfg.Live.CreditLimit = envInt("LIVE_MARKET_DAILY_CREDIT_LIMIT", 800, &errs)
 	cfg.Live.RESTBaseURL = envOr("TWELVE_DATA_REST_URL", "https://api.twelvedata.com")
 	cfg.Live.WSURL = envOr("TWELVE_DATA_WS_URL", "wss://ws.twelvedata.com/v1/quotes/price")
-	if cfg.Live.Provider != "twelvedata" {
-		errs = append(errs, fmt.Sprintf("LIVE_MARKET_PROVIDER must be twelvedata, got %q", cfg.Live.Provider))
-	}
+	cfg.Live.TiingoWSURL = envOr("TIINGO_WS_URL", "wss://api.tiingo.com/fx")
+	cfg.Live.TiingoRESTURL = envOr("TIINGO_REST_URL", "https://api.tiingo.com")
 	switch cfg.Live.Transport {
 	case "rest", "websocket":
 	default:
 		errs = append(errs, fmt.Sprintf("LIVE_MARKET_TRANSPORT must be rest|websocket, got %q", cfg.Live.Transport))
+	}
+	if cfg.Live.Provider == "tiingo" && cfg.Live.Transport == "rest" {
+		errs = append(errs, "LIVE_MARKET_TRANSPORT=rest is not supported by provider tiingo (firehose is websocket-only)")
 	}
 	if cfg.Live.PollInterval < 5*time.Second || cfg.Live.PollInterval > 10*time.Minute {
 		errs = append(errs, "LIVE_MARKET_POLL_INTERVAL must be between 5s and 10m")
@@ -161,7 +179,7 @@ func Load() (Config, error) {
 			cfg.Live.StaleAfter = min
 		}
 	}
-	// A missing TWELVE_DATA_API_KEY is NOT a config error: the provider parks
+	// A missing provider credential is NOT a config error: the provider parks
 	// in the config_error state at runtime and history keeps working.
 
 	if len(errs) > 0 {

@@ -50,21 +50,24 @@ type TwelveDataConfig struct {
 	Logger        *slog.Logger
 }
 
-// intervalDef maps an app timeframe to the provider interval and bar length.
+// intervalDef maps an app timeframe to each provider's interval parameter and
+// the bar length used for forming candles.
 type intervalDef struct {
 	tdInterval string        // Twelve Data "interval" param
+	tiFreq     string        // Tiingo "resampleFreq" param
 	bar        time.Duration // bucket length for forming candles
 }
 
 // supportedTimeframes bounds what the live feed exposes. Twelve Data
 // intervals: 1min 5min 15min 30min 45min 1h 2h 4h 8h 1day 1week 1month.
+// Tiingo resampleFreq: 1min 5min 15min 30min 1hour 4hour 1day.
 var supportedTimeframes = map[string]intervalDef{
-	"1m":  {"1min", time.Minute},
-	"5m":  {"5min", 5 * time.Minute},
-	"15m": {"15min", 15 * time.Minute},
-	"1h":  {"1h", time.Hour},
-	"4h":  {"4h", 4 * time.Hour},
-	"1d":  {"1day", 24 * time.Hour},
+	"1m":  {"1min", "1min", time.Minute},
+	"5m":  {"5min", "5min", 5 * time.Minute},
+	"15m": {"15min", "15min", 15 * time.Minute},
+	"1h":  {"1h", "1hour", time.Hour},
+	"4h":  {"4h", "4hour", 4 * time.Hour},
+	"1d":  {"1day", "1day", 24 * time.Hour},
 }
 
 const (
@@ -632,6 +635,7 @@ func (t *TwelveData) onPrice(p wsPrice) {
 		AssetID:      t.cfg.AssetID,
 		Symbol:       p.Symbol,
 		Price:        p.Price,
+		PriceKind:    "last",
 		Bid:          p.Bid,
 		Ask:          p.Ask,
 		DayVolume:    p.DayVolume,
@@ -910,6 +914,7 @@ func (t *TwelveData) fetchQuote(ctx context.Context) (Quote, error) {
 		AssetID:    t.cfg.AssetID,
 		Symbol:     tq.Symbol,
 		Price:      price,
+		PriceKind:  "last",
 		ReceivedAt: t.now().UTC(),
 	}
 	// Provider timestamp: prefer last_quote_at (actual quote time), then the

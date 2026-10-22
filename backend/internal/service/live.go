@@ -90,6 +90,7 @@ func (s *LiveService) LiveQuote(ctx context.Context, assetID string) (api.LiveQu
 		Provider:          st.Provider,
 		Symbol:            q.Symbol,
 		Price:             q.Price,
+		PriceKind:         q.PriceKind,
 		Bid:               q.Bid,
 		Ask:               q.Ask,
 		DayVolume:         q.DayVolume,
@@ -139,7 +140,7 @@ func (s *LiveService) requireLive(assetID string) error {
 		return &api.ValidationError{Msg: fmt.Sprintf("unsupported asset %q — only %s (XAUUSD) is supported", assetID, market.CanonicalAssetID)}
 	}
 	if s.provider == nil {
-		return fmt.Errorf("%w: live market data is disabled (set LIVE_MARKET_ENABLED=true and TWELVE_DATA_API_KEY)", api.ErrUnavailable)
+		return fmt.Errorf("%w: live market data is disabled (set LIVE_MARKET_ENABLED=true and a provider credential)", api.ErrUnavailable)
 	}
 	return nil
 }

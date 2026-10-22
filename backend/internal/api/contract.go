@@ -757,11 +757,14 @@ type LiveStatusResponse struct {
 
 // LiveQuoteResponse is the latest provider quote. Bid/Ask/DayVolume are null
 // when the provider does not supply them — never a midpoint or a guess.
+// PriceKind distinguishes a last-trade/close price ("last") from a top-of-book
+// midpoint ("mid") so the UI never labels a midpoint as an executed price.
 type LiveQuoteResponse struct {
 	AssetID           string   `json:"assetId"`
 	Provider          string   `json:"provider"`
 	Symbol            string   `json:"symbol"`
 	Price             float64  `json:"price"`
+	PriceKind         string   `json:"priceKind"` // "last" | "mid"
 	Bid               *float64 `json:"bid"`
 	Ask               *float64 `json:"ask"`
 	DayVolume         *float64 `json:"dayVolume"`

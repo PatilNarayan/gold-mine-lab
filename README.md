@@ -33,17 +33,37 @@ Postgres + backend + frontend together (API mode is selected automatically).
 
 ## Live market data (optional)
 
-The app can stream real XAU/USD quotes from [Twelve Data](https://twelvedata.com)
-into the Market page's **Live** mode. This is strictly observational — it never
-feeds backtests, strategies, or persisted research.
+The app can stream real XAU/USD quotes into the Market page's **Live** mode.
+Two providers are supported — select with `LIVE_MARKET_PROVIDER`:
+
+- `twelvedata` (default) — [Twelve Data](https://twelvedata.com) via REST
+  polling or WebSocket
+- `tiingo` — [Tiingo](https://www.tiingo.com) Forex firehose WebSocket
+  (`wss://api.tiingo.com/fx`, ticker `xauusd`). Tiingo's free plan documents
+  Forex WS access; quotes are top-of-book **midpoints** (the UI tags the price
+  `mid`), not last trades. Candle history seeds from
+  `GET /tiingo/fx/xauusd/prices` when the account permits it.
+
+This is strictly observational — it never feeds backtests, strategies, or
+persisted research.
 
 ```bash
-# backend/.env
+# backend/.env — Twelve Data
 LIVE_MARKET_ENABLED=true
+LIVE_MARKET_PROVIDER=twelvedata
 LIVE_MARKET_TRANSPORT=rest            # rest | websocket — rest is the default
 LIVE_MARKET_POLL_INTERVAL=10s         # 5s–10m; ≈6 API credits/min at 10s
 TWELVE_DATA_API_KEY=<your key from https://twelvedata.com>
+
+# backend/.env — Tiingo (websocket transport implied; no REST polling)
+LIVE_MARKET_ENABLED=true
+LIVE_MARKET_PROVIDER=tiingo
+TIINGO_API_TOKEN=<your token from https://www.tiingo.com>
 ```
+
+The Tiingo token travels in the WS subscribe-frame body and the REST
+`Authorization: Token` header — never in a request URL — so it cannot leak via
+logged URLs.
 
 Endpoints: `GET /api/market/live/status` · `GET /api/market/live/quote?asset=xauusd`
 · `GET /api/market/live/candles?asset=xauusd&timeframe=15m&limit=200`.

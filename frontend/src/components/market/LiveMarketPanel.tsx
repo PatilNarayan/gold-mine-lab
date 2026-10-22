@@ -47,7 +47,7 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
     return (
       <EmptyState
         title="Live data is not configured"
-        message="Set LIVE_MARKET_ENABLED=true and TWELVE_DATA_API_KEY on the backend to stream real XAU/USD prices. Historical mode above keeps working without it."
+        message="Set LIVE_MARKET_ENABLED=true plus a provider credential (TWELVE_DATA_API_KEY or TIINGO_API_TOKEN with LIVE_MARKET_PROVIDER) on the backend to stream real XAU/USD prices. Historical mode above keeps working without it."
       />
     );
   }
@@ -64,6 +64,14 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
         {quote.data ? (
           <span className="tnum text-sm font-semibold text-content-1">
             {formatPrice(quote.data.price, 2)} USD
+            {quote.data.priceKind === 'mid' ? (
+              <span
+                className="ml-1 text-2xs font-normal text-content-3"
+                title="Top-of-book midpoint (bid+ask)/2 — not an executed trade price"
+              >
+                mid
+              </span>
+            ) : null}
             {quote.data.status === 'stale' ? (
               <span className="ml-2 text-2xs font-normal text-warning">stale</span>
             ) : null}
@@ -124,6 +132,9 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
       <p className="text-2xs text-content-3">
         {st.transport === 'rest'
           ? `REST polling every ${st.pollIntervalSeconds}s (est. ${st.estimatedDailyCredits.toLocaleString()} API credits/day) — periodic snapshots, not a tick-by-tick stream; the displayed time is the provider's quote time and may lag if the feed is delayed or the market is closed. `
+          : ''}
+        {quote.data?.priceKind === 'mid'
+          ? 'Price shown is the top-of-book midpoint, not a last-traded price. '
           : ''}
         Live prices are market observation only — not a backtest, recommendation, or trading
         capability. Volume is hidden when the provider does not supply it.

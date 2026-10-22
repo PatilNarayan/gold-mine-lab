@@ -97,6 +97,7 @@ export const liveQuoteSchema = z.object({
   provider: z.string(),
   symbol: z.string(),
   price: z.number(),
+  priceKind: z.enum(['last', 'mid']).nullable(),
   bid: z.number().nullable(),
   ask: z.number().nullable(),
   dayVolume: z.number().nullable(),

@@ -70,20 +70,27 @@ backend/
 | `CORS_ALLOWED_ORIGINS`  | `http://localhost:5173`          | comma-separated              |
 | `MARKET_DATA_DIR`       | — **required**                   | dir of historical CSVs       |
 | `LIVE_MARKET_ENABLED`   | `false`                          | enable live XAU/USD feed     |
-| `LIVE_MARKET_PROVIDER`  | `twelvedata`                     | only supported provider      |
-| `TWELVE_DATA_API_KEY`   | —                                | secret; required when enabled, never logged/served |
-| `LIVE_MARKET_SYMBOL`    | `XAU/USD`                        | provider symbol for xauusd   |
+| `LIVE_MARKET_PROVIDER`  | `twelvedata`                     | `twelvedata` \| `tiingo`     |
+| `TWELVE_DATA_API_KEY`   | —                                | secret; required for provider `twelvedata`, never logged/served |
+| `TIINGO_API_TOKEN`      | —                                | secret; required for provider `tiingo`, never logged/served |
+| `LIVE_MARKET_SYMBOL`    | `XAU/USD`                        | Twelve Data symbol for xauusd |
 | `LIVE_MARKET_STALE_AFTER` | `30s`                          | quote age → `stale` state    |
-| `LIVE_MARKET_TRANSPORT` | `rest`                           | `rest` polls /quote; `websocket` streams ticks |
+| `LIVE_MARKET_TRANSPORT` | `rest` (`websocket` for tiingo)  | `rest` polls /quote; `websocket` streams ticks; `rest`+`tiingo` is rejected |
 | `LIVE_MARKET_POLL_INTERVAL` | `10s`                      | REST quote cadence (5s–10m); ≈8,640 credits/day at 10s |
 | `LIVE_MARKET_CANDLE_RECONCILE_INTERVAL` | `5m`       | per-timeframe REST refresh (30s–1h); ≈1,728 credits/day at 5m |
 | `LIVE_MARKET_DAILY_CREDIT_LIMIT` | `800`                  | plan allowance for the startup usage warning |
 | `TWELVE_DATA_REST_URL`  | `https://api.twelvedata.com`     | override for tests/mocks     |
 | `TWELVE_DATA_WS_URL`    | `wss://ws.twelvedata.com/v1/quotes/price` | override for tests/mocks |
+| `TIINGO_WS_URL`         | `wss://api.tiingo.com/fx`          | override for tests/mocks     |
+| `TIINGO_REST_URL`       | `https://api.tiingo.com`           | override for tests/mocks     |
 
 ## Live market data (`internal/live`)
 
-Two transports feed the same quote cache and per-timeframe candle books:
+`LIVE_MARKET_PROVIDER` selects the upstream source — `twelvedata` (default) or
+`tiingo`. Both feed the same quote cache, candle books, and status contract;
+there is no silent fallback between them.
+
+**Twelve Data** supports two transports:
 
 - `rest` (default, `LIVE_MARKET_TRANSPORT=rest`): one managed worker polls
   `GET /quote` every `LIVE_MARKET_POLL_INTERVAL` (1 credit/call — 10s ≈
@@ -100,6 +107,18 @@ missing provider timestamps stay null rather than being invented; bid/ask/
 volume pass through only when supplied. States:
 `disabled|config_error|connecting|connected|stale|disconnected`, plus the
 actual `transport` in the status response.
+
+**Tiingo** (`LIVE_MARKET_PROVIDER=tiingo`, websocket-only): one subscription
+to `wss://api.tiingo.com/fx` streams FX top-of-book frames for `xauusd`. The
+token is sent in the subscribe-frame `authorization` field and the REST
+`Authorization: Token` header — never in a URL. Quote updates carry bid/ask
+and a midpoint; the surfaced `price` is that midpoint and is tagged
+`priceKind="mid"` end-to-end so the UI never labels it a last trade. Candle
+books seed from `GET /tiingo/fx/{ticker}/prices?resampleFreq=…` when the
+account permits it; otherwise forming candles build from genuine stream
+updates only. The server heartbeat (~30s) is used as a liveness signal —
+90s of silence forces a reconnect. Same reconnect/config_error lifecycle as
+Twelve Data.
 
 Live data is strictly observational — it never enters the CSV provider, the
 engine, strategies, or the database. `xauusd` is the only served asset;

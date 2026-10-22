@@ -39,7 +39,8 @@ const (
 type Quote struct {
 	AssetID      string     // canonical asset id, e.g. "xauusd"
 	Symbol       string     // provider symbol, e.g. "XAU/USD"
-	Price        float64    // last traded/streamed price
+	Price        float64    // streamed price — semantics per PriceKind
+	PriceKind    string     // "last" = last trade/close; "mid" = top-of-book midpoint (never labeled a trade)
 	Bid          *float64   // provider bid when supplied
 	Ask          *float64   // provider ask when supplied
 	DayVolume    *float64   // provider day_volume when supplied

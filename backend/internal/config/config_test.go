@@ -85,6 +85,44 @@ func TestLoadInvalidValues(t *testing.T) {
 	}
 }
 
+func TestLoadTiingoProviderSelection(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("LIVE_MARKET_ENABLED", "true")
+	t.Setenv("LIVE_MARKET_PROVIDER", "tiingo")
+	t.Setenv("TIINGO_API_TOKEN", "x")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Live.Provider != "tiingo" || cfg.Live.TiingoToken != "x" {
+		t.Fatalf("tiingo config not loaded: %+v", cfg.Live)
+	}
+	// websocket transport is implied — no explicit setting needed
+	if cfg.Live.Transport != "websocket" {
+		t.Fatalf("transport = %q, want websocket default for tiingo", cfg.Live.Transport)
+	}
+}
+
+func TestLoadTiingoRejectsRestTransport(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("LIVE_MARKET_PROVIDER", "tiingo")
+	t.Setenv("LIVE_MARKET_TRANSPORT", "rest")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "tiingo") {
+		t.Fatalf("expected tiingo transport rejection, got %v", err)
+	}
+}
+
+func TestLoadRejectsUnknownProvider(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("LIVE_MARKET_PROVIDER", "polygon")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "LIVE_MARKET_PROVIDER") {
+		t.Fatalf("expected provider rejection, got %v", err)
+	}
+}
+
 func TestLoadDefaults(t *testing.T) {
 	// Only the required var set; everything else falls back to defaults.
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")

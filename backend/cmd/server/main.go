@@ -92,22 +92,39 @@ func run(shutdown <-chan os.Signal) error {
 	// disabled or unconfigured the provider reports its state truthfully.
 	var liveProvider live.Provider
 	if cfg.Live.Enabled {
-		p := live.NewTwelveData(live.TwelveDataConfig{
-			APIKey:        cfg.Live.APIKey,
-			Transport:     cfg.Live.Transport,
-			PollInterval:  cfg.Live.PollInterval,
-			RESTBaseURL:   cfg.Live.RESTBaseURL,
-			WSURL:         cfg.Live.WSURL,
-			Symbol:        cfg.Live.Symbol,
-			AssetID:       market.CanonicalAssetID,
-			StaleAfter:    cfg.Live.StaleAfter,
-			CandleRefresh: cfg.Live.CandleRefresh,
-			Logger:        log,
-		})
-		p.Start(ctx)
-		defer func() { _ = p.Close() }()
-		liveProvider = p
-		est := p.Status().EstimatedDailyCredits
+		switch cfg.Live.Provider {
+		case "tiingo":
+			p := live.NewTiingo(live.TiingoConfig{
+				APIToken:      cfg.Live.TiingoToken,
+				WSURL:         cfg.Live.TiingoWSURL,
+				RESTBaseURL:   cfg.Live.TiingoRESTURL,
+				Ticker:        "xauusd",
+				AssetID:       market.CanonicalAssetID,
+				StaleAfter:    cfg.Live.StaleAfter,
+				CandleRefresh: cfg.Live.CandleRefresh,
+				Logger:        log,
+			})
+			p.Start(ctx)
+			defer func() { _ = p.Close() }()
+			liveProvider = p
+		default:
+			p := live.NewTwelveData(live.TwelveDataConfig{
+				APIKey:        cfg.Live.APIKey,
+				Transport:     cfg.Live.Transport,
+				PollInterval:  cfg.Live.PollInterval,
+				RESTBaseURL:   cfg.Live.RESTBaseURL,
+				WSURL:         cfg.Live.WSURL,
+				Symbol:        cfg.Live.Symbol,
+				AssetID:       market.CanonicalAssetID,
+				StaleAfter:    cfg.Live.StaleAfter,
+				CandleRefresh: cfg.Live.CandleRefresh,
+				Logger:        log,
+			})
+			p.Start(ctx)
+			defer func() { _ = p.Close() }()
+			liveProvider = p
+		}
+		est := liveProvider.Status().EstimatedDailyCredits
 		log.Info("live market data enabled", "provider", cfg.Live.Provider,
 			"transport", cfg.Live.Transport, "pollInterval", cfg.Live.PollInterval,
 			"candleRefresh", cfg.Live.CandleRefresh, "estDailyCredits", est,

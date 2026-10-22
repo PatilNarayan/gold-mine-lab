@@ -94,7 +94,7 @@ graph TD
 | `metrics` | — | net P&L, win rate, PF, maxDD, expectancy, streaks, exposure formulas |
 | `regime` | market | streaming classifiers: trend (EMA50/200), volatility (Wilder ATR-14 vs EMA-100 baseline) |
 | `eventbench` | — | forward-return baseline + moving-block bootstrap stats (Phase 11) |
-| `live` | market | managed live provider (Twelve Data): WS quote stream + REST candle reconcile, backoff, staleness, redacted errors — observational only, never touches research |
+| `live` | market | managed live provider (`LIVE_MARKET_PROVIDER`: `twelvedata` REST poll/WS or `tiingo` FX firehose WS): shared quote cache + candle books, backoff, staleness, redacted errors, `priceKind` last/mid — observational only, never touches research |
 | `repository` + `/postgres` | — | repo interfaces + pgx impls; parameterized SQL only, no logic |
 | `service` | all above | implements `api.*Service`; `Bootstrap` seeding; comparisons, walk-forward, signal research, studies; `LiveService` adapts the live provider |
 | `demo` | — | legacy deterministic service — tests only |
@@ -227,8 +227,9 @@ Analytical endpoints REJECT windows overlapping an active holdout.
    No Handler→SQL, no Strategy→I/O, no mock data in the api path.
 6. **Immutability** — graph revisions append-only; frozen studies immutable;
    pre-P11/v1 benchmark records keep their original metadata.
-7. **Honest status** — market status is `Historical`; no simulated "now";
-   no live feed exists. Frontend `mock` mode is demo-only and labeled.
+7. **Honest status** — the optional live feed (Twelve Data/Tiingo, XAUUSD
+   only) is observational and reports real state; historical mode stays the
+   default. Frontend `mock` mode is demo-only and labeled.
 
 ## 8. Compact JSON graph (for programmatic ingestion)
 
@@ -255,6 +256,6 @@ Analytical endpoints REJECT windows overlapping an active holdout.
     ["app.ps1", "manages", "postgres container + backend + frontend"]
   ],
   "ports": {"postgres": 5433, "api": 8080, "frontend": 5173},
-  "absent_by_design": ["auth", "live data/websockets", "async queue", "Sharpe"]
+  "absent_by_design": ["auth", "broker/trading connectivity", "async queue", "Sharpe"]
 }
 ```
