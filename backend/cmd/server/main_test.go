@@ -1,8 +1,9 @@
 //go:build integration
 
 // Graceful-shutdown test now runs under the `integration` tag because run()
-// applies migrations and bootstraps — it needs a real DATABASE_URL and
-// MARKET_DATA_DIR (see .env.example / Makefile).
+// applies migrations and bootstraps — it needs a real DATABASE_URL (see
+// .env.example / Makefile). With no live provider the candle store simply
+// stays empty and seed steps degrade gracefully.
 package main
 
 import (
@@ -24,10 +25,8 @@ func TestGracefulShutdown(t *testing.T) {
 	if dbURL == "" {
 		t.Skip("DATABASE_URL unset — skipping integration test")
 	}
-	if os.Getenv("MARKET_DATA_DIR") == "" {
-		t.Skip("MARKET_DATA_DIR unset — skipping integration test")
-	}
 	t.Setenv("DATABASE_URL", dbURL)
+	t.Setenv("LIVE_MARKET_ENABLED", "false")
 	t.Setenv("SHUTDOWN_TIMEOUT", "5s")
 
 	shutdown := make(chan os.Signal, 1)

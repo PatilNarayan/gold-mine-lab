@@ -6,7 +6,12 @@ package live
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	_ "time/tzdata" // embedded tz DB so Europe/Kyiv loads on every OS
 )
@@ -78,6 +83,55 @@ type Candle struct {
 	Volume *float64  `json:"volume"`
 }
 
+// RateLimitError signals the provider refused the request for quota reasons
+// (HTTP 429). RetryAfter carries the provider's Retry-After header when
+// supplied; callers must not hammer the endpoint before that elapses.
+type RateLimitError struct {
+	Err        error
+	RetryAfter time.Duration // 0 when the provider gave no guidance
+}
+
+func (e *RateLimitError) Error() string { return e.Err.Error() }
+func (e *RateLimitError) Unwrap() error { return e.Err }
+
+// RateLimitRetryAfter satisfies market.RetryableRateLimit — the persisted
+// retry gate honors the provider's guidance.
+func (e *RateLimitError) RateLimitRetryAfter() time.Duration { return e.RetryAfter }
+
+// restGate suppresses all REST calls while the provider's quota is
+// exhausted — candle-book fetches and history pages share one upstream
+// budget, so one exhausted endpoint must silence all of them.
+type restGate struct{ until atomic.Int64 } // unix-nanos; zero = open
+
+func (g *restGate) suppressed(now time.Time) bool { return now.UnixNano() < g.until.Load() }
+
+// check returns a synthetic RateLimitError while gated — callers treat it
+// like a real 429 (persisted backoff) without touching the network.
+func (g *restGate) check(now time.Time) error {
+	if u := g.until.Load(); now.UnixNano() < u {
+		return &RateLimitError{
+			Err:        errors.New("provider rate limit — gated locally"),
+			RetryAfter: time.Until(time.Unix(0, u)),
+		}
+	}
+	return nil
+}
+
+// trip closes the gate for at least `hint` (floor 5m — a hard 429 means the
+// budget is exhausted; retrying in seconds burns whatever remains).
+func (g *restGate) trip(now time.Time, hint time.Duration) {
+	if hint < 5*time.Minute {
+		hint = 5 * time.Minute
+	}
+	if u := now.Add(hint); u.UnixNano() > g.until.Load() {
+		g.until.Store(u.UnixNano())
+	}
+}
+
+// PageFunc receives each session-labeled candle page plus the raw source
+// span it covered — the store commits coverage only for fully-fetched spans.
+type PageFunc func(page []Candle, coveredFrom, coveredTo time.Time) error
+
 // Provider is the managed upstream live-data connection. Implementations own
 // their reconnect lifecycle; Start must return after spawning its workers.
 type Provider interface {
@@ -95,6 +149,17 @@ type Provider interface {
 	// are delivered synchronously in arrival order; the returned func
 	// unsubscribes. Used by the API's browser stream — never per-request.
 	SubscribeQuotes(fn func(Quote)) func()
+	// FetchHistory pages the provider's historical candles over [from, to),
+	// ascending, in the canonical session-label convention. Used to backfill
+	// the persistent historical store — not for live chart responses.
+	FetchHistory(ctx context.Context, tf string, from, to time.Time) ([]Candle, error)
+	// FetchHistoryPages is FetchHistory with per-page delivery: each page is
+	// sessionized (complete session buckets only) and reported with the raw
+	// span it covered so the caller can persist resumable progress.
+	FetchHistoryPages(ctx context.Context, tf string, from, to time.Time, onPage PageFunc) error
+	// HistoryFloor is the earliest instant the provider can supply candles
+	// for; zero when unknown.
+	HistoryFloor() time.Time
 	// Close stops workers and releases the upstream connection.
 	Close() error
 }
@@ -148,13 +213,25 @@ var brokerLoc = func() *time.Location {
 	return l
 }()
 
-// sessionBucket returns the naive session label for instant ts: the Kyiv
-// civil boundary (hour floored to the def's bar width) rendered as a UTC
-// timestamp — the same label the CSV provider emits for broker wall time.
+// sessionBucket returns the candle label for instant ts under the platform's
+// canonical contract: broker civil time (Europe/Kyiv) floored to the bar
+// width, rendered as a naive UTC timestamp — identical to what the CSV
+// provider produces for the same market interval. Labels are session
+// identifiers, not absolute instants; during the autumn fall-back two real
+// hours share one label, exactly as they do in the broker export.
 func sessionBucket(ts time.Time, d intervalDef) time.Time {
 	lt := ts.In(brokerLoc)
-	h := lt.Hour() - lt.Hour()%int(d.bar.Hours())
-	return time.Date(lt.Year(), lt.Month(), lt.Day(), h, 0, 0, 0, time.UTC)
+	h := lt.Hour()
+	if d.bar >= 24*time.Hour {
+		h = 0
+	} else if d.bar >= time.Hour {
+		h -= h % int(d.bar.Hours())
+	}
+	m := 0
+	if d.bar < time.Hour {
+		m = lt.Minute() - lt.Minute()%int(d.bar/time.Minute)
+	}
+	return time.Date(lt.Year(), lt.Month(), lt.Day(), h, m, 0, 0, time.UTC)
 }
 
 // aggregateSession folds ascending seed-interval rows into session-labeled
@@ -182,4 +259,19 @@ func aggregateSession(rows []Candle, d intervalDef) []Candle {
 		out = append(out, Candle{Time: label, Open: r.Open, High: r.High, Low: r.Low, Close: r.Close, Volume: r.Volume})
 	}
 	return out
+}
+
+// parseRetryAfter reads a Retry-After header — whole seconds, or an HTTP
+// date — and returns the wait duration (0 when absent/unparseable).
+func parseRetryAfter(v string) time.Duration {
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return time.Until(t)
+	}
+	return 0
 }

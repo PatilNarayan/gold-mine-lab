@@ -63,8 +63,9 @@ describe('route smoke tests (mock data mode)', () => {
 
   it('StrategyDetail renders a known strategy', async () => {
     renderRoute('/strategies/ema-cross', '/strategies/:id', <StrategyDetail />);
+    // The name also appears in the backtest-history table — target the heading.
     expect(
-      await screen.findByText('EMA Crossover', {}, { timeout: 5000 }),
+      await screen.findByRole('heading', { name: 'EMA Crossover' }, { timeout: 5000 }),
     ).toBeInTheDocument();
     expect(screen.getByText('Parameters')).toBeInTheDocument();
   });

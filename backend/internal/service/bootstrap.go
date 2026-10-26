@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/gold-mine-lab/backend/internal/api"
 	"github.com/gold-mine-lab/backend/internal/market"
@@ -31,6 +32,19 @@ func (s *Service) Bootstrap(ctx context.Context) error {
 	}
 	s.log.Info("bootstrap: asset and strategies seeded")
 
+	// Pre-warm the provider-synced candle store for the research timeframes
+	// so the first chart/backtest doesn't pay the cold-sync cost. Failure is
+	// non-fatal: the store serves whatever synced before and retries lazily.
+	if dbp, ok := s.data.(*market.DBProvider); ok {
+		floor := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+		for _, tf := range []market.Timeframe{market.Timeframe1d, market.Timeframe4h, market.Timeframe1h, market.Timeframe15m} {
+			if err := dbp.Ensure(ctx, SeedAsset, tf, floor, time.Now().UTC()); err != nil {
+				s.log.Warn("bootstrap: candle sync incomplete — will retry on demand",
+					"timeframe", tf, "err", err)
+			}
+		}
+	}
+
 	sigs, err := s.generateSignals(ctx)
 	if err != nil {
 		return fmt.Errorf("generate signals: %w", err)
@@ -49,7 +63,9 @@ func (s *Service) Bootstrap(ctx context.Context) error {
 		s.log.Info("bootstrap: empty database — seeding backtests")
 		for _, req := range seedRequests() {
 			if _, err := s.Execute(ctx, req); err != nil {
-				return fmt.Errorf("seed run: %w", err)
+				// Seeding is convenience, not a startup gate — an unavailable
+				// provider must not prevent the app from serving.
+				s.log.Warn("bootstrap: seed backtest failed", "strategy", req.StrategyID, "err", err)
 			}
 		}
 	}
@@ -68,7 +84,7 @@ func seedRequests() []api.BacktestRequest {
 			InitialCapital: 100000, PositionSize: 5, Commission: 0.02, Slippage: 0.01,
 			Parameters: map[string]any{}},
 		{StrategyID: "ema-cross", AssetID: "xauusd", Timeframe: "1d",
-			StartDate: "2015-01-01", EndDate: "2025-09-01",
+			StartDate: "2020-01-01", EndDate: "2025-09-01",
 			InitialCapital: 100000, PositionSize: 10, Commission: 0.02, Slippage: 0.01,
 			Parameters: map[string]any{}},
 	}

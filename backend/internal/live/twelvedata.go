@@ -27,6 +27,8 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,25 +55,26 @@ type TwelveDataConfig struct {
 // intervalDef maps an app timeframe to each provider's interval parameter and
 // the bar length used for forming candles.
 type intervalDef struct {
-	tdInterval string        // Twelve Data "interval" param (seed interval when session)
-	tiFreq     string        // Tiingo "resampleFreq" param (seed interval when session)
+	tdInterval string        // Twelve Data "interval" param (seed interval when aggregate)
+	tiFreq     string        // Tiingo "resampleFreq" param (seed interval when aggregate)
 	bar        time.Duration // bucket length for forming candles
-	session    bool          // Kyiv civil-session buckets, naive labels (4h, 1d)
+	aggregate  bool          // seed 1h rows re-bucketed into session candles (4h, 1d)
 }
 
-// seedBar is the REST bar duration to fetch for this book — the session
-// interval itself for UTC books, 1h rows to re-bucket for session books.
+// seedBar is the REST bar duration to fetch for this book — the book's own
+// interval for 1m–1h (rows relabeled 1:1), 1h rows for session books that
+// must be re-bucketed from finer provider data.
 func (d intervalDef) seedBar() time.Duration {
-	if d.session {
+	if d.aggregate {
 		return time.Hour
 	}
 	return d.bar
 }
 
-// seedRows is how many seed-interval rows to fetch per reconcile. Session
+// seedRows is how many seed-interval rows to fetch per reconcile. Aggregated
 // books need ~24 1h rows per daily candle, so they pull a larger window.
 func (d intervalDef) seedRows() int {
-	if d.session {
+	if d.aggregate {
 		return sessionSeedRows
 	}
 	return candleBookSize
@@ -81,13 +84,13 @@ func (d intervalDef) seedRows() int {
 // intervals: 1min 5min 15min 30min 45min 1h 2h 4h 8h 1day 1week 1month.
 // Tiingo resampleFreq: 1min 5min 15min 30min 1hour 4hour 1day.
 //
-// Session books (4h, 1d) bucket on the platform's market-session convention —
-// MT5 broker civil time (Europe/Kyiv, EET/EEST), matching the historical CSV
-// dataset whose timestamps are broker wall time. Provider-native 4h/1d rows
-// are UTC-bucketed and therefore incompatible; session books seed from the
-// provider's 1h series and aggregate into Kyiv civil buckets instead. Candle
-// Time values are naive session labels (Kyiv civil boundary rendered as UTC),
-// identical to what the CSV provider produces.
+// All books bucket on the platform's market-session convention — MT5 broker
+// civil time (Europe/Kyiv, EET/EEST) rendered as naive labels, matching the
+// historical CSV dataset exactly. Kyiv's UTC offset is always a whole number
+// of hours, so sub-hour and hourly bucket boundaries coincide across
+// conventions: intraday provider rows are simply relabeled. Provider-native
+// 4h/1d rows are UTC-bucketed and structurally incompatible — those books
+// seed from the provider's 1h series and aggregate into Kyiv civil buckets.
 var supportedTimeframes = map[string]intervalDef{
 	"1m":  {"1min", "1min", time.Minute, false},
 	"5m":  {"5min", "5min", 5 * time.Minute, false},
@@ -145,13 +148,11 @@ func (b *candleBook) snapshot(limit int) []Candle {
 	return out
 }
 
-// bucket maps a quote timestamp to this book's bucket label — absolute
-// truncate for UTC books, the Kyiv civil boundary for session books.
+// bucket maps a quote timestamp to this book's candle label — the Kyiv
+// civil-session boundary, matching the CSV provider's naive-label convention
+// for every timeframe.
 func (b *candleBook) bucket(ts time.Time) time.Time {
-	if b.def.session {
-		return sessionBucket(ts, b.def)
-	}
-	return ts.Truncate(b.def.bar)
+	return sessionBucket(ts, b.def)
 }
 
 // onTick folds a validated quote into the forming candle. Ticks that map to
@@ -188,6 +189,13 @@ func (b *candleBook) onTick(ts time.Time, price float64) {
 func (b *candleBook) replace(cs []Candle, at time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// Labels beyond the current session bucket are impossible — the provider
+	// cannot report a bar that hasn't started. Guard in label space (not
+	// real time): naive labels run ahead of UTC instants.
+	nowLabel := sessionBucket(at, b.def)
+	if n := sort.Search(len(cs), func(i int) bool { return cs[i].Time.After(nowLabel) }); n < len(cs) {
+		cs = cs[:n]
+	}
 	if b.forming != nil {
 		for i := len(cs) - 1; i >= 0; i-- {
 			if cs[i].Time.Equal(b.forming.Time) {
@@ -209,8 +217,27 @@ func (b *candleBook) replace(cs []Candle, at time.Time) {
 			}
 		}
 	}
+	if b.forming != nil && len(cs) > 0 && cs[len(cs)-1].Time.After(b.forming.Time) {
+		// The fetch saw buckets newer than the forming bar — it is closed;
+		// reinsert in order so snapshots stay strictly monotone.
+		f := *b.forming
+		b.forming = nil
+		pos := sort.Search(len(cs), func(i int) bool { return !cs[i].Time.Before(f.Time) })
+		if pos < len(cs) && cs[pos].Time.Equal(f.Time) {
+			cs[pos] = f
+		} else {
+			cs = slices.Insert(cs, pos, f)
+		}
+	}
 	if len(cs) > candleBookSize {
 		cs = cs[len(cs)-candleBookSize:]
+	}
+	if b.forming == nil && len(cs) > 0 {
+		// The seed tail is the still-forming interval (providers return the
+		// partial current bar). Promote it so the next tick folds into it —
+		// otherwise a duplicate label would appear in the snapshot.
+		b.forming = &cs[len(cs)-1]
+		cs = cs[:len(cs)-1]
 	}
 	b.candles = cs
 	b.fetched = at
@@ -287,6 +314,7 @@ type TwelveData struct {
 	lastFetch time.Time // last successful upstream fetch
 	lastTick  time.Time // newest accepted provider timestamp
 	books     map[string]*candleBook
+	rest      restGate // shared REST budget — 429 silences books+history alike
 	connMu    sync.Mutex
 	conn      *websocket.Conn
 	subs      *quoteSubs
@@ -483,7 +511,7 @@ func (t *TwelveData) maybeReconcile(book *candleBook, tf string) {
 	}
 	book.mu.Lock()
 	stale := book.fetched.IsZero() || t.now().Sub(book.fetched) > t.cfg.CandleRefresh
-	canTry := stale && !book.fetching && t.now().Sub(book.lastTry) > minFetchGap
+	canTry := stale && !book.fetching && t.now().Sub(book.lastTry) > minFetchGap && !t.rest.suppressed(t.now())
 	if canTry {
 		book.fetching = true
 		book.lastTry = t.now()
@@ -744,6 +772,9 @@ func (t *TwelveData) fetchTimeSeries(ctx context.Context, tf string, limit int) 
 	if err != nil {
 		return nil, err
 	}
+	if err := t.rest.check(t.now()); err != nil {
+		return nil, err
+	}
 	resp, err := t.http.Do(req)
 	if err != nil {
 		// *url.Error embeds the full request URL — including the apikey query
@@ -760,7 +791,11 @@ func (t *TwelveData) fetchTimeSeries(ctx context.Context, tf string, limit int) 
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, errors.New("provider rate limit exceeded (429) — retry later")
+		t.rest.trip(t.now(), parseRetryAfter(resp.Header.Get("Retry-After")))
+		return nil, &RateLimitError{
+			Err:        errors.New("provider rate limit exceeded (429) — retry later"),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
@@ -783,10 +818,140 @@ func (t *TwelveData) fetchTimeSeries(ctx context.Context, tf string, limit int) 
 		}
 		out = append(out, c)
 	}
-	// Session books (4h/1d) fetched 1h seed rows — re-bucket into the
-	// platform's Kyiv civil-session labels.
-	if def.session {
-		out = aggregateSession(out, def)
+	// Sessionize every fetched row into the canonical Kyiv civil labels —
+	// 1:1 relabel for intraday intervals, real aggregation for 4h/1d books
+	// that fetched 1h seeds.
+	out = aggregateSession(out, def)
+	return out, nil
+}
+
+func (t *TwelveData) HistoryFloor() time.Time {
+	// Twelve Data intraday history is plan-dependent; the REST floor is
+	// enforced server-side, so zero means "as far back as the plan allows".
+	return time.Time{}
+}
+
+// FetchHistoryPages pages /time_series over [from, to), delivering
+// session-labeled candles with the raw covered span per page. The endpoint
+// returns the NEWEST outputsize rows of the requested window, so the driver
+// walks backward — each reported span extends coverage downward from `to`.
+func (t *TwelveData) FetchHistoryPages(ctx context.Context, tf string, from, to time.Time, onPage PageFunc) error {
+	def, ok := supportedTimeframes[tf]
+	if !ok {
+		return fmt.Errorf("unsupported timeframe %q", tf)
+	}
+	const pageSize = 5000
+	sz := &pageSessionizer{def: def}
+	cur := to
+	first := true
+	for cur.After(from) {
+		if !first {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		first = false
+		page, err := t.fetchTimeSeriesWindow(ctx, def, from, cur, pageSize)
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			return onPage(sz.emit(nil, true), cur, cur)
+		}
+		// page is ascending, newest ≤ cur. Covered span [page[0].Time, cur).
+		coveredFrom := page[0].Time
+		// Backward direction: hold the earliest pending bucket — it may gain
+		// rows from the next (older) page. Reuse pageSessionizer by pushing
+		// the page then emitting only labels AFTER its earliest bucket.
+		emitted := sz.emitPrefix(page, len(page) >= pageSize)
+		if err := onPage(emitted, coveredFrom, cur); err != nil {
+			return err
+		}
+		if len(page) < pageSize {
+			return onPage(sz.emit(nil, true), coveredFrom, coveredFrom)
+		}
+		next := page[0].Time
+		if !next.Before(cur) {
+			return onPage(sz.emit(nil, true), next, next)
+		}
+		cur = next
+	}
+	return onPage(sz.emit(nil, true), cur, cur)
+}
+
+// FetchHistory is FetchHistoryPages collecting all pages.
+func (t *TwelveData) FetchHistory(ctx context.Context, tf string, from, to time.Time) ([]Candle, error) {
+	var out []Candle
+	err := t.FetchHistoryPages(ctx, tf, from, to, func(page []Candle, _, _ time.Time) error {
+		out = append(out, page...)
+		return nil
+	})
+	return out, err
+}
+
+// fetchTimeSeriesWindow pulls one page: the newest `limit` bars in [from, to).
+func (t *TwelveData) fetchTimeSeriesWindow(ctx context.Context, def intervalDef, from, to time.Time, limit int) ([]Candle, error) {
+	u, err := url.Parse(t.cfg.RESTBaseURL + "/time_series")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("symbol", t.cfg.Symbol)
+	q.Set("interval", def.tdInterval)
+	q.Set("outputsize", strconv.Itoa(limit))
+	q.Set("timezone", "UTC")
+	q.Set("start_date", from.Format("2006-01-02 15:04:05"))
+	q.Set("end_date", to.Format("2006-01-02 15:04:05"))
+	q.Set("apikey", t.cfg.APIKey)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.rest.check(t.now()); err != nil {
+		return nil, err
+	}
+	resp, err := t.http.Do(req)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			return nil, fmt.Errorf("provider request failed: %w", ue.Err)
+		}
+		return nil, errors.New("provider request failed")
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		t.rest.trip(t.now(), parseRetryAfter(resp.Header.Get("Retry-After")))
+		return nil, &RateLimitError{
+			Err:        errors.New("provider rate limit exceeded (429) — retry later"),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
+	}
+	var ts tdTimeSeries
+	if err := json.Unmarshal(body, &ts); err != nil {
+		return nil, fmt.Errorf("malformed provider response: %w", err)
+	}
+	if ts.Status == "error" || ts.Code != 0 {
+		return nil, tdError(ts.Code, ts.Message)
+	}
+	out := make([]Candle, 0, len(ts.Values))
+	for i := len(ts.Values) - 1; i >= 0; i-- {
+		v := ts.Values[i]
+		c, err := parseTDCandle(v.Datetime, v.Open, v.High, v.Low, v.Close, v.Volume)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }
@@ -924,6 +1089,9 @@ func (t *TwelveData) fetchQuote(ctx context.Context) (Quote, error) {
 	if err != nil {
 		return Quote{}, err
 	}
+	if err := t.rest.check(t.now()); err != nil {
+		return Quote{}, err
+	}
 	resp, err := t.http.Do(req)
 	if err != nil {
 		var ue *url.Error
@@ -941,7 +1109,11 @@ func (t *TwelveData) fetchQuote(ctx context.Context) (Quote, error) {
 		return Quote{}, &authError{err: fmt.Errorf("HTTP %d", resp.StatusCode)}
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return Quote{}, errors.New("provider rate limit exceeded (429) — retry later")
+		t.rest.trip(t.now(), parseRetryAfter(resp.Header.Get("Retry-After")))
+		return Quote{}, &RateLimitError{
+			Err:        errors.New("provider rate limit exceeded (429) — retry later"),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return Quote{}, fmt.Errorf("provider returned HTTP %d", resp.StatusCode)

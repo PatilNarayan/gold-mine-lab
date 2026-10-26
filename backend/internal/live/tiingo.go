@@ -123,6 +123,7 @@ type Tiingo struct {
 	lastFetch time.Time // last accepted quote or successful candle fetch
 	lastTick  time.Time // newest accepted provider timestamp
 	books     map[string]*candleBook
+	rest      restGate // shared REST budget — 429 silences books+history alike
 	connMu    sync.Mutex
 	conn      *websocket.Conn
 	lastFrame atomic.Int64 // unix nanos of the most recent inbound frame
@@ -300,7 +301,7 @@ func (p *Tiingo) maybeReconcile(book *candleBook, tf string) {
 	}
 	book.mu.Lock()
 	stale := book.fetched.IsZero() || p.now().Sub(book.fetched) > p.cfg.CandleRefresh
-	canTry := stale && !book.fetching && p.now().Sub(book.lastTry) > minFetchGap
+	canTry := stale && !book.fetching && p.now().Sub(book.lastTry) > minFetchGap && !p.rest.suppressed(p.now())
 	if canTry {
 		book.fetching = true
 		book.lastTry = p.now()
@@ -610,6 +611,9 @@ func (p *Tiingo) fetchPrices(ctx context.Context, tf string, limit int) ([]Candl
 	}
 	req.Header.Set("Authorization", "Token "+p.cfg.APIToken)
 	req.Header.Set("Content-Type", "application/json")
+	if err := p.rest.check(p.now()); err != nil {
+		return nil, err
+	}
 	resp, err := p.http.Do(req)
 	if err != nil {
 		var ue *url.Error
@@ -627,7 +631,11 @@ func (p *Tiingo) fetchPrices(ctx context.Context, tf string, limit int) ([]Candl
 		return nil, &authError{err: fmt.Errorf("HTTP %d: %s", resp.StatusCode, tiingoErrDetail(body))}
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, errors.New("provider rate limit exceeded (429) — retry later")
+		p.rest.trip(p.now(), parseRetryAfter(resp.Header.Get("Retry-After")))
+		return nil, &RateLimitError{
+			Err:        fmt.Errorf("provider rate limit exceeded (429): %s", tiingoErrDetail(body)),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("provider returned HTTP %d: %s", resp.StatusCode, tiingoErrDetail(body))
@@ -645,13 +653,207 @@ func (p *Tiingo) fetchPrices(ctx context.Context, tf string, limit int) ([]Candl
 		}
 		out = append(out, c)
 	}
-	// Session books (4h/1d) fetched 1h seed rows — re-bucket into the
-	// platform's Kyiv civil-session labels before trimming.
-	if def.session {
-		out = aggregateSession(out, def)
-	}
+	// Sessionize every fetched row into the canonical Kyiv civil labels —
+	// 1:1 relabel for intraday intervals, real aggregation for 4h/1d books
+	// that fetched 1h seeds — then trim to the requested window.
+	out = aggregateSession(out, def)
 	if len(out) > limit {
 		out = out[len(out)-limit:]
+	}
+	return out, nil
+}
+
+// tiingoHistoryFloor is the provider's documented earliest FX date — the API
+// rejects earlier startDate values.
+var tiingoHistoryFloor = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+func (p *Tiingo) HistoryFloor() time.Time { return tiingoHistoryFloor }
+
+// pageSessionizer emits canonical session-labeled candles progressively.
+// Intraday timeframes relabel 1:1 so each row emits independently; 4h/1d
+// aggregate 1h rows and a session bucket is only complete once a later
+// bucket begins — the tail bucket stays pending until flush.
+type pageSessionizer struct {
+	def     intervalDef
+	pending []Candle
+}
+
+// emit returns safely-emittable labeled candles. flush=true emits the final
+// pending bucket.
+func (s *pageSessionizer) emit(page []Candle, flush bool) []Candle {
+	if !s.def.aggregate {
+		return aggregateSession(page, s.def)
+	}
+	s.pending = append(s.pending, page...)
+	ag := aggregateSession(s.pending, s.def)
+	if len(ag) <= 1 {
+		if flush {
+			s.pending = nil
+			return ag
+		}
+		return nil
+	}
+	if flush {
+		s.pending = nil
+		return ag
+	}
+	// Hold back the last label's raw rows — its bucket isn't proven complete.
+	last := ag[len(ag)-1].Time
+	kept := s.pending[:0]
+	for _, c := range s.pending {
+		if !sessionBucket(c.Time, s.def).Before(last) {
+			kept = append(kept, c)
+		}
+	}
+	s.pending = kept
+	return ag[:len(ag)-1]
+}
+
+// emitPrefix is the backward-paging counterpart: page contains rows OLDER
+// than pending, so the earliest aggregated bucket may gain rows from a later
+// page. moreComing=false flushes everything.
+func (s *pageSessionizer) emitPrefix(page []Candle, moreComing bool) []Candle {
+	if !s.def.aggregate {
+		return aggregateSession(page, s.def)
+	}
+	s.pending = append(page, s.pending...)
+	ag := aggregateSession(s.pending, s.def)
+	if len(ag) == 0 {
+		return nil
+	}
+	if !moreComing {
+		s.pending = nil
+		return ag
+	}
+	first := ag[0].Time
+	kept := s.pending[:0]
+	for _, c := range s.pending {
+		if sessionBucket(c.Time, s.def).Equal(first) {
+			kept = append(kept, c)
+		}
+	}
+	s.pending = kept
+	return ag[1:]
+}
+
+// FetchHistoryPages pages the REST prices endpoint over [from, to),
+// delivering session-labeled candles plus the raw covered span per page so
+// the caller can commit resumable coverage. Tiingo's startDate is
+// day-granular and each response is capped (~5–7k rows forward from start);
+// a page can only truncate on a day boundary because no supported interval
+// produces more bars per day than the cap, so advancing by whole days is
+// lossless. Empty spans (weekends/closed market) report coverage without
+// bars — syncing a span and producing rows are different statements.
+func (p *Tiingo) FetchHistoryPages(ctx context.Context, tf string, from, to time.Time, onPage PageFunc) error {
+	def, ok := supportedTimeframes[tf]
+	if !ok {
+		return fmt.Errorf("unsupported timeframe %q", tf)
+	}
+	sz := &pageSessionizer{def: def}
+	cur := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, time.UTC)
+	end := to.UTC()
+	first := true
+	for cur.Before(end) {
+		// Politeness: Tiingo rate-limits bursts — pace page requests.
+		if !first {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		first = false
+		page, err := p.fetchPricesPage(ctx, def, cur, end)
+		if err != nil {
+			return err
+		}
+		next := cur.AddDate(0, 0, 1)
+		if len(page) > 0 {
+			last := page[len(page)-1].Time
+			if n := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1); n.After(next) {
+				next = n
+			}
+		}
+		if err := onPage(sz.emit(page, false), cur, next); err != nil {
+			return err
+		}
+		cur = next
+	}
+	return onPage(sz.emit(nil, true), end, end)
+}
+
+// FetchHistory pages the REST prices endpoint over [from, to) and returns
+// ascending canonical session-labeled candles.
+func (p *Tiingo) FetchHistory(ctx context.Context, tf string, from, to time.Time) ([]Candle, error) {
+	var out []Candle
+	err := p.FetchHistoryPages(ctx, tf, from, to, func(page []Candle, _, _ time.Time) error {
+		out = append(out, page...)
+		return nil
+	})
+	return out, err
+}
+
+// fetchPricesPage issues one REST request for [from, to) and returns the raw
+// (UTC instant) rows, ascending.
+func (p *Tiingo) fetchPricesPage(ctx context.Context, def intervalDef, from, to time.Time) ([]Candle, error) {
+	u, err := url.Parse(p.cfg.RESTBaseURL + "/tiingo/fx/" + p.cfg.Ticker + "/prices")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("startDate", from.Format("2006-01-02"))
+	if !to.IsZero() {
+		q.Set("endDate", to.Format("2006-01-02"))
+	}
+	q.Set("resampleFreq", def.tiFreq)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Token "+p.cfg.APIToken)
+	req.Header.Set("Content-Type", "application/json")
+	if err := p.rest.check(p.now()); err != nil {
+		return nil, err
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			return nil, fmt.Errorf("provider request failed: %w", ue.Err)
+		}
+		return nil, errors.New("provider request failed")
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, &authError{err: fmt.Errorf("HTTP %d: %s", resp.StatusCode, tiingoErrDetail(body))}
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		p.rest.trip(p.now(), parseRetryAfter(resp.Header.Get("Retry-After")))
+		return nil, &RateLimitError{
+			Err:        fmt.Errorf("provider rate limit exceeded (429): %s", tiingoErrDetail(body)),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("provider returned HTTP %d: %s", resp.StatusCode, tiingoErrDetail(body))
+	}
+	var rows []tiingoPriceRow
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, fmt.Errorf("malformed provider response: %w", err)
+	}
+	out := make([]Candle, 0, len(rows))
+	for _, r := range rows {
+		c, err := parseTiingoCandle(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }

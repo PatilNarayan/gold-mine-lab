@@ -332,3 +332,83 @@ func TestTiingoStartWithoutTokenIsConfigError(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+// --- FetchHistory ------------------------------------------------------------
+
+func TestTiingoFetchHistoryPagesForward(t *testing.T) {
+	var starts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := r.URL.Query().Get("startDate")
+		starts = append(starts, start)
+		// Page 1 covers two UTC days; page 2 one day; page 3 empty → stop.
+		switch start {
+		case "2020-01-01":
+			_, _ = w.Write([]byte(`[
+				{"date":"2020-01-01T00:00:00","ticker":"xauusd","open":1,"high":2,"low":0.5,"close":1.5},
+				{"date":"2020-01-02T00:00:00","ticker":"xauusd","open":2,"high":3,"low":1,"close":2.5}
+			]`))
+		case "2020-01-03":
+			_, _ = w.Write([]byte(`[
+				{"date":"2020-01-03T00:00:00","ticker":"xauusd","open":3,"high":4,"low":2,"close":3.5}
+			]`))
+		default:
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer srv.Close()
+
+	p := testTiingo(t, TiingoConfig{APIToken: "k", RESTBaseURL: srv.URL})
+	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2020, 1, 4, 0, 0, 0, 0, time.UTC)
+	cs, err := p.FetchHistory(context.Background(), "1d", from, to)
+	if err != nil {
+		t.Fatalf("FetchHistory: %v", err)
+	}
+	if len(cs) != 3 {
+		t.Fatalf("FetchHistory = %d candles: %+v", len(cs), cs)
+	}
+	for i := 1; i < len(cs); i++ {
+		if !cs[i].Time.After(cs[i-1].Time) {
+			t.Fatalf("not ascending: %+v", cs)
+		}
+	}
+	if len(starts) < 2 {
+		t.Fatalf("expected multi-page fetch, starts=%v", starts)
+	}
+	// Day-advance: second page must start the day after page 1's last bar.
+	if starts[1] != "2020-01-03" {
+		t.Fatalf("page advance = %q, want 2020-01-03", starts[1])
+	}
+}
+
+func TestTiingoFetchHistorySessionLabels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Date-aware mock: data only on the first page.
+		if r.URL.Query().Get("startDate") != "2025-07-15" {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		// 1h instants relabeled to Kyiv civil day labels: 20:00Z is Kyiv
+		// 23:00 EEST (Jul-15 day), 21:00Z is Kyiv 00:00 (Jul-16 day).
+		_, _ = w.Write([]byte(`[
+			{"date":"2025-07-15T20:00:00","ticker":"xauusd","open":1,"high":2,"low":0.5,"close":1.5},
+			{"date":"2025-07-15T21:00:00","ticker":"xauusd","open":2,"high":3,"low":1,"close":2.5}
+		]`))
+	}))
+	defer srv.Close()
+	p := testTiingo(t, TiingoConfig{APIToken: "k", RESTBaseURL: srv.URL})
+	cs, err := p.FetchHistory(context.Background(), "1d",
+		time.Date(2025, 7, 15, 0, 0, 0, 0, time.UTC), time.Date(2025, 7, 17, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 2 {
+		t.Fatalf("session labels = %+v", cs)
+	}
+	if cs[0].Time.Format("2006-01-02 15:04") != "2025-07-15 00:00" || cs[1].Time.Format("2006-01-02 15:04") != "2025-07-16 00:00" {
+		t.Fatalf("session labels = %+v", cs)
+	}
+	if cs[1].Open != 2 || cs[1].Close != 2.5 || cs[1].High != 3 || cs[1].Low != 1 {
+		t.Fatalf("aggregated OHLC wrong: %+v", cs[1])
+	}
+}

@@ -31,6 +31,14 @@ func (f *fakeProvider) LatestQuote() (live.Quote, bool) {
 func (f *fakeProvider) Candles(context.Context, string, int) ([]live.Candle, error) {
 	return f.candles, f.err
 }
+func (f *fakeProvider) FetchHistory(context.Context, string, time.Time, time.Time) ([]live.Candle, error) {
+	return nil, nil
+}
+func (f *fakeProvider) FetchHistoryPages(_ context.Context, _ string, _, _ time.Time, onPage live.PageFunc) error {
+	return onPage(nil, time.Time{}, time.Time{})
+}
+func (f *fakeProvider) HistoryFloor() time.Time { return time.Time{} }
+
 func (f *fakeProvider) SubscribeQuotes(fn func(live.Quote)) func() {
 	f.listeners = append(f.listeners, fn)
 	return func() {}

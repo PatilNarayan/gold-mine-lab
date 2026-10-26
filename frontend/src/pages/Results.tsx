@@ -65,7 +65,18 @@ export default function Results() {
                   {detail.data.run.startDate} → {detail.data.run.endDate} · {detail.data.run.timeframe} ·
                   initial {formatCurrency(detail.data.run.initialCapital)}
                 </span>
+                {detail.data.run.dataProvider ? (
+                  <Badge tone={detail.data.run.dataProvider === 'csv' ? 'neutral' : 'info'}>
+                    data: {detail.data.run.dataProvider}
+                    {detail.data.run.dataCandles != null ? ` · ${detail.data.run.dataCandles} bars` : ''}
+                  </Badge>
+                ) : null}
               </div>
+              {detail.data.run.dataProvider === 'csv' ? (
+                <p className="mt-2 text-[10px] uppercase tracking-wide text-amber-400/80">
+                  Legacy run on the CSV dataset — not directly comparable to provider-backed runs.
+                </p>
+              ) : null}
             </section>
 
             {detail.data.metrics ? (

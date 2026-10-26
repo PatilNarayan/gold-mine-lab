@@ -77,11 +77,11 @@ the actual `transport` in use, last provider update, last successful fetch,
 and an `estimatedDailyCredits` figure — there is no silent fallback between
 transports.
 
-Daily and 4h candles follow the dataset's broker-session convention (Kyiv
-civil time, EET/EEST): provider 1h rows are aggregated into Kyiv civil
-buckets so live 1d/4h candles match the historical files' session
-boundaries, DST transitions included. 1m–1h use absolute UTC boundaries,
-which coincide with every whole-hour convention.
+All candle timestamps — historical and live, every timeframe — are broker
+civil-time labels (Kyiv, EET/EEST) rendered as naive UTC, matching the MT5
+export convention: identical labels always denote identical market
+intervals. Provider-native 4h/1d rows are UTC-bucketed, so those books
+aggregate the provider's 1h series into Kyiv civil buckets.
 
 **Sample configurations**
 
@@ -123,7 +123,22 @@ Notes:
 - Without a key or with `LIVE_MARKET_ENABLED=false`, the UI shows "Live data
   is not configured" and historical mode works exactly as before.
 
-## Refreshing historical data
+## Historical market data
+
+The runtime has no bundled datasets: the configured `LIVE_MARKET_PROVIDER`
+(Tiingo by default) backfills the Postgres `market_candles` table on demand
+via its REST history API — validated, session-labeled, provenance-stamped —
+and `candle_sync` records the contiguous synced span. Bootstrap pre-warms
+15m/1h/4h/1d over the provider's full range (Tiingo FX: 2020-01-01 onward);
+1m/5m sync lazily on first read. Missing coverage yields honest empty
+states, never generated candles.
+
+`cmd/datasync` and `scripts/sync-xauusd-history.*` remain available as an
+**optional archival path**: they produce a versioned CSV snapshot from
+provider data (see below) for offline analysis — nothing in the runtime
+reads them.
+
+## Refreshing historical data (archival, optional)
 
 `scripts/sync-xauusd-history.ps1` (or `.sh`) produces a **new versioned
 snapshot** of the CSV dataset extended through the latest completed
@@ -146,16 +161,16 @@ Twelve Data candles — the original `data/` files are never modified.
   (the provider supplies none) — documented in `manifest.json`.
 - `manifest.json` records source/result SHA-256 per file, date ranges,
   request count, and any discontinuities found in the source.
-- Idempotent: re-running appends only newer bars. Select a snapshot at run
-  time with `MARKET_DATA_DIR=data-twelvedata-v2`; every backtest records
-  the exact dataset fingerprint it used, so runs on old snapshots stay
-  attributable.
+- Idempotent: re-running appends only newer bars. Snapshots are archival
+  inputs for `CSVProvider`-based tooling and tests; every backtest records
+  the exact dataset fingerprint it used, so runs stay attributable.
 - `TWELVE_DATA_API_KEY` is read from the environment or `backend/.env`
   (never a CLI flag, log, or manifest field).
 
-## Market data
+## Legacy CSV downloads (tests/tooling only)
 
-From the repository root, fetch and verify the historical CSVs with one command:
+The original MT5-export CSVs are still fetchable for tests, archival, and
+`CSVProvider`-based tooling — they are NOT required by the runtime:
 
 - Windows PowerShell 5.1: `.\scripts\fetch-data.ps1`
 - Linux/macOS: `./scripts/fetch-data.sh`

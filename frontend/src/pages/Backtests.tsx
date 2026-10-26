@@ -57,6 +57,20 @@ export default function Backtests() {
       sortValue: (r) => r.status,
     },
     {
+      key: 'data',
+      header: 'Data',
+      cell: (r) =>
+        r.dataProvider ? (
+          <Badge tone={r.dataProvider === 'csv' ? 'neutral' : 'info'}>
+            {r.dataProvider}
+            {r.dataCandles != null ? ` ${r.dataCandles}` : ''}
+          </Badge>
+        ) : (
+          <span className="text-content-3">—</span>
+        ),
+      sortValue: (r) => r.dataProvider ?? '',
+    },
+    {
       key: 'created',
       header: 'Created',
       cell: (r) => <span className="tnum">{formatDateTime(r.createdAt)}</span>,

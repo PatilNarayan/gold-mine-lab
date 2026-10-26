@@ -42,8 +42,14 @@ type RunRow struct {
 	Sample       *string // "in_sample" | "out_of_sample"
 	// Walk-forward membership (migration 000004). nil = not a fold run.
 	WalkForwardID *string
-	CreatedAt     time.Time
-	CompletedAt   *time.Time
+	// Data provenance (migration 000010): which provider/candles the engine
+	// actually consumed. NULL = legacy run whose source is unverifiable.
+	DataProvider *string
+	DataCandles  *int
+	DataFirstBar *time.Time
+	DataLastBar  *time.Time
+	CreatedAt    time.Time
+	CompletedAt  *time.Time
 }
 
 // ComparisonRow mirrors the comparisons table.
@@ -315,4 +321,103 @@ type ResearchStudyRepository interface {
 	FreezeStudy(ctx context.Context, id string, counts []byte) (conflictID string, err error)
 	AppendStudyExecution(ctx context.Context, id, newStatus string, executionJSON []byte, errMsg *string) (ResearchStudyRow, error)
 	ActiveReservations(ctx context.Context, assetID, timeframe string) ([]ResearchStudyRow, error)
+}
+
+// ShadowSessionRow is one forward-test session identity — resumable on
+// restart via the open-session unique index.
+type ShadowSessionRow struct {
+	ID              int64
+	StrategyID      string
+	StrategyVersion string
+	Symbol          string
+	Timeframe       string
+	Provider        string
+	Config          []byte // JSONB snapshot
+	StartedAt       time.Time
+	LastActiveAt    time.Time
+	RestartCount    int
+	EndedAt         *time.Time
+}
+
+// QuoteObservationRow is one persisted provider quote event.
+type QuoteObservationRow struct {
+	Seq          int64
+	Provider     string
+	Symbol       string
+	ProviderTime *time.Time
+	Bid          *float64
+	Ask          *float64
+	Mid          *float64
+	SpreadPrice  *float64
+	SpreadBp     *float64
+	Stale        bool
+	ReceivedAt   time.Time
+	EventKey     *string
+}
+
+// QuoteObservationRepository persists recorded quote events.
+type QuoteObservationRepository interface {
+	InsertQuoteObservations(ctx context.Context, rows []QuoteObservationRow) error
+	CountQuoteObservations(ctx context.Context, symbol string) (int, error)
+	LatestQuoteObservation(ctx context.Context, symbol string) (*QuoteObservationRow, error)
+}
+
+// ShadowOrderRow is one signal→hypothetical-order record (SIMULATED).
+type ShadowOrderRow struct {
+	ID                int64
+	OrderKey          string
+	SessionID         *int64
+	StrategyID        string
+	StrategyVersion   string
+	Symbol            string
+	Timeframe         string
+	Side              string
+	SignalBarTime     time.Time
+	DecisionAt        time.Time
+	Status            string // pending | filled | rejected | expired | missed
+	RejectReason      *string
+	QuoteProviderTime *time.Time
+	QuoteReceivedAt   *time.Time
+	QuoteBid          *float64
+	QuoteAsk          *float64
+	QuoteMid          *float64
+	FillPrice         *float64
+	FilledAt          *time.Time
+	Quantity          *float64
+	Commission        *float64
+	CreatedAt         time.Time
+}
+
+// ShadowPositionRow is the persisted state for one shadow engine —
+// open position, realized aggregates, and the restart resume marker.
+type ShadowPositionRow struct {
+	StrategyID      string
+	StrategyVersion string
+	Symbol          string
+	Timeframe       string
+	SessionID       *int64
+	Side            *string // NULL = flat
+	Quantity        float64
+	EntryPrice      *float64
+	EntryAt         *time.Time
+	EntryOrderID    *int64
+	EntryCommission float64
+	RealizedPnl     float64
+	RealizedComm    float64
+	RealizedSpread  float64
+	LastBarTime     *time.Time
+	UpdatedAt       time.Time
+}
+
+// ShadowFillRecord is the persisted detail of one hypothetical execution.
+type ShadowFillRecord struct {
+	QuoteProviderTime *time.Time
+	QuoteReceivedAt   *time.Time
+	QuoteBid          *float64
+	QuoteAsk          *float64
+	QuoteMid          *float64
+	FillPrice         float64
+	FilledAt          time.Time
+	Quantity          float64
+	Commission        float64
 }

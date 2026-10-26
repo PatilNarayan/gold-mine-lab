@@ -4,8 +4,9 @@ Go service for the Gold Mine Lab quantitative research and backtesting platform.
 Phase 2 replaced the demo layer with the real research pipeline:
 
 ```
-Historical CSV (MARKET_DATA_DIR)
-      ↓  market.CSVProvider            # streaming, validated, bounded
+Market provider (Tiingo / Twelve Data REST history)
+      ↓  market.DBProvider             # sync-on-read into Postgres, validated,
+      ↓  market_candles + candle_sync  # provenance + contiguous coverage
 Strategy Engine (strategy.Registry)    # ema-cross + rsi-mean-reversion v1.0.0, pure compute
       ↓  indicators.EMA
 Signal Generation → strategy_signals   # real crossovers, persisted
@@ -37,8 +38,9 @@ backend/
 │   │                         #   contract.go = wire DTOs + service interfaces
 │   ├── config/               # env loading + fail-fast validation
 │   ├── database/             # pgxpool + Ping
-│   ├── market/               # Asset/Timeframe/Candle + DataProvider iface
-│   │   └── csv.go            # CSVProvider: Tail() + Range() + row validation
+│   ├── market/               # Asset/Timeframe/Candle + HistoricalSource iface
+│   │   ├── db.go             # DBProvider: Postgres store + provider sync-on-read
+│   │   └── csv.go            # CSVProvider: test fixtures + legacy demo only
 │   ├── strategy/
 │   │   ├── strategy.go       # Strategy, Signal, Registry contracts
 │   │   ├── registry.go       # static in-memory registry (dup IDs fail)
@@ -68,7 +70,6 @@ backend/
 | `HTTP_WRITE_TIMEOUT`    | `10s`                            | Go duration                  |
 | `SHUTDOWN_TIMEOUT`      | `15s`                            | drain window on SIGINT/TERM  |
 | `CORS_ALLOWED_ORIGINS`  | `http://localhost:5173`          | comma-separated              |
-| `MARKET_DATA_DIR`       | — **required**                   | dir of historical CSVs       |
 | `LIVE_MARKET_ENABLED`   | `false`                          | enable live XAU/USD feed     |
 | `LIVE_MARKET_PROVIDER`  | `twelvedata`                     | `twelvedata` \| `tiingo`     |
 | `TWELVE_DATA_API_KEY`   | —                                | secret; required for provider `twelvedata`, never logged/served |
@@ -120,19 +121,41 @@ updates only. The server heartbeat (~30s) is used as a liveness signal —
 90s of silence forces a reconnect. Same reconnect/config_error lifecycle as
 Twelve Data.
 
-Live data is strictly observational — it never enters the CSV provider, the
-engine, strategies, or the database. `xauusd` is the only served asset;
-anything else gets HTTP 400.
+Live data is strictly observational — streamed quotes never enter the
+historical store, the engine, strategies, or the database. `xauusd` is the
+only served asset; anything else gets HTTP 400.
 
-**Session convention**: 1m–1h books bucket on absolute UTC boundaries (any
-whole-hour convention coincides). The 4h and 1d books use the platform's
-market-session convention — MT5 broker civil time (Europe/Kyiv, EET/EEST) —
-matching the historical CSV dataset exactly: provider-native 4h/1d rows are
-UTC-bucketed and incompatible, so session books seed from the provider's 1h
-series and aggregate into Kyiv civil buckets, emitting the same naive
-session labels the CSV provider produces. Daily and 4h live candles are
-therefore directly comparable to their historical counterparts, including
-across DST transitions.
+## Historical market data (`internal/market`)
+
+There are no bundled CSV datasets at runtime. The configured
+`LIVE_MARKET_PROVIDER` also supplies history: `DBProvider` serves candles
+from the Postgres `market_candles` table and, on a coverage miss, pages the
+provider's REST history API (`FetchHistory`), sessionizes the rows into the
+canonical Kyiv-label convention, validates OHLC invariants, upserts with
+provider provenance, and records the contiguous synced span in
+`candle_sync`. A request outside synced+provider coverage returns whatever
+genuinely exists — empty included — never fabricated bars; provider failures
+propagate or degrade to stored data, never to mock data. Coverage written by
+one provider is never extended by another (no silent source mixing).
+Bootstrap pre-warms 15m/1h/4h/1d over the provider's full range; 1m/5m sync
+lazily on first read. Tiingo FX history starts 2020-01-01 and REST burst
+rate-limits apply — coverage accumulates incrementally and retries on the
+next read. With `LIVE_MARKET_ENABLED=false` the store is read-only and
+serves previously synced candles only.
+
+**Timestamp contract**: `Candle.Time` is a *session label* — broker civil
+time (Europe/Kyiv, EET/EEST) rendered as a naive UTC timestamp — on every
+timeframe, identical to what the CSV provider produces for the same market
+interval. Kyiv's offset is always a whole number of hours, so provider
+1m/5m/15m/1h rows are relabeled 1:1; provider-native 4h/1d rows are
+UTC-bucketed and structurally incompatible, so those books seed from the
+provider's 1h series and aggregate into Kyiv civil buckets. Identical labels
+therefore always mean identical market intervals across historical and live
+data — bootstrap and stream merge into one forming candle per interval. A
+quote's `providerTimestamp`, by contrast, is a real UTC instant; the panel
+renders it in Kyiv civil time so it shares the chart's clock. During the
+autumn fall-back two real hours share one label — the same ambiguity the
+broker export encodes.
 
 **Browser delivery**: `GET /api/market/live/stream` upgrades to WebSocket and
 pushes normalized frames — `status` (on transitions), `quote` (per provider
@@ -149,21 +172,24 @@ drives the chart.
 ```bash
 docker compose up -d postgres   # Postgres on host port 5433 (5432 often taken)
 export DATABASE_URL="postgres://goldmine:goldmine@localhost:5433/goldmine?sslmode=disable"
-export MARKET_DATA_DIR="../data"   # directory holding XAU_*.csv files
+export LIVE_MARKET_ENABLED=true LIVE_MARKET_PROVIDER=tiingo TIINGO_API_TOKEN=…
 go run ./cmd/server               # migrates, seeds, then serves :8080
 ```
 
-Startup sequence: `migrations.Up` → pgx pool → CSV provider → registry
+Startup sequence: `migrations.Up` → pgx pool → live provider →
+`DBProvider` (history syncs into `market_candles` on demand) → registry
 (ema-cross) → service → **Bootstrap** (idempotent: upsert asset + strategy
-defs, generate real signals from the dataset tail, run 3 seed backtests on an
-empty DB) → serve.
+defs, eager candle sync for coarse timeframes, generate real signals from
+the stored tail, run 3 seed backtests on an empty DB) → serve.
 
-## Historical CSV format
+## Legacy CSV format (tests/datasync only)
 
 Files: `<PREFIX>_<tf>_data.csv` where PREFIX = symbol minus quote currency
 (`XAUUSD` → `XAU_`). Header `Date;Open;High;Low;Close;Volume`,
-semicolon-delimited, timestamps `YYYY.MM.DD HH:MM` treated as UTC.
-Timeframes: `1m 5m 15m 1h 4h 1d` map to files directly — no resampling.
+semicolon-delimited, timestamps `YYYY.MM.DD HH:MM` as Kyiv civil labels.
+`CSVProvider` is retained for deterministic tests, `cmd/datasync` archival
+exports, and the `internal/demo` fixture — it is never wired into the
+runtime pipeline.
 
 `CSVProvider`:
 - `Tail(asset, tf, n, asOf)` — last n candles ≤ asOf; zero asOf = the

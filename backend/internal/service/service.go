@@ -56,7 +56,7 @@ type Repositories struct {
 // TradeService over the real pipeline.
 type Service struct {
 	repos    Repositories
-	data     *market.CSVProvider
+	data     market.HistoricalSource
 	registry strategy.Registry
 	engine   *backtest.Engine
 	log      *slog.Logger
@@ -64,7 +64,7 @@ type Service struct {
 
 // New wires the service. dataDir may be "" only when market endpoints should
 // 503 — callers normally pass the configured data directory.
-func New(repos Repositories, data *market.CSVProvider, reg strategy.Registry, log *slog.Logger) *Service {
+func New(repos Repositories, data market.HistoricalSource, reg strategy.Registry, log *slog.Logger) *Service {
 	return &Service{repos: repos, data: data, registry: reg, engine: backtest.NewEngine(), log: log}
 }
 
@@ -89,7 +89,33 @@ func (s *Service) Candles(ctx context.Context, assetID string, tf market.Timefra
 	if err != nil {
 		return api.CandleSeries{}, fmt.Errorf("%w: %v", api.ErrNotFound, err)
 	}
-	return seriesFromCandles(assetID, tf, candles), nil
+	series := seriesFromCandles(assetID, tf, candles)
+	if covSrc, ok := s.data.(interface {
+		CoverageInfo(context.Context, market.Asset, market.Timeframe) (market.Coverage, error)
+	}); ok {
+		if cov, err := covSrc.CoverageInfo(ctx, asset, tf); err == nil && (cov.Provider != "" || cov.State != "") {
+			c := api.Coverage{
+				Provider: cov.Provider, Count: cov.Count,
+				State: cov.State, LastError: cov.LastError,
+			}
+			if dp, ok := s.data.(interface {
+				InFlight(market.Asset, market.Timeframe) bool
+			}); ok {
+				c.InProgress = dp.InFlight(asset, tf)
+			}
+			if !cov.First.IsZero() {
+				c.First = &cov.First
+			}
+			if !cov.Last.IsZero() {
+				c.Last = &cov.Last
+			}
+			if !cov.RetryAt.IsZero() {
+				c.RetryAt = &cov.RetryAt
+			}
+			series.Coverage = &c
+		}
+	}
+	return series, nil
 }
 
 func (s *Service) MarketSummary(ctx context.Context, assetID string, tf market.Timeframe) (api.MarketSummary, error) {

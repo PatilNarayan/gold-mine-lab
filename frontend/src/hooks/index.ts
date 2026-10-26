@@ -20,3 +20,4 @@ export {
   useResearchStudies, useResearchStudy, useCreateResearchStudy, useUpdateResearchStudy,
   useFreezeResearchStudy, useRunStudyExploratory, useValidateStudyHoldout,
 } from './useResearchStudies';
+export * from './useShadow';

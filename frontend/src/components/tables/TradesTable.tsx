@@ -89,7 +89,9 @@ export function TradesTable({
         t.status === 'open' ? (
           <Badge tone="info">Open</Badge>
         ) : (
-          <Badge tone={t.result === 'win' ? 'buy' : 'sell'}>{t.result === 'win' ? 'Win' : 'Loss'}</Badge>
+          <Badge tone={t.result === 'win' ? 'buy' : t.result === 'loss' ? 'sell' : 'neutral'}>
+            {t.result === 'breakeven' ? 'Even' : t.result === 'win' ? 'Win' : 'Loss'}
+          </Badge>
         ),
       sortValue: sv((t) => t.result),
     },

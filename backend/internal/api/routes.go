@@ -555,3 +555,30 @@ func registerLiveMarketRoutes(g *gin.RouterGroup, svc LiveMarketService, wsOrigi
 		}
 	})
 }
+
+// registerShadowRoutes mounts the simulated-execution endpoints.
+func registerShadowRoutes(g *gin.RouterGroup, svc ShadowService) {
+	sh := g.Group("/shadow")
+	sh.GET("/status", func(c *gin.Context) {
+		out, err := svc.ShadowStatus(c.Request.Context())
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, "internal", "shadow status failed")
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+	sh.GET("/orders", func(c *gin.Context) {
+		limit := 100
+		if v := c.Query("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+				limit = n
+			}
+		}
+		out, err := svc.ShadowOrders(c.Request.Context(), limit)
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, "internal", "shadow orders failed")
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
+}

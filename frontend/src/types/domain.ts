@@ -37,6 +37,19 @@ export const seriesPointSchema = z.object({
 });
 export type SeriesPoint = z.infer<typeof seriesPointSchema>;
 
+/** Verified synced coverage for a provider-backed candle series. */
+export const coverageSchema = z.object({
+  provider: z.string(),
+  first: z.string().optional(),
+  last: z.string().optional(),
+  count: z.number(),
+  state: z.enum(['complete', 'partial', 'rate_limited', 'failed', 'unavailable']),
+  lastError: z.string().optional(),
+  retryAt: z.string().optional(),
+  inProgress: z.boolean().optional(),
+});
+export type Coverage = z.infer<typeof coverageSchema>;
+
 /** Candle payload with precomputed overlays, as the backend will return it. */
 export const candleSeriesSchema = z.object({
   assetId: z.string(),
@@ -46,6 +59,7 @@ export const candleSeriesSchema = z.object({
     ema20: z.array(seriesPointSchema),
     ema50: z.array(seriesPointSchema),
   }),
+  coverage: coverageSchema.optional(),
 });
 export type CandleSeries = z.infer<typeof candleSeriesSchema>;
 
@@ -265,10 +279,15 @@ export const backtestRunSchema = z.object({
   engineVersion: z.string().nullable().optional(),
   strategyVersion: z.string().nullable().optional(),
   dataset: z.string().nullable().optional(),
+  // Candle-source provenance (migration 000010): 'csv' | 'tiingo' | 'twelvedata' | 'unknown'
+  dataProvider: z.string().nullable().optional(),
+  dataCandles: z.number().nullable().optional(),
+  dataFirstBar: z.string().nullable().optional(),
+  dataLastBar: z.string().nullable().optional(),
 });
 export type BacktestRun = z.infer<typeof backtestRunSchema>;
 
-export const tradeResultSchema = z.enum(['win', 'loss', 'open']);
+export const tradeResultSchema = z.enum(['win', 'loss', 'open', 'breakeven']);
 export type TradeResult = z.infer<typeof tradeResultSchema>;
 
 export const tradeSideSchema = z.enum(['BUY', 'SELL']);
@@ -838,3 +857,70 @@ export type StudyExecution = z.infer<typeof studyExecutionSchema>;
 export type StudyOutcome = z.infer<typeof studyOutcomeSchema>;
 export type ResearchCounts = z.infer<typeof researchCountsSchema>;
 export type ResearchStudy = z.infer<typeof researchStudySchema>;
+
+// ── Shadow trading (SIMULATED execution against real quotes) ────────────
+
+export const shadowPositionSchema = z.object({
+  side: z.string(),
+  quantity: z.number(),
+  entryPrice: z.number(),
+  entryAt: z.string().optional(),
+});
+
+export const shadowOrderSchema = z.object({
+  id: z.number(),
+  side: z.string(),
+  status: z.enum(['pending', 'filled', 'rejected', 'expired', 'missed']),
+  signalBarTime: z.string(),
+  decisionAt: z.string(),
+  rejectReason: z.string().optional().nullable(),
+  quoteBid: z.number().optional().nullable(),
+  quoteAsk: z.number().optional().nullable(),
+  quoteMid: z.number().optional().nullable(),
+  fillPrice: z.number().optional().nullable(),
+  filledAt: z.string().optional().nullable(),
+  quantity: z.number().optional().nullable(),
+  commission: z.number().optional().nullable(),
+  quoteProviderTime: z.string().optional().nullable(),
+  quoteReceivedAt: z.string().optional().nullable(),
+});
+
+export const shadowStatusSchema = z.object({
+  mode: z.string(),
+  strategyId: z.string(),
+  strategyVersion: z.string(),
+  symbol: z.string(),
+  timeframe: z.string(),
+  position: shadowPositionSchema.optional().nullable(),
+  pendingOrder: shadowOrderSchema.optional().nullable(),
+  realizedPnl: z.number(),
+  realizedCommissions: z.number(),
+  realizedSpreadCost: z.number(),
+  equity: z.number(),
+  lastBarTime: z.string().optional(),
+  orderStats: z.object({
+    filled: z.number(), expired: z.number(),
+    rejected: z.number(), missed: z.number(), pending: z.number(),
+  }),
+  session: z.object({
+    id: z.number(), provider: z.string(),
+    startedAt: z.string().optional(), restartCount: z.number(),
+  }).optional().nullable(),
+  metrics: z.object({
+    barsProcessed: z.number(), signalsSeen: z.number(),
+    quotesSeen: z.number(), quotesRejected: z.number(),
+    fills: z.number(), expired: z.number(), missed: z.number(),
+    recoveries: z.number(), duplicateEventsSkipped: z.number(),
+    lastQuoteAt: z.string().optional(), lastFillAt: z.string().optional(),
+  }).optional(),
+});
+
+export const shadowOrdersSchema = z.object({
+  mode: z.string(),
+  orders: z.array(shadowOrderSchema),
+});
+
+export type ShadowPosition = z.infer<typeof shadowPositionSchema>;
+export type ShadowOrder = z.infer<typeof shadowOrderSchema>;
+export type ShadowStatus = z.infer<typeof shadowStatusSchema>;
+export type ShadowOrders = z.infer<typeof shadowOrdersSchema>;

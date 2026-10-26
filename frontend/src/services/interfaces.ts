@@ -29,6 +29,7 @@ import type {
   ValidateGraphResponse,
   ResearchStudy,
   ResearchStudyRequest,
+  ShadowStatus, ShadowOrders,
 } from '@/types/domain';
 import type { HealthStatus } from '@/types/api';
 
@@ -116,4 +117,10 @@ export interface ResearchStudyService {
   freeze(id: string): Promise<ResearchStudy>;
   runExploratory(id: string): Promise<ResearchStudy>;
   validateHoldout(id: string): Promise<ResearchStudy>;
+}
+
+/** Simulated execution state — never a broker position. */
+export interface ShadowService {
+  getStatus(): Promise<ShadowStatus>;
+  getOrders(limit?: number): Promise<ShadowOrders>;
 }

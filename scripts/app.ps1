@@ -85,9 +85,8 @@ function Import-BackendEnv {
     if (-not $env:DATABASE_URL) {
         $env:DATABASE_URL = 'postgres://goldmine:goldmine@localhost:5433/goldmine?sslmode=disable'
     }
-    if (-not $env:MARKET_DATA_DIR) {
-        $env:MARKET_DATA_DIR = Join-Path $Root 'data'
-    }
+    # MARKET_DATA_DIR removed — historical candles sync from the configured
+    # provider into Postgres; no bundled CSV datasets at runtime.
     if (-not $env:HTTP_PORT) { $env:HTTP_PORT = "$BackendPort" }
 }
 

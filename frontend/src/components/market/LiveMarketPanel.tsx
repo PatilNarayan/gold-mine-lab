@@ -26,6 +26,22 @@ const stateLabel: Record<string, string> = {
   disconnected: 'Disconnected',
 };
 
+// Candle times are broker civil-time labels (Europe/Kyiv), matching the
+// historical dataset — not UTC instants. The provider timestamp IS a real
+// instant, so it's rendered in Kyiv civil time to share the chart's clock.
+const kyivFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Europe/Kyiv',
+  hour12: false,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  timeZoneName: 'short',
+});
+const fmtKyiv = (iso: string) => kyivFmt.format(new Date(iso));
+
 /**
  * Live XAUUSD market observation — provider-backed quotes and candles from
  * the backend's managed feed. Strictly observational: nothing here is a
@@ -102,11 +118,11 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
               className="tnum"
               title={
                 quote.data.providerTimestamp
-                  ? `provider ts ${quote.data.providerTimestamp} — fetched ${st.lastFetchAt ?? quote.data.receivedAt}`
+                  ? `provider ts ${quote.data.providerTimestamp} (UTC instant) — fetched ${st.lastFetchAt ?? quote.data.receivedAt}`
                   : `no provider timestamp — fetched ${st.lastFetchAt ?? quote.data.receivedAt}`
               }
             >
-              {quote.data.providerTimestamp ?? 'provider ts n/a'}
+              {quote.data.providerTimestamp ? fmtKyiv(quote.data.providerTimestamp) : 'provider ts n/a'}
             </span>
           ) : null}
         </span>
@@ -145,7 +161,9 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
         {quote.data?.priceKind === 'mid'
           ? 'Price shown is the top-of-book midpoint, not a last-traded price. '
           : ''}
-        Live prices are market observation only — not a backtest, recommendation, or trading
+        Candle times are broker civil time (Kyiv, EET/EEST) — the same session labels as the
+        historical dataset, not UTC instants. Live prices are market observation only — not a
+        backtest, recommendation, or trading
         capability. Volume is hidden when the provider does not supply it.
       </p>
     </div>

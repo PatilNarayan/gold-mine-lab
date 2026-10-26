@@ -39,6 +39,7 @@ type Deps struct {
 	SignalResearch SignalResearchService
 	Studies        ResearchStudyService
 	Live           LiveMarketService
+	Shadow         ShadowService
 	AllowedOrigins []string
 	// Env is "dev" | "prod" | "test" — controls gin's mode.
 	Env string
@@ -101,6 +102,9 @@ func NewRouter(d Deps) *gin.Engine {
 	}
 	if d.Live != nil {
 		registerLiveMarketRoutes(v1, d.Live, wsOriginPatterns(d.AllowedOrigins))
+	}
+	if d.Shadow != nil {
+		registerShadowRoutes(v1, d.Shadow)
 	}
 
 	return r

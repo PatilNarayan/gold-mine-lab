@@ -8,6 +8,7 @@ import NotFound from '@/pages/NotFound';
 import { WalkForwardPage } from '@/pages/WalkForward';
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const Market = lazy(() => import('@/pages/Market'));
+const Shadow = lazy(() => import('@/pages/Shadow'));
 const Strategies = lazy(() => import('@/pages/Strategies'));
 const StrategyDetail = lazy(() => import('@/pages/StrategyDetail'));
 const Backtests = lazy(() => import('@/pages/Backtests'));
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
     children: [
       { path: '/', element: <Dashboard /> },
       { path: '/market', element: <Market /> },
+      { path: '/shadow', element: <Shadow /> },
       { path: '/strategies', element: <Strategies /> },
       { path: '/strategies/:id', element: <StrategyDetail /> },
       { path: '/backtests', element: <Backtests /> },

@@ -10,8 +10,45 @@ import { ErrorState } from '@/components/common/ErrorState';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CandlestickChart, type ChartMarker } from '@/components/charts/CandlestickChart';
 import { LiveMarketPanel } from '@/components/market/LiveMarketPanel';
+import type { Coverage } from '@/types/domain';
 
 type Source = 'historical' | 'live';
+
+/** A one-line honest state of the synced historical coverage. */
+function CoverageNote({ coverage }: { coverage: Coverage | undefined }) {
+  if (!coverage) return null;
+  const span =
+    coverage.first && coverage.last
+      ? `${coverage.first.slice(0, 10)} → ${coverage.last.slice(0, 10)}`
+      : 'no verified span yet';
+  const parts = [`${coverage.provider} · ${coverage.count} candles · ${span}`];
+  if (coverage.inProgress) parts.push('syncing…');
+  else if (coverage.state === 'rate_limited')
+    parts.push(
+      coverage.retryAt
+        ? `provider rate-limited — retry ${new Date(coverage.retryAt).toLocaleTimeString()}`
+        : 'provider rate-limited',
+    );
+  else if (coverage.state === 'failed') parts.push('sync failed — serving stored data');
+  return (
+    <div
+      className={`mb-1 px-1 font-mono text-[10px] uppercase tracking-wide ${
+        coverage.state === 'complete' ? 'text-content-3' : 'text-amber-400/90'
+      }`}
+    >
+      {parts.join(' · ')}
+    </div>
+  );
+}
+
+function coverageEmptyMessage(coverage: Coverage | undefined): string {
+  if (!coverage) return 'No candle data is available for this asset and timeframe.';
+  if (coverage.inProgress) return 'History is syncing from the provider — check back shortly.';
+  if (coverage.state === 'rate_limited')
+    return 'History sync is provider rate-limited — stored coverage will resume shortly.';
+  if (coverage.state === 'failed') return 'History sync failed — no stored candles yet.';
+  return 'No candle data is available for this asset and timeframe.';
+}
 
 export default function Market() {
   const assetId = useAssetStore((s) => s.assetId);
@@ -76,6 +113,7 @@ export default function Market() {
         <LiveMarketPanel assetId={assetId} timeframe={timeframe} />
       ) : (
         <section className="border border-line bg-surface-1 p-2" aria-label="Price chart">
+          <CoverageNote coverage={candles.data?.coverage} />
           {candles.isLoading ? (
             <Skeleton className="h-[440px] w-full" />
           ) : candles.isError ? (
@@ -91,7 +129,7 @@ export default function Market() {
           ) : (
             <EmptyState
               title="No candles"
-              message="No candle data is available for this asset and timeframe."
+              message={coverageEmptyMessage(candles.data?.coverage)}
             />
           )}
         </section>

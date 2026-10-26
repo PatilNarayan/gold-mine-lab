@@ -198,7 +198,8 @@ func TestCandleBookFormsAndAdvances(t *testing.T) {
 	if forming.Open != 102 || forming.Close != 102 {
 		t.Fatalf("bad forming bar %+v", forming)
 	}
-	if !closed.Time.Equal(base) || !forming.Time.Equal(base.Add(15*time.Minute)) {
+	if !closed.Time.Equal(sessionBucket(base, b.def)) ||
+		!forming.Time.Equal(sessionBucket(base.Add(15*time.Minute), b.def)) {
 		t.Fatalf("bucket boundaries wrong: %v / %v", closed.Time, forming.Time)
 	}
 
@@ -320,11 +321,12 @@ func TestReplaceMergesFormingWithProviderRow(t *testing.T) {
 	b.onTick(base.Add(time.Minute), 100)
 	b.onTick(base.Add(2*time.Minute), 120) // high 120
 	b.onTick(base.Add(3*time.Minute), 95)  // low 95, close 95
-	// Provider row for the same bucket saw none of that range.
-	b.replace([]Candle{
+	// Provider row for the same session bucket saw none of that range —
+	// sessionized as the real fetch path does.
+	b.replace(aggregateSession([]Candle{
 		{Time: base.Add(-15 * time.Minute), Open: 90, High: 91, Low: 89, Close: 90},
 		{Time: base, Open: 99, High: 102, Low: 98, Close: 101},
-	}, time.Now())
+	}, b.def), time.Now())
 	out := b.snapshot(10)
 	if len(out) != 2 {
 		t.Fatalf("snapshot = %+v", out)
@@ -426,6 +428,82 @@ func mustRFC(s string) time.Time {
 		panic(err)
 	}
 	return t
+}
+
+// Intraday labels must equal the CSV provider's naive broker-wall-time
+// convention — a tick's sessionBucket label must match the label a CSV row
+// would carry for the same market interval. This is the merge-identity
+// property: bootstrap rows and stream ticks for the same interval must
+// produce identical candle times, or the frontend forms a duplicate bar.
+func TestIntradayLabelsMatchCSVConvention(t *testing.T) {
+	// A real UTC instant and the broker wall time it maps to (EEST = UTC+3).
+	cases := []struct {
+		ts    string // provider instant
+		label string // CSV-style label the same market interval gets
+		tf    string
+	}{
+		{"2026-10-22T19:45:30Z", "2026-10-22T22:45:00Z", "15m"}, // Kyiv 22:45 EEST
+		{"2026-10-22T19:00:01Z", "2026-10-22T22:00:00Z", "1h"},
+		{"2026-10-22T19:00:01Z", "2026-10-22T22:00:00Z", "5m"},
+		{"2026-10-22T19:00:01Z", "2026-10-22T22:00:00Z", "1m"},
+		// Winter (EET = UTC+2): same labels, different instant mapping.
+		{"2026-11-15T10:07:00Z", "2026-11-15T12:05:00Z", "5m"}, // Kyiv 12:07 EET
+		// Autumn transition Oct-25 01:00Z: EEST(+3) → EET(+2) — the Kyiv hour
+		// 03:00–04:00 occurs twice, and both real instants get the same naive
+		// label, exactly as the broker export encodes them.
+		{"2026-10-24T23:59:00Z", "2026-10-25T02:45:00Z", "15m"}, // Kyiv 02:59 EEST
+		{"2026-10-25T00:01:00Z", "2026-10-25T03:00:00Z", "15m"}, // Kyiv 03:01 EEST — first instance
+		{"2026-10-25T01:01:00Z", "2026-10-25T03:00:00Z", "15m"}, // Kyiv 03:01 EET — same label, second instance
+		// Spring forward Mar-29 01:00Z: EET(+2) → EEST(+3), 03:xx never exists.
+		{"2026-03-29T00:59:00Z", "2026-03-29T02:45:00Z", "15m"}, // Kyiv 02:59 EET
+		{"2026-03-29T01:01:00Z", "2026-03-29T04:00:00Z", "15m"}, // Kyiv 04:01 EEST
+	}
+	for _, tc := range cases {
+		def := supportedTimeframes[tc.tf]
+		got := sessionBucket(mustRFC(tc.ts), def)
+		if got.Format(time.RFC3339) != tc.label {
+			t.Fatalf("%s %s → %s, want %s", tc.tf, tc.ts, got.Format(time.RFC3339), tc.label)
+		}
+		// The CSV provider would emit exactly this label for the same
+		// interval — verify it parses to the identical timestamp.
+		var csvT time.Time
+		if len(tc.label) >= 16 {
+			var err error
+			csvT, err = time.Parse("2006-01-02T15:04:05Z", tc.label)
+			if err != nil {
+				t.Fatalf("csv parse: %v", err)
+			}
+		}
+		if !csvT.Equal(got) {
+			t.Fatalf("label mismatch vs CSV convention: %s vs %s", csvT, got)
+		}
+	}
+}
+
+// Seed rows (provider UTC instants) and ticks must land on the SAME labels —
+// proving the bootstrap+stream merge targets one forming candle per interval.
+func TestSeedAndTickShareIntradayLabel(t *testing.T) {
+	b := &candleBook{def: supportedTimeframes["15m"]}
+	// Provider 15m row covering the 19:45–20:00Z interval → label Kyiv 22:45.
+	seed := []Candle{
+		{Time: mustRFC("2026-10-22T19:30:00Z"), Open: 100, High: 101, Low: 99, Close: 100},
+		{Time: mustRFC("2026-10-22T19:45:00Z"), Open: 100, High: 102, Low: 100, Close: 101},
+	}
+	seed = aggregateSession(seed, b.def)
+	if seed[1].Time.Format(time.RFC3339) != "2026-10-22T22:45:00Z" {
+		t.Fatalf("seed label = %s, want Kyiv-naive 22:45", seed[1].Time.Format(time.RFC3339))
+	}
+	b.replace(seed, time.Now())
+	// A tick inside the same absolute interval updates that seeded candle,
+	// not a second forming bar.
+	b.onTick(mustRFC("2026-10-22T19:50:00Z"), 105)
+	out := b.snapshot(10)
+	if len(out) != 2 {
+		t.Fatalf("tick created a second bar for one interval: %+v", out)
+	}
+	if out[1].Time.Format(time.RFC3339) != "2026-10-22T22:45:00Z" || out[1].Close != 105 || out[1].High != 105 {
+		t.Fatalf("forming bar wrong: %+v", out[1])
+	}
 }
 
 // Each accepted connection sends a price of 2000+conn# then drops. The
@@ -693,10 +771,11 @@ func TestPollDedupeSameTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Candles: %v", err)
 	}
-	// One forming candle at the provider bucket; close reflects the last poll.
+	// One forming candle at the session label for the provider bucket; close
+	// reflects the last poll.
 	var forming *Candle
 	for i := range cs {
-		if cs[i].Time.Equal(time.Unix(1760000000, 0).Truncate(15 * time.Minute)) {
+		if cs[i].Time.Equal(sessionBucket(time.Unix(1760000000, 0), supportedTimeframes["15m"])) {
 			forming = &cs[i]
 		}
 	}
@@ -721,16 +800,18 @@ func TestReconcileDoesNotDuplicateFormingBucket(t *testing.T) {
 	})
 	p.now = func() time.Time { return time.Unix(1792437300, 0) } // 19:15:00Z
 
-	// Fold a tick into the 19:15 bucket, then reconcile over it with a
-	// provider response that includes a row for the same bucket.
+	// Fold a tick into the 19:15Z instant's Kyiv bucket, then reconcile over
+	// it with a provider response whose rows carry the same session labels
+	// (the real fetch path sessionizes before replace).
 	ts := time.Unix(1792437300, 0)
 	p.applyQuote(Quote{AssetID: "xauusd", Symbol: "XAU/USD", Price: 4144.5,
 		ProviderTime: &ts, ReceivedAt: ts})
 	book := p.books["15m"]
-	book.replace([]Candle{
-		{Time: ts.Truncate(15 * time.Minute).Add(-15 * time.Minute), Open: 1, High: 2, Low: .5, Close: 1.5},
+	def := supportedTimeframes["15m"]
+	book.replace(aggregateSession([]Candle{
+		{Time: ts.Add(-15 * time.Minute).Truncate(15 * time.Minute), Open: 1, High: 2, Low: .5, Close: 1.5},
 		{Time: ts.Truncate(15 * time.Minute), Open: 3, High: 4, Low: 2.5, Close: 3.5},
-	}, ts)
+	}, def), ts)
 
 	got := book.snapshot(10)
 	seen := map[time.Time]int{}
@@ -745,7 +826,7 @@ func TestReconcileDoesNotDuplicateFormingBucket(t *testing.T) {
 	// Merged, not adopted: provider open/bucket win, tick-accumulated
 	// high/low/close survive the reconcile.
 	last := got[len(got)-1]
-	want := Candle{Time: ts.Truncate(15 * time.Minute), Open: 3, High: 4144.5, Low: 2.5, Close: 4144.5}
+	want := Candle{Time: sessionBucket(ts, def), Open: 3, High: 4144.5, Low: 2.5, Close: 4144.5}
 	if !last.Time.Equal(want.Time) || last.Open != want.Open || last.High != want.High ||
 		last.Low != want.Low || last.Close != want.Close {
 		t.Fatalf("forming bucket merge wrong: got %+v want %+v", last, want)

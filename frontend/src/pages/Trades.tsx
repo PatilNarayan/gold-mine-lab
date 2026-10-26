@@ -79,6 +79,7 @@ export default function Trades() {
             <option value="">All</option>
             <option value="win">Win</option>
             <option value="loss">Loss</option>
+            <option value="breakeven">Break-even</option>
             <option value="open">Open</option>
           </Select>
         </Field>

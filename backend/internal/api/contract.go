@@ -35,6 +35,22 @@ type CandleSeries struct {
 	Timeframe market.Timeframe `json:"timeframe"`
 	Candles   []market.Candle  `json:"candles"`
 	Overlays  Overlays         `json:"overlays"`
+	// Coverage reports the verified synced span + sync state — clients must
+	// distinguish "no data" from "data still syncing/rate-limited".
+	Coverage *Coverage `json:"coverage,omitempty"`
+}
+
+// Coverage mirrors market.Coverage for the wire — verified synced span and
+// the state of the last sync attempt.
+type Coverage struct {
+	Provider   string     `json:"provider"`
+	First      *time.Time `json:"first,omitempty"`
+	Last       *time.Time `json:"last,omitempty"`
+	Count      int64      `json:"count"`
+	State      string     `json:"state"` // complete|partial|rate_limited|failed
+	LastError  string     `json:"lastError,omitempty"`
+	RetryAt    *time.Time `json:"retryAt,omitempty"`
+	InProgress bool       `json:"inProgress,omitempty"`
 }
 
 // Overlays holds precomputed indicator series (EMA20/EMA50).
@@ -125,6 +141,12 @@ type BacktestRun struct {
 	EngineVersion   *string `json:"engineVersion"`
 	StrategyVersion *string `json:"strategyVersion"`
 	Dataset         *string `json:"dataset"`
+	// Data provenance (migration 000010): the candle source and actual span
+	// consumed. Legacy rows carry 'csv' or 'unknown' — never a guess.
+	DataProvider *string    `json:"dataProvider,omitempty"`
+	DataCandles  *int       `json:"dataCandles,omitempty"`
+	DataFirstBar *time.Time `json:"dataFirstBar,omitempty"`
+	DataLastBar  *time.Time `json:"dataLastBar,omitempty"`
 	// Experiment membership: comparison (000003) or walk-forward (000004).
 	ComparisonID  *string `json:"comparisonId,omitempty"`
 	WalkForwardID *string `json:"walkForwardId,omitempty"`
@@ -824,4 +846,92 @@ type LiveMarketService interface {
 	// unsubscribe func. Each event is a complete snapshot of what changed —
 	// frames may be dropped for slow consumers without corrupting state.
 	LiveStream(ctx context.Context) (<-chan LiveStreamEvent, func(), error)
+}
+
+// ── Shadow trading (SIMULATED execution) ────────────────────────────────
+
+// ShadowStatusResponse is the engine's current honest state.
+type ShadowStatusResponse struct {
+	Mode            string           `json:"mode"` // always "simulated"
+	StrategyID      string           `json:"strategyId"`
+	StrategyVersion string           `json:"strategyVersion"`
+	Symbol          string           `json:"symbol"`
+	Timeframe       string           `json:"timeframe"`
+	Position        *ShadowPosition  `json:"position,omitempty"`
+	PendingOrder    *ShadowOrder     `json:"pendingOrder,omitempty"`
+	RealizedPnl     float64          `json:"realizedPnl"`
+	RealizedComm    float64          `json:"realizedCommissions"`
+	RealizedSpread  float64          `json:"realizedSpreadCost"`
+	Equity          float64          `json:"equity"`
+	LastBarTime     *time.Time       `json:"lastBarTime,omitempty"`
+	OrderStats      ShadowOrderStats `json:"orderStats"`
+	Session         *ShadowSession   `json:"session,omitempty"`
+	Metrics         ShadowMetrics    `json:"metrics"`
+}
+
+// ShadowSession identifies the forward-test session identity (auditable).
+type ShadowSession struct {
+	ID           int64      `json:"id"`
+	Provider     string     `json:"provider"`
+	StartedAt    *time.Time `json:"startedAt,omitempty"`
+	RestartCount int        `json:"restartCount"`
+}
+
+// ShadowMetrics are honest counters from actual engine events.
+type ShadowMetrics struct {
+	BarsProcessed  int        `json:"barsProcessed"`
+	SignalsSeen    int        `json:"signalsSeen"`
+	QuotesSeen     int        `json:"quotesSeen"`
+	QuotesRejected int        `json:"quotesRejected"`
+	Fills          int        `json:"fills"`
+	Expired        int        `json:"expired"`
+	Missed         int        `json:"missed"`
+	Recoveries     int        `json:"recoveries"`
+	DupSkips       int        `json:"duplicateEventsSkipped"`
+	LastQuoteAt    *time.Time `json:"lastQuoteAt,omitempty"`
+	LastFillAt     *time.Time `json:"lastFillAt,omitempty"`
+}
+
+type ShadowPosition struct {
+	Side       string     `json:"side"`
+	Quantity   float64    `json:"quantity"`
+	EntryPrice float64    `json:"entryPrice"`
+	EntryAt    *time.Time `json:"entryAt,omitempty"`
+}
+
+type ShadowOrder struct {
+	ID            int64      `json:"id"`
+	Side          string     `json:"side"`
+	Status        string     `json:"status"` // pending|filled|rejected|expired
+	SignalBarTime time.Time  `json:"signalBarTime"`
+	DecisionAt    time.Time  `json:"decisionAt"`
+	RejectReason  *string    `json:"rejectReason,omitempty"`
+	QuoteBid      *float64   `json:"quoteBid,omitempty"`
+	QuoteAsk      *float64   `json:"quoteAsk,omitempty"`
+	QuoteMid      *float64   `json:"quoteMid,omitempty"`
+	FillPrice     *float64   `json:"fillPrice,omitempty"`
+	FilledAt      *time.Time `json:"filledAt,omitempty"`
+	Quantity      *float64   `json:"quantity,omitempty"`
+	Commission    *float64   `json:"commission,omitempty"`
+	QuoteProvider *time.Time `json:"quoteProviderTime,omitempty"`
+	QuoteReceipt  *time.Time `json:"quoteReceivedAt,omitempty"`
+}
+
+type ShadowOrderStats struct {
+	Filled   int `json:"filled"`
+	Expired  int `json:"expired"`
+	Rejected int `json:"rejected"`
+	Missed   int `json:"missed"`
+	Pending  int `json:"pending"`
+}
+
+type ShadowOrdersResponse struct {
+	Mode   string        `json:"mode"`
+	Orders []ShadowOrder `json:"orders"`
+}
+
+// ShadowService exposes the simulated-execution engine's state.
+type ShadowService interface {
+	ShadowStatus(ctx context.Context) (ShadowStatusResponse, error)
+	ShadowOrders(ctx context.Context, limit int) (ShadowOrdersResponse, error)
 }

@@ -18,14 +18,18 @@ func (s *Store) CreateRun(ctx context.Context, r repository.RunRow) (string, err
 		INSERT INTO backtest_runs
 		    (strategy_id, asset_id, timeframe, start_date, end_date,
 		     initial_capital, position_size, commission, slippage, parameters,
-		     engine_version, strategy_version, dataset, comparison_id, sample, walk_forward_id, status)
-		VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'queued')
+		     engine_version, strategy_version, dataset,
+		     data_provider, data_candles, data_first_bar, data_last_bar,
+		     comparison_id, sample, walk_forward_id, status)
+		VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'queued')
 		RETURNING id::text`
 	var id string
 	err := s.db.QueryRow(ctx, q,
 		r.StrategyID, r.AssetID, r.Timeframe, r.StartDate, r.EndDate,
 		r.InitialCapital, r.PositionSize, r.Commission, r.Slippage, params,
-		r.EngineVersion, r.StrategyVersion, r.Dataset, r.ComparisonID, r.Sample, r.WalkForwardID,
+		r.EngineVersion, r.StrategyVersion, r.Dataset,
+		r.DataProvider, r.DataCandles, r.DataFirstBar, r.DataLastBar,
+		r.ComparisonID, r.Sample, r.WalkForwardID,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("create run: %w", err)
@@ -114,6 +118,7 @@ const runCols = `id::text, strategy_id, asset_id, timeframe, start_date, end_dat
 	initial_capital, position_size, commission, slippage, parameters,
 	status, equity_curve, error,
 	engine_version, strategy_version, dataset,
+	data_provider, data_candles, data_first_bar, data_last_bar,
 	comparison_id::text, sample, walk_forward_id::text,
 	created_at, completed_at`
 
@@ -189,6 +194,7 @@ func scanRun(row pgx.Row) (repository.RunRow, error) {
 		&r.InitialCapital, &r.PositionSize, &r.Commission, &r.Slippage,
 		&params, &r.Status, &curve, &r.Error,
 		&r.EngineVersion, &r.StrategyVersion, &r.Dataset,
+		&r.DataProvider, &r.DataCandles, &r.DataFirstBar, &r.DataLastBar,
 		&r.ComparisonID, &r.Sample, &r.WalkForwardID,
 		&r.CreatedAt, &r.CompletedAt)
 	if err != nil {

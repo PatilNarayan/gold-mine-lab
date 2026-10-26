@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gold-mine-lab/backend/internal/api"
 	"github.com/gold-mine-lab/backend/internal/config"
@@ -19,6 +20,7 @@ import (
 	"github.com/gold-mine-lab/backend/internal/market"
 	"github.com/gold-mine-lab/backend/internal/repository/postgres"
 	"github.com/gold-mine-lab/backend/internal/service"
+	"github.com/gold-mine-lab/backend/internal/shadow"
 	"github.com/gold-mine-lab/backend/internal/strategy"
 	"github.com/gold-mine-lab/backend/migrations"
 )
@@ -56,13 +58,9 @@ func run(shutdown <-chan os.Signal) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	// Real pipeline: CSV provider → registry → service → repositories.
-	if cfg.MarketDataDir == "" {
-		return fmt.Errorf("MARKET_DATA_DIR is required (historical CSV directory)")
-	}
-	data := market.NewCSVProvider(cfg.MarketDataDir, nil)
-	log.Info("market data directory configured", "dir", cfg.MarketDataDir)
-
+	// Real pipeline: provider-synced Postgres candle store → registry →
+	// service → repositories. Historical candles come exclusively from the
+	// configured market provider — no bundled CSV datasets at runtime.
 	reg := strategy.NewRegistry()
 	if err := reg.Register(strategy.NewEMACross()); err != nil {
 		return err
@@ -75,21 +73,11 @@ func run(shutdown <-chan os.Signal) error {
 	}
 
 	store := postgres.New(pool.Pool)
-	svc := service.New(service.Repositories{
-		Assets: store, Strategies: store, Signals: store,
-		Runs: store, Trades: store, Metrics: store, Comparisons: store, WalkForwards: store, StrategyGraphs: store, SignalResearch: store,
-		Studies: store,
-	}, data, reg, log)
 
-	// Seed asset/strategies, generate real signals, run seed backtests on an
-	// empty database — all idempotent.
-	if err := svc.Bootstrap(ctx); err != nil {
-		pool.Close()
-		return fmt.Errorf("bootstrap: %w", err)
-	}
-	// Live market data: one managed upstream connection feeding quote + candle
-	// caches. Observational only — never touches the research pipeline. When
-	// disabled or unconfigured the provider reports its state truthfully.
+	// Live + historical market data: one managed upstream provider feeding
+	// the realtime quote/candle caches AND serving as the historical source
+	// for the persistent candle store. Same provider on both sides keeps the
+	// pricing convention coherent — no silent cross-provider mixing.
 	var liveProvider live.Provider
 	if cfg.Live.Enabled {
 		switch cfg.Live.Provider {
@@ -135,7 +123,78 @@ func run(shutdown <-chan os.Signal) error {
 				"hint", "increase LIVE_MARKET_POLL_INTERVAL / LIVE_MARKET_CANDLE_RECONCILE_INTERVAL")
 		}
 	}
+
+	// Canonical historical source: Postgres candle store backfilled by the
+	// configured provider on demand. Read-only (no syncs) when live is off.
+	var histFn market.HistoryFunc
+	var histFloor time.Time
+	if liveProvider != nil {
+		p := liveProvider
+		histFloor = p.HistoryFloor()
+		histFn = func(ctx context.Context, tf market.Timeframe, from, to time.Time,
+			onPage func([]market.Candle, time.Time, time.Time) error) error {
+			return p.FetchHistoryPages(ctx, string(tf), from, to,
+				func(rows []live.Candle, cf, ct time.Time) error {
+					out := make([]market.Candle, len(rows))
+					for i, r := range rows {
+						out[i] = market.Candle{Time: r.Time, Open: r.Open, High: r.High, Low: r.Low, Close: r.Close}
+						if r.Volume != nil {
+							out[i].Volume = *r.Volume
+						}
+					}
+					return onPage(out, cf, ct)
+				})
+		}
+	}
+	data := market.NewDBProvider(postgres.NewCandleStore(pool.Pool),
+		cfg.Live.Provider, histFloor, histFn)
+
+	// Prospective market-cost evidence: record distinct live bid/ask quote
+	// events (deduplicated, staleness-flagged) — never fabricated rows.
+	if liveProvider != nil {
+		quoteRec := service.NewQuoteRecorder(store, cfg.Live.Provider, cfg.Live.Symbol, log)
+		quoteRec.Start(ctx, liveProvider)
+		defer quoteRec.Stop()
+		log.Info("quote observation recorder started", "provider", cfg.Live.Provider, "symbol", cfg.Live.Symbol)
+	}
+
+	svc := service.New(service.Repositories{
+		Assets: store, Strategies: store, Signals: store,
+		Runs: store, Trades: store, Metrics: store, Comparisons: store, WalkForwards: store, StrategyGraphs: store, SignalResearch: store,
+		Studies: store,
+	}, data, reg, log)
+
+	// Seed asset/strategies, generate real signals, run seed backtests on an
+	// empty database — all idempotent. Historical sync happens lazily on
+	// first read and eagerly for the coarser timeframes inside Bootstrap.
+	if err := svc.Bootstrap(ctx); err != nil {
+		pool.Close()
+		return fmt.Errorf("bootstrap: %w", err)
+	}
 	liveSvc := service.NewLiveService(liveProvider)
+
+	// Shadow trading (SIMULATED): benchmark EMA cross as control only — it
+	// has no demonstrated edge. The driver consumes real candle closes +
+	// quotes; fills are hypothetical and persisted for replay/recovery.
+	var shadowSvc api.ShadowService
+	if liveProvider != nil {
+		if strat, ok := reg.Get("ema-cross"); ok {
+			shadowCfg := shadow.Config{
+				StrategyID: strat.ID(), StrategyVersion: strat.Version(),
+				Symbol: cfg.Live.Symbol, Timeframe: market.Timeframe1h,
+				Provider:      cfg.Live.Provider,
+				InitialEquity: 100000, PositionSizePct: 10,
+				CommissionPct: 0.02, // same assumptions as the historical benchmark
+			}
+			eng := shadow.New(shadowCfg, store, log)
+			asset := market.Asset{ID: "xauusd", Symbol: cfg.Live.Symbol}
+			driver := service.NewShadowDriver(eng, liveProvider, data, asset, strat, shadowCfg, store, log)
+			go driver.Start(ctx)
+			defer func() { _ = eng }()
+			shadowSvc = service.NewShadowService(eng, store, store, shadowCfg)
+			log.Info("shadow engine started (simulated)", "strategy", strat.ID(), "version", strat.Version())
+		}
+	}
 
 	router := api.NewRouter(api.Deps{
 		Logger:         log,
@@ -150,6 +209,7 @@ func run(shutdown <-chan os.Signal) error {
 		SignalResearch: svc,
 		Studies:        svc,
 		Live:           liveSvc,
+		Shadow:         shadowSvc,
 		AllowedOrigins: cfg.HTTP.AllowedOrigins,
 		Env:            cfg.Env,
 	})

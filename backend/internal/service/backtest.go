@@ -8,6 +8,7 @@ import (
 
 	"github.com/gold-mine-lab/backend/internal/api"
 	"github.com/gold-mine-lab/backend/internal/backtest"
+	"github.com/gold-mine-lab/backend/internal/market"
 	"github.com/gold-mine-lab/backend/internal/metrics"
 	"github.com/gold-mine-lab/backend/internal/repository"
 	"github.com/gold-mine-lab/backend/internal/strategy"
@@ -131,13 +132,25 @@ func (s *Service) Execute(ctx context.Context, req api.BacktestRequest) (api.Bac
 		return api.BacktestRun{}, err
 	}
 
-	// Provenance: fingerprint the exact CSV file this run will read. The
-	// provider hashes each file at most once per process and caches it.
+	// Provenance: fingerprint + coverage of the exact dataset this run reads.
+	// DB-backed coverage also yields provider/count/span; anything unavailable
+	// stays NULL rather than invented.
 	if asset, err := s.repos.Assets.GetAsset(ctx, req.AssetID); err == nil {
 		if fp, err := s.data.Fingerprint(asset, req.Timeframe); err == nil {
 			run.Dataset = &fp
 		}
-	} // fingerprint unavailable → leave NULL rather than invent provenance
+		if covSrc, ok := s.data.(interface {
+			CoverageInfo(context.Context, market.Asset, market.Timeframe) (market.Coverage, error)
+		}); ok {
+			if cov, err := covSrc.CoverageInfo(ctx, asset, req.Timeframe); err == nil && cov.Provider != "" {
+				run.DataProvider = &cov.Provider
+				n := int(cov.Count)
+				run.DataCandles = &n
+				run.DataFirstBar = &cov.First
+				run.DataLastBar = &cov.Last
+			}
+		}
+	}
 
 	runID, err := s.repos.Runs.CreateRun(ctx, run)
 	if err != nil {
@@ -351,6 +364,8 @@ func runDTO(r repository.RunRow) api.BacktestRun {
 		Status: r.Status, CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 		CompletedAt: completedAt, Error: r.Error,
 		EngineVersion: r.EngineVersion, StrategyVersion: r.StrategyVersion, Dataset: r.Dataset,
+		DataProvider: r.DataProvider, DataCandles: r.DataCandles,
+		DataFirstBar: r.DataFirstBar, DataLastBar: r.DataLastBar,
 		ComparisonID: r.ComparisonID, WalkForwardID: r.WalkForwardID, Sample: r.Sample,
 	}
 }

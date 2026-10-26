@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createServices } from './index';
 import { mockMarketService } from './mock/mockMarket';
 import { mockHealthService } from './mock/mockHealth';
@@ -19,6 +19,20 @@ describe('service factory', () => {
     const s = createServices('api');
     expect(s.market).toBe(httpMarketService);
     expect(s.health).toBe(httpHealthService);
+  });
+
+  it('resolves mock only when explicitly opted in', async () => {
+    // Contract: mock is reachable ONLY via VITE_DATA_MODE === 'mock' —
+    // every other value (unset, 'api', garbage) selects real services.
+    // (vitest pins VITE_DATA_MODE=mock for the suite; re-resolve per case.)
+    for (const [env, want] of [['api', 'api'], ['', 'api'], ['garbage', 'api'], ['mock', 'mock']] as const) {
+      vi.resetModules();
+      vi.stubEnv('VITE_DATA_MODE', env);
+      const { dataMode } = await import('@/lib/config');
+      expect(dataMode, `VITE_DATA_MODE=${env!}`).toBe(want);
+    }
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 
   it('never opens a socket in Phase 1', () => {

@@ -238,9 +238,13 @@ func closeTrade(t Trade, exitTime time.Time, exitPrice, commissionPct float64) T
 	t.GrossPnl, t.Pnl = &gross, &net
 	t.ExitCommission = exitComm
 	t.Status = "closed"
-	t.Result = "loss"
+	// Result is classified on net: a gross win can still be a net loss, and
+	// an exact break-even is 'breakeven' — never silently lumped into 'loss'.
+	t.Result = "breakeven"
 	if net > 0 {
 		t.Result = "win"
+	} else if net < 0 {
+		t.Result = "loss"
 	}
 	return t
 }

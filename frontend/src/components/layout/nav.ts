@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  Ghost,
   BarChart3,
   ChartCandlestick,
   FlaskConical,
@@ -24,6 +25,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/market', label: 'Market', icon: ChartCandlestick },
+  { to: '/shadow', label: 'Shadow', icon: Ghost },
   { to: '/strategies', label: 'Strategies', icon: Layers },
   { to: '/backtests', label: 'Backtests', icon: FlaskConical },
   { to: '/compare', label: 'Compare', icon: GitCompareArrows },

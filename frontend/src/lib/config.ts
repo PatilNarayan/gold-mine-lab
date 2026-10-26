@@ -6,7 +6,9 @@
 
 export type DataMode = 'mock' | 'api';
 
-export const dataMode: DataMode = import.meta.env.VITE_DATA_MODE === 'api' ? 'api' : 'mock';
+// Real data is the default — mock services only exist for explicit
+// development/testing opt-in and are never selected silently.
+export const dataMode: DataMode = import.meta.env.VITE_DATA_MODE === 'mock' ? 'mock' : 'api';
 
 export const isMockMode = dataMode === 'mock';
 

@@ -1,5 +1,6 @@
 import type {
   BacktestService,
+  ShadowService,
   LiveMarketService,
   SignalResearchService,
   ResearchStudyService,
@@ -38,6 +39,8 @@ import { httpSignalResearchService } from './api/httpSignalResearch';
 import { mockSignalResearchService } from './mock/mockSignalResearch';
 import { httpResearchStudyService } from './api/httpResearchStudies';
 import { mockResearchStudyService } from './mock/mockResearchStudies';
+import { httpShadowService } from './api/httpShadow';
+import { mockShadowService } from './mock/mockShadow';
 
 export interface Services {
   market: MarketService;
@@ -51,6 +54,7 @@ export interface Services {
   signalResearch: SignalResearchService;
   researchStudies: ResearchStudyService;
   health: HealthService;
+  shadow: ShadowService;
   realtime: RealtimeClient;
 }
 
@@ -73,6 +77,7 @@ export function createServices(mode: DataMode = dataMode): Services {
       signalResearch: httpSignalResearchService,
       researchStudies: httpResearchStudyService,
       health: httpHealthService,
+      shadow: httpShadowService,
       realtime: new NoopRealtimeClient(),
     };
   }
@@ -88,6 +93,7 @@ export function createServices(mode: DataMode = dataMode): Services {
     signalResearch: mockSignalResearchService,
     researchStudies: mockResearchStudyService,
     health: mockHealthService,
+    shadow: mockShadowService,
     realtime: new NoopRealtimeClient(),
   };
 }
