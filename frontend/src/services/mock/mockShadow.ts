@@ -16,7 +16,7 @@ const emptyStatus: ShadowStatus = {
   realizedCommissions: 0,
   realizedSpreadCost: 0,
   equity: 100000,
-  orderStats: { filled: 0, expired: 0, rejected: 0, missed: 0, pending: 0 },
+  orderStats: { filled: 0, expired: 0, rejected: 0, missed: 0, unobservable: 0, pending: 0 },
   session: { id: 0, provider: 'none', restartCount: 0 },
   metrics: {
     barsProcessed: 0, signalsSeen: 0, quotesSeen: 0, quotesRejected: 0,
@@ -27,6 +27,9 @@ const emptyStatus: ShadowStatus = {
 export const mockShadowService: ShadowService = {
   getStatus(): Promise<ShadowStatus> {
     return Promise.resolve(emptyStatus);
+  },
+  getDecisions() {
+    return Promise.resolve({ decisions: [] });
   },
   getOrders(): Promise<ShadowOrders> {
     return Promise.resolve({ mode: 'simulated', orders: [] });

@@ -1,4 +1,4 @@
-import { shadowOrdersSchema, shadowStatusSchema } from '@/types/domain';
+import { shadowDecisionsResponseSchema, shadowOrdersSchema, shadowStatusSchema } from '@/types/domain';
 import type { ShadowService } from '@/services/interfaces';
 import { apiClient } from './client';
 
@@ -9,5 +9,8 @@ export const httpShadowService: ShadowService = {
   },
   getOrders(limit = 100) {
     return apiClient.get(`/api/shadow/orders?limit=${limit}`, shadowOrdersSchema);
+  },
+  getDecisions(limit = 50) {
+    return apiClient.get(`/api/shadow/decisions?limit=${limit}`, shadowDecisionsResponseSchema);
   },
 };

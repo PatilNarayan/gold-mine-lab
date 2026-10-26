@@ -18,15 +18,16 @@ import (
 // are all complete (the REST sync never persists forming bars), so they
 // both warm the evaluator and mark already-closed sessions.
 type ShadowDriver struct {
-	eng      *shadow.Engine
-	provider live.Provider
-	data     market.HistoricalSource
-	asset    market.Asset
-	strat    strategy.Strategy
-	cfg      shadow.Config
-	sessions SessionStore
-	log      *slog.Logger
-	poll     time.Duration
+	eng       *shadow.Engine
+	provider  live.Provider
+	data      market.HistoricalSource
+	asset     market.Asset
+	strat     strategy.Strategy
+	cfg       shadow.Config
+	sessions  SessionStore
+	sessionID int64 // active session identity for TouchSession
+	log       *slog.Logger
+	poll      time.Duration
 }
 
 // SessionStore is the persistence boundary for session identity.
@@ -41,14 +42,17 @@ func NewShadowDriver(eng *shadow.Engine, provider live.Provider, data market.His
 		strat: strat, cfg: cfg, sessions: sessions, log: log, poll: 15 * time.Second}
 }
 
-// sessionConfig is the frozen engine/policy snapshot stored on the session.
+// sessionConfig is the frozen engine/policy snapshot stored on the session —
+// serialized from the ENGINE's effective config (defaults applied), never
+// the caller's pre-default struct.
 func (d *ShadowDriver) sessionConfig() []byte {
+	c := d.eng.EffectiveConfig()
 	cfg, _ := json.Marshal(map[string]any{
-		"initialEquity":   d.cfg.InitialEquity,
-		"positionSizePct": d.cfg.PositionSizePct,
-		"commissionPct":   d.cfg.CommissionPct,
-		"fillTimeoutMs":   d.cfg.FillTimeout.Milliseconds(),
-		"quoteMaxAgeMs":   d.cfg.QuoteMaxAge.Milliseconds(),
+		"initialEquity":   c.InitialEquity,
+		"positionSizePct": c.PositionSizePct,
+		"commissionPct":   c.CommissionPct,
+		"fillTimeoutMs":   c.FillTimeout.Milliseconds(),
+		"quoteMaxAgeMs":   c.QuoteMaxAge.Milliseconds(),
 	})
 	return cfg
 }
@@ -81,6 +85,7 @@ func (d *ShadowDriver) Start(ctx context.Context) {
 		return
 	} else {
 		d.eng.SetSession(sess.ID)
+		d.sessionID = sess.ID
 		d.log.Info("shadow session", "id", sess.ID, "restarts", sess.RestartCount)
 	}
 
@@ -93,21 +98,35 @@ func (d *ShadowDriver) Start(ctx context.Context) {
 	// quote after restart, never backdated.
 	lastBar := d.eng.Snapshot().LastBarTime
 	fresh := lastBar == nil
-	warmup, err := d.data.Tail(d.asset, d.eng.TF(), 400, time.Time{})
-	if err == nil {
-		for _, c := range warmup {
-			if fresh {
+	if fresh {
+		// Fresh start: warm the stream on recent stored closes only — no
+		// decisions, no recovery (the engine didn't exist for those bars).
+		warmup, err := d.data.Tail(d.asset, d.eng.TF(), 400, time.Time{})
+		if err == nil {
+			for _, c := range warmup {
 				stream.Next(c)
 				if err := d.eng.MarkBarProcessed(ctx, c.Time); err != nil {
 					d.log.Warn("shadow marker persist failed", "bar", c.Time, "err", err)
 				}
-				continue
 			}
-			if !c.Time.After(*lastBar) {
-				stream.Next(c) // warm only — already processed
-			} else if err := d.eng.ProcessMissedClose(ctx, c); err != nil {
-				d.log.Warn("shadow recovery failed", "bar", c.Time, "err", err)
+		}
+	} else {
+		// Restart: recover EVERYTHING since the persisted marker — Range
+		// returns `warmup` bars strictly before `lastBar` (indicator warmup)
+		// plus all stored closes after it (recovery decisions). No depth cap
+		// beyond what genuinely exists: a long outage recovers fully, bounded
+		// by the marker, never by an arbitrary window.
+		candles, err := d.data.Range(d.asset, d.eng.TF(), *lastBar, time.Now().UTC(), 200)
+		if err == nil {
+			for _, c := range candles {
+				if !c.Time.After(*lastBar) {
+					stream.Next(c) // indicator warmup — already processed
+				} else if err := d.eng.ProcessMissedClose(ctx, c); err != nil {
+					d.log.Warn("shadow recovery failed", "bar", c.Time, "err", err)
+				}
 			}
+		} else {
+			d.log.Warn("shadow recovery candle load failed — state preserved, will retry live", "err", err)
 		}
 	}
 

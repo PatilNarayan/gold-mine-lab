@@ -867,6 +867,22 @@ type ShadowStatusResponse struct {
 	OrderStats      ShadowOrderStats `json:"orderStats"`
 	Session         *ShadowSession   `json:"session,omitempty"`
 	Metrics         ShadowMetrics    `json:"metrics"`
+	Recorder        *ShadowRecorder  `json:"recorder,omitempty"`
+}
+
+// ShadowRecorder is the quote-observation recorder's durable health —
+// NOT the provider connection. Absent = recorder coverage unknown.
+type ShadowRecorder struct {
+	CoverageID         int64      `json:"coverageId"`
+	StartedAt          *time.Time `json:"startedAt,omitempty"`
+	LastHeartbeatAt    *time.Time `json:"lastHeartbeatAt,omitempty"`
+	LastObsAt          *time.Time `json:"lastObservationAt,omitempty"`
+	ObsCount           int64      `json:"observationsCount"`
+	DroppedBatches     int        `json:"droppedBatches"`
+	FeedState          *string    `json:"feedState,omitempty"`
+	LastFeedDegradedAt *time.Time `json:"lastFeedDegradedAt,omitempty"`
+	LastHeartbeatGapAt *time.Time `json:"lastHeartbeatGapAt,omitempty"`
+	LastDropAt         *time.Time `json:"lastDropAt,omitempty"`
 }
 
 // ShadowSession identifies the forward-test session identity (auditable).
@@ -886,8 +902,10 @@ type ShadowMetrics struct {
 	Fills          int        `json:"fills"`
 	Expired        int        `json:"expired"`
 	Missed         int        `json:"missed"`
+	Unobservable   int        `json:"unobservable"`
 	Recoveries     int        `json:"recoveries"`
 	DupSkips       int        `json:"duplicateEventsSkipped"`
+	Decisions      int        `json:"decisionsEvaluated"`
 	LastQuoteAt    *time.Time `json:"lastQuoteAt,omitempty"`
 	LastFillAt     *time.Time `json:"lastFillAt,omitempty"`
 }
@@ -918,11 +936,12 @@ type ShadowOrder struct {
 }
 
 type ShadowOrderStats struct {
-	Filled   int `json:"filled"`
-	Expired  int `json:"expired"`
-	Rejected int `json:"rejected"`
-	Missed   int `json:"missed"`
-	Pending  int `json:"pending"`
+	Filled       int `json:"filled"`
+	Expired      int `json:"expired"`
+	Rejected     int `json:"rejected"`
+	Missed       int `json:"missed"`
+	Unobservable int `json:"unobservable"`
+	Pending      int `json:"pending"`
 }
 
 type ShadowOrdersResponse struct {
@@ -930,8 +949,30 @@ type ShadowOrdersResponse struct {
 	Orders []ShadowOrder `json:"orders"`
 }
 
+// ShadowDecision is one evaluated-candle ledger row — evidence the bar was
+// actually evaluated (action, EMA values, actionability, source).
+type ShadowDecision struct {
+	ID            int64     `json:"id"`
+	SessionID     *int64    `json:"sessionId,omitempty"`
+	OrderID       *int64    `json:"orderId,omitempty"`
+	BarTime       time.Time `json:"barTime"`
+	DecidedAt     time.Time `json:"decidedAt"`
+	Source        string    `json:"source"` // live|recovery
+	Action        string    `json:"action"` // buy|sell|neutral
+	Reason        string    `json:"reason"`
+	FastEMA       *float64  `json:"fastEma,omitempty"`
+	SlowEMA       *float64  `json:"slowEma,omitempty"`
+	Actionable    bool      `json:"actionable"`
+	BlockedReason *string   `json:"blockedReason,omitempty"`
+}
+
+type ShadowDecisionsResponse struct {
+	Decisions []ShadowDecision `json:"decisions"`
+}
+
 // ShadowService exposes the simulated-execution engine's state.
 type ShadowService interface {
 	ShadowStatus(ctx context.Context) (ShadowStatusResponse, error)
 	ShadowOrders(ctx context.Context, limit int) (ShadowOrdersResponse, error)
+	ShadowDecisions(ctx context.Context, limit int) (ShadowDecisionsResponse, error)
 }

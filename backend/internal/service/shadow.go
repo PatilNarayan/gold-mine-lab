@@ -15,7 +15,13 @@ type ShadowService struct {
 	eng      *shadow.Engine
 	store    shadow.Store
 	sessions SessionReader
+	coverage CoverageReader
 	cfg      shadow.Config
+}
+
+// CoverageReader supplies recorder-health intervals for the status endpoint.
+type CoverageReader interface {
+	OpenCoverage(ctx context.Context, provider, symbol string) (*repository.QuoteCoverageRow, error)
 }
 
 // SessionReader supplies session identity for the status endpoint.
@@ -23,8 +29,8 @@ type SessionReader interface {
 	GetOpenSession(ctx context.Context, strategyID, version, symbol, tf, provider string) (*repository.ShadowSessionRow, error)
 }
 
-func NewShadowService(eng *shadow.Engine, store shadow.Store, sessions SessionReader, cfg shadow.Config) *ShadowService {
-	return &ShadowService{eng: eng, store: store, sessions: sessions, cfg: cfg}
+func NewShadowService(eng *shadow.Engine, store shadow.Store, sessions SessionReader, coverage CoverageReader, cfg shadow.Config) *ShadowService {
+	return &ShadowService{eng: eng, store: store, sessions: sessions, coverage: coverage, cfg: cfg}
 }
 
 func orderDTO(o repository.ShadowOrderRow) api.ShadowOrder {
@@ -73,7 +79,8 @@ func (s *ShadowService) ShadowStatus(ctx context.Context) (api.ShadowStatusRespo
 		BarsProcessed: m.BarsProcessed, SignalsSeen: m.SignalsSeen,
 		QuotesSeen: m.QuotesSeen, QuotesRejected: m.QuotesRejected,
 		Fills: m.Fills, Expired: m.Expired, Missed: m.Missed,
-		Recoveries: m.Recoveries, DupSkips: m.DupSkips,
+		Unobservable: m.Unobservable,
+		Recoveries:   m.Recoveries, DupSkips: m.DupSkips,
 		LastQuoteAt: m.LastQuoteAt, LastFillAt: m.LastFillAt,
 	}
 	// Order stats from the persisted rows — counts reflect the database,
@@ -91,9 +98,21 @@ func (s *ShadowService) ShadowStatus(ctx context.Context) (api.ShadowStatusRespo
 				out.OrderStats.Rejected++
 			case "missed":
 				out.OrderStats.Missed++
+			case "unobservable":
+				out.OrderStats.Unobservable++
 			case "pending":
 				out.OrderStats.Pending++
 			}
+		}
+	}
+	// Recorder health — distinct from provider connectivity.
+	if cov, err := s.coverage.OpenCoverage(ctx, s.cfg.Provider, s.cfg.Symbol); err == nil && cov != nil {
+		out.Recorder = &api.ShadowRecorder{
+			CoverageID: cov.ID, StartedAt: &cov.StartedAt,
+			LastHeartbeatAt: &cov.LastHeartbeatAt, LastObsAt: cov.LastObsAt,
+			ObsCount: cov.ObsCount, DroppedBatches: cov.DroppedBatches,
+			FeedState: cov.FeedState, LastFeedDegradedAt: cov.LastFeedDegradedAt,
+			LastHeartbeatGapAt: cov.LastHeartbeatGapAt, LastDropAt: cov.LastDropAt,
 		}
 	}
 	return out, nil
@@ -108,6 +127,24 @@ func (s *ShadowService) ShadowOrders(ctx context.Context, limit int) (api.Shadow
 	out := api.ShadowOrdersResponse{Mode: "simulated", Orders: make([]api.ShadowOrder, 0, len(rows))}
 	for _, r := range rows {
 		out.Orders = append(out.Orders, orderDTO(r))
+	}
+	return out, nil
+}
+
+func (s *ShadowService) ShadowDecisions(ctx context.Context, limit int) (api.ShadowDecisionsResponse, error) {
+	rows, err := s.store.ListDecisions(ctx, s.cfg.StrategyID, s.cfg.StrategyVersion,
+		s.cfg.Symbol, s.cfg.Timeframe, limit)
+	if err != nil {
+		return api.ShadowDecisionsResponse{}, err
+	}
+	out := api.ShadowDecisionsResponse{Decisions: make([]api.ShadowDecision, 0, len(rows))}
+	for _, d := range rows {
+		out.Decisions = append(out.Decisions, api.ShadowDecision{
+			ID: d.ID, SessionID: d.SessionID, OrderID: d.OrderID,
+			BarTime: d.BarTime, DecidedAt: d.DecidedAt, Source: d.Source,
+			Action: d.Action, Reason: d.Reason, FastEMA: d.FastEMA, SlowEMA: d.SlowEMA,
+			Actionable: d.Actionable, BlockedReason: d.BlockedReason,
+		})
 	}
 	return out, nil
 }

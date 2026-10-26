@@ -870,7 +870,7 @@ export const shadowPositionSchema = z.object({
 export const shadowOrderSchema = z.object({
   id: z.number(),
   side: z.string(),
-  status: z.enum(['pending', 'filled', 'rejected', 'expired', 'missed']),
+  status: z.enum(['pending', 'filled', 'rejected', 'expired', 'missed', 'unobservable']),
   signalBarTime: z.string(),
   decisionAt: z.string(),
   rejectReason: z.string().optional().nullable(),
@@ -900,7 +900,7 @@ export const shadowStatusSchema = z.object({
   lastBarTime: z.string().optional(),
   orderStats: z.object({
     filled: z.number(), expired: z.number(),
-    rejected: z.number(), missed: z.number(), pending: z.number(),
+    rejected: z.number(), missed: z.number(), unobservable: z.number(), pending: z.number(),
   }),
   session: z.object({
     id: z.number(), provider: z.string(),
@@ -911,8 +911,21 @@ export const shadowStatusSchema = z.object({
     quotesSeen: z.number(), quotesRejected: z.number(),
     fills: z.number(), expired: z.number(), missed: z.number(),
     recoveries: z.number(), duplicateEventsSkipped: z.number(),
+    unobservable: z.number().optional(),
     lastQuoteAt: z.string().optional(), lastFillAt: z.string().optional(),
   }).optional(),
+  recorder: z.object({
+    coverageId: z.number(),
+    startedAt: z.string().optional(),
+    lastHeartbeatAt: z.string().optional(),
+    lastObservationAt: z.string().optional(),
+    observationsCount: z.number(),
+    droppedBatches: z.number(),
+    feedState: z.string().optional(),
+    lastFeedDegradedAt: z.string().optional(),
+    lastHeartbeatGapAt: z.string().optional(),
+    lastDropAt: z.string().optional(),
+  }).optional().nullable(),
 });
 
 export const shadowOrdersSchema = z.object({
@@ -924,3 +937,23 @@ export type ShadowPosition = z.infer<typeof shadowPositionSchema>;
 export type ShadowOrder = z.infer<typeof shadowOrderSchema>;
 export type ShadowStatus = z.infer<typeof shadowStatusSchema>;
 export type ShadowOrders = z.infer<typeof shadowOrdersSchema>;
+
+export const shadowDecisionSchema = z.object({
+  id: z.number(),
+  sessionId: z.number().optional().nullable(),
+  orderId: z.number().optional().nullable(),
+  barTime: z.string(),
+  decidedAt: z.string(),
+  source: z.enum(['live', 'recovery']),
+  action: z.enum(['buy', 'sell', 'neutral']),
+  reason: z.string(),
+  fastEma: z.number().optional().nullable(),
+  slowEma: z.number().optional().nullable(),
+  actionable: z.boolean(),
+  blockedReason: z.string().optional().nullable(),
+});
+export type ShadowDecision = z.infer<typeof shadowDecisionSchema>;
+export const shadowDecisionsResponseSchema = z.object({
+  decisions: z.array(shadowDecisionSchema),
+});
+export type ShadowDecisionsResponse = z.infer<typeof shadowDecisionsResponseSchema>;

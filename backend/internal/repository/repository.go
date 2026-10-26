@@ -421,3 +421,82 @@ type ShadowFillRecord struct {
 	Quantity          float64
 	Commission        float64
 }
+
+// QuoteCoverageRow is one recorder-run interval — proof of observation
+// capability independent of whether quotes arrived.
+type QuoteCoverageRow struct {
+	ID              int64
+	Provider        string
+	Symbol          string
+	StartedAt       time.Time
+	LastHeartbeatAt time.Time
+	LastObsAt       *time.Time
+	ObsCount        int64
+	DroppedBatches  int
+	EndedAt         *time.Time
+	// Window-scoped evidence (migration 000016) — a window is only proven
+	// observable if every degradation signal predates it.
+	LastFeedDegradedAt *time.Time
+	LastHeartbeatGapAt *time.Time
+	LastDropAt         *time.Time
+	FeedState          *string
+}
+
+// CoverageSample is one heartbeat's evidence payload.
+type CoverageSample struct {
+	LastObsAt          *time.Time
+	ObsCount           int64
+	DroppedBatches     int
+	LastDropAt         *time.Time
+	LastFeedDegradedAt *time.Time
+	LastHeartbeatGapAt *time.Time
+	FeedState          string
+}
+
+// QuoteCoverageRepository tracks recorder-health intervals so recovery can
+// distinguish "no quote existed" from "coverage unknown".
+type QuoteCoverageRepository interface {
+	StartCoverage(ctx context.Context, provider, symbol string) (int64, error)
+	HeartbeatCoverage(ctx context.Context, id int64, sample CoverageSample) error
+	EndCoverage(ctx context.Context, id int64) error
+	// CoverageComplete reports whether a covering interval PROVES [from,to)
+	// was observed — used to separate confirmed-missed from unobservable.
+	CoverageComplete(ctx context.Context, provider, symbol string, from, to time.Time) (bool, error)
+	// OpenCoverage returns the currently active recorder interval.
+	OpenCoverage(ctx context.Context, provider, symbol string) (*QuoteCoverageRow, error)
+	// InsertFeedEvent persists one observed transition at event time.
+	InsertFeedEvent(ctx context.Context, ev FeedEventRow) error
+}
+
+// FeedEventRow is one observed provider-state transition — persisted at
+// event time, not sampled.
+type FeedEventRow struct {
+	ID         int64
+	CoverageID int64
+	Provider   string
+	Symbol     string
+	Kind       string // disconnect | degraded | recovered | persist_fail
+	At         time.Time
+	Since      *time.Time // degraded-interval start bound (last healthy evidence)
+	Detail     string
+}
+
+// ShadowDecisionRow is one evaluated-candle record — append-only ledger.
+type ShadowDecisionRow struct {
+	ID              int64
+	SessionID       *int64
+	OrderID         *int64
+	StrategyID      string
+	StrategyVersion string
+	Symbol          string
+	Timeframe       string
+	BarTime         time.Time
+	DecidedAt       time.Time
+	Source          string // live | recovery
+	Action          string // buy | sell | neutral
+	Reason          string
+	FastEMA         *float64
+	SlowEMA         *float64
+	Actionable      bool
+	BlockedReason   *string
+}

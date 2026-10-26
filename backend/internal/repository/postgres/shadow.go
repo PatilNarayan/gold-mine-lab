@@ -1,7 +1,9 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -163,14 +165,40 @@ func (s *Store) GetOrCreateSession(ctx context.Context, sess repository.ShadowSe
 		RETURNING id`, sess.StrategyID, sess.StrategyVersion, sess.Symbol,
 		sess.Timeframe, sess.Provider, sess.Config).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Session exists — resume it (same session, restart recorded).
+		// Open session exists — but its CONFIG must match too. The strategy
+		// identity alone doesn't cover the engine-policy fields; a changed
+		// fingerprint is a genuinely different configuration → retire the
+		// old session and open a distinctly identified new one rather than
+		// silently absorbing a config change.
+		var stored []byte
+		err := s.db.QueryRow(ctx, `SELECT config, id FROM shadow_sessions
+			WHERE strategy_id=$1 AND strategy_version=$2 AND symbol=$3
+			  AND timeframe=$4 AND provider=$5 AND ended_at IS NULL`,
+			sess.StrategyID, sess.StrategyVersion, sess.Symbol, sess.Timeframe,
+			sess.Provider).Scan(&stored, &id)
+		if err != nil {
+			return nil, err
+		}
+		if !jsonEqual(stored, sess.Config) {
+			if _, err := s.db.Exec(ctx, `UPDATE shadow_sessions SET ended_at=now()
+				WHERE id=$1`, id); err != nil {
+				return nil, err
+			}
+			if err := s.db.QueryRow(ctx, `INSERT INTO shadow_sessions
+				(strategy_id, strategy_version, symbol, timeframe, provider, config)
+				VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+				sess.StrategyID, sess.StrategyVersion, sess.Symbol, sess.Timeframe,
+				sess.Provider, sess.Config).Scan(&id); err != nil {
+				return nil, err
+			}
+			sess.ID = id
+			return &sess, nil // new session, restart_count=0
+		}
+		// Same config — genuine resume.
 		if err := s.db.QueryRow(ctx, `UPDATE shadow_sessions
 			SET restart_count = restart_count + 1, last_active_at = now()
-			WHERE strategy_id=$1 AND strategy_version=$2 AND symbol=$3
-			  AND timeframe=$4 AND provider=$5 AND ended_at IS NULL
-			RETURNING id, restart_count`,
-			sess.StrategyID, sess.StrategyVersion, sess.Symbol, sess.Timeframe,
-			sess.Provider).Scan(&id, &sess.RestartCount); err != nil {
+			WHERE id=$1 RETURNING id, restart_count`, id).
+			Scan(&id, &sess.RestartCount); err != nil {
 			return nil, err
 		}
 	}
@@ -201,4 +229,66 @@ func (s *Store) GetOpenSession(ctx context.Context, strategyID, version, symbol,
 		return nil, err
 	}
 	return &row, nil
+}
+
+// jsonEqual compares two config snapshots semantically (key order is not
+// stable across serialization runs).
+func jsonEqual(a, b []byte) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return bytes.Equal(a, b)
+	}
+	bx, _ := json.Marshal(x)
+	by, _ := json.Marshal(y)
+	return bytes.Equal(bx, by)
+}
+
+// RecordDecision appends one decision-ledger row. The unique key
+// (identity+bar_time) makes replay/recovery idempotent via DO NOTHING —
+// the FIRST recorded evaluation is immutable: a recovery pass re-deciding
+// an already-evaluated bar can never overwrite the original decided_at,
+// indicator values, or actionability (its own evidence stays appended
+// nowhere — the row IS the evaluation record).
+func (s *Store) RecordDecision(ctx context.Context, d repository.ShadowDecisionRow) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(ctx, `INSERT INTO shadow_decisions
+		(session_id, order_id, strategy_id, strategy_version, symbol, timeframe,
+		 bar_time, decided_at, source, action, reason, fast_ema, slow_ema,
+		 actionable, blocked_reason)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		ON CONFLICT (strategy_id, strategy_version, symbol, timeframe, bar_time)
+		DO NOTHING
+		RETURNING id`,
+		d.SessionID, d.OrderID, d.StrategyID, d.StrategyVersion, d.Symbol, d.Timeframe,
+		d.BarTime, d.DecidedAt, d.Source, d.Action, d.Reason, d.FastEMA, d.SlowEMA,
+		d.Actionable, d.BlockedReason).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil // already evaluated — original preserved
+	}
+	return id, err
+}
+
+// ListDecisions returns the most recent evaluation rows, newest first.
+func (s *Store) ListDecisions(ctx context.Context, strategyID, version, symbol string, tf market.Timeframe, limit int) ([]repository.ShadowDecisionRow, error) {
+	rows, err := s.db.Query(ctx, `SELECT id, session_id, order_id, strategy_id, strategy_version,
+		symbol, timeframe, bar_time, decided_at, source, action, reason,
+		fast_ema, slow_ema, actionable, blocked_reason
+		FROM shadow_decisions
+		WHERE strategy_id=$1 AND strategy_version=$2 AND symbol=$3 AND timeframe=$4
+		ORDER BY bar_time DESC LIMIT $5`, strategyID, version, symbol, string(tf), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []repository.ShadowDecisionRow{}
+	for rows.Next() {
+		var d repository.ShadowDecisionRow
+		if err := rows.Scan(&d.ID, &d.SessionID, &d.OrderID, &d.StrategyID, &d.StrategyVersion,
+			&d.Symbol, &d.Timeframe, &d.BarTime, &d.DecidedAt, &d.Source, &d.Action, &d.Reason,
+			&d.FastEMA, &d.SlowEMA, &d.Actionable, &d.BlockedReason); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }

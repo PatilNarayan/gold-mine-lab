@@ -24,3 +24,13 @@ export function useShadowOrders(limit = 100, enabled = true) {
     retry: 1,
   });
 }
+
+export function useShadowDecisions(limit = 50, enabled = true) {
+  return useQuery({
+    queryKey: ['shadowDecisions', limit],
+    queryFn: () => services.shadow.getDecisions(limit),
+    refetchInterval: 15_000,
+    enabled,
+    retry: 1,
+  });
+}

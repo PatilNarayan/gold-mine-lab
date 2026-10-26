@@ -104,3 +104,114 @@ func TestShadowIntegrationWithPostgres(t *testing.T) {
 		t.Fatalf("orders=%d after restart+replay — expected exactly 2", n)
 	}
 }
+
+// CoverageComplete scenario matrix — what the predicate PROVES about a
+// window: recorder aliveness + heartbeat continuity + persistence +
+// upstream feed health, all window-scoped.
+func TestCoverageCompleteScenarios(t *testing.T) {
+	dsn := os.Getenv("GOLDMINE_TEST_DSN")
+	if dsn == "" {
+		t.Skip("GOLDMINE_TEST_DSN not set — skipping postgres integration")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	store := postgres.New(pool)
+	prov, sym := "itest-prov", "XAU/USD"
+	defer pool.Exec(ctx, `DELETE FROM quote_coverage WHERE provider=$1`, prov)
+
+	now := time.Now().UTC()
+	from, to := now.Add(-2*time.Hour), now.Add(-time.Hour) // window: 2h..1h ago
+
+	newRow := func(started time.Time, lastBeat time.Time) int64 {
+		var id int64
+		err := pool.QueryRow(ctx, `INSERT INTO quote_coverage
+			(provider, symbol, started_at, last_heartbeat_at)
+			VALUES ($1,$2,$3,$4) RETURNING id`, prov, sym, started, lastBeat).Scan(&id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	covered := func(tag string, want bool) {
+		ok, err := store.CoverageComplete(ctx, prov, sym, from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok != want {
+			t.Fatalf("%s: CoverageComplete=%v want %v", tag, ok, want)
+		}
+	}
+
+	// 1) No coverage row → unknown (not proof of absence).
+	covered("no row", false)
+
+	// 2) Healthy spanning row → complete.
+	id := newRow(from.Add(-time.Hour), to.Add(time.Minute))
+	covered("healthy span", true)
+
+	// 3) Row that ends before the window's end → incomplete.
+	pool.Exec(ctx, `DELETE FROM quote_coverage WHERE id=$1`, id)
+	newRow(from.Add(-time.Hour), to.Add(-time.Second)) // heartbeat died in-window
+	covered("heartbeat before window end", false)
+
+	// 4) Feed degraded INSIDE the window → incomplete.
+	pool.Exec(ctx, `DELETE FROM quote_coverage WHERE provider=$1`, prov)
+	id = newRow(from.Add(-time.Hour), to.Add(time.Minute))
+	pool.Exec(ctx, `UPDATE quote_coverage SET last_feed_degraded_at=$2 WHERE id=$1`, id, to.Add(-time.Minute))
+	covered("feed degraded in window", false)
+
+	// 5) Degradation BEFORE the window → complete (window-scoped).
+	pool.Exec(ctx, `UPDATE quote_coverage SET last_feed_degraded_at=$2 WHERE id=$1`, id, from.Add(-time.Hour))
+	covered("degraded before window", true)
+
+	// 6) A persistence drop inside the window → incomplete.
+	pool.Exec(ctx, `UPDATE quote_coverage SET last_drop_at=$2 WHERE id=$1`, id, to.Add(-time.Second))
+	covered("batch dropped in window", false)
+
+	// 7) A heartbeat-gap ending inside the window → incomplete.
+	pool.Exec(ctx, `UPDATE quote_coverage SET last_drop_at=NULL, last_heartbeat_gap_at=$2 WHERE id=$1`, id, to.Add(-time.Second))
+	covered("heartbeat gap in window", false)
+
+	// ── Transition events (migration 000017): between-heartbeat reality ──
+	evt := func(kind string, at time.Time, since *time.Time) {
+		_, err := pool.Exec(ctx, `INSERT INTO feed_events
+			(coverage_id, provider, symbol, kind, at, since) VALUES ($1,$2,$3,$4,$5,$6)`,
+			id, prov, sym, kind, at, since)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	pool.Exec(ctx, `UPDATE quote_coverage SET last_heartbeat_gap_at=NULL WHERE id=$1`, id)
+	pool.Exec(ctx, `DELETE FROM feed_events WHERE coverage_id=$1`, id)
+
+	// 8) Disconnect SPANNING the window (disconnect before, never recovered)
+	//    → incomplete: point-containment alone would miss this.
+	before := from.Add(-30 * time.Minute)
+	evt("disconnect", before, &before)
+	covered("disconnect spanning window", false)
+
+	// 9) + recovery before the window → interval closed → complete.
+	evt("recovered", from.Add(-10*time.Minute), nil)
+	covered("recovered before window", true)
+
+	// 10) disconnect INSIDE window (with since before window) → incomplete.
+	pool.Exec(ctx, `DELETE FROM feed_events WHERE coverage_id=$1`, id)
+	evt("disconnect", to.Add(-time.Second), &before)
+	covered("disconnect inside window", false)
+
+	// 11) recovery inside window but outage started inside window → incomplete.
+	evt("recovered", to.Add(-time.Second/2), nil)
+	covered("in-window outage", false)
+
+	// 12) persist_fail inside window → incomplete; before → complete.
+	pool.Exec(ctx, `DELETE FROM feed_events WHERE coverage_id=$1`, id)
+	evt("persist_fail", to.Add(-time.Second), nil)
+	covered("persist_fail in window", false)
+	pool.Exec(ctx, `DELETE FROM feed_events WHERE coverage_id=$1`, id)
+	evt("persist_fail", from.Add(-time.Minute), nil)
+	covered("persist_fail before window", true)
+}

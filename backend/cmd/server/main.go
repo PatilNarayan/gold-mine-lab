@@ -152,7 +152,7 @@ func run(shutdown <-chan os.Signal) error {
 	// Prospective market-cost evidence: record distinct live bid/ask quote
 	// events (deduplicated, staleness-flagged) — never fabricated rows.
 	if liveProvider != nil {
-		quoteRec := service.NewQuoteRecorder(store, cfg.Live.Provider, cfg.Live.Symbol, log)
+		quoteRec := service.NewQuoteRecorder(store, store, cfg.Live.Provider, cfg.Live.Symbol, log)
 		quoteRec.Start(ctx, liveProvider)
 		defer quoteRec.Stop()
 		log.Info("quote observation recorder started", "provider", cfg.Live.Provider, "symbol", cfg.Live.Symbol)
@@ -191,7 +191,7 @@ func run(shutdown <-chan os.Signal) error {
 			driver := service.NewShadowDriver(eng, liveProvider, data, asset, strat, shadowCfg, store, log)
 			go driver.Start(ctx)
 			defer func() { _ = eng }()
-			shadowSvc = service.NewShadowService(eng, store, store, shadowCfg)
+			shadowSvc = service.NewShadowService(eng, store, store, store, shadowCfg)
 			log.Info("shadow engine started (simulated)", "strategy", strat.ID(), "version", strat.Version())
 		}
 	}

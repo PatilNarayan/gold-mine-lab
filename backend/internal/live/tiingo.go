@@ -118,6 +118,7 @@ type Tiingo struct {
 
 	mu        sync.Mutex
 	state     State
+	stateSubs []func(prev, next State, detail string) // transition listeners
 	lastErr   string
 	quote     *Quote
 	lastFetch time.Time // last accepted quote or successful candle fetch
@@ -907,13 +908,40 @@ func (p *Tiingo) redact(s string) string {
 	return s
 }
 
-func (p *Tiingo) setState(s State, errMsg string) {
+// SubscribeState registers fn for connection-state transitions — delivered
+// at transition time, not at the next Status() sample. Used by the quote
+// recorder's coverage tracker; the returned func unsubscribes.
+func (p *Tiingo) SubscribeState(fn func(prev, next State, detail string)) func() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	i := len(p.stateSubs)
+	p.stateSubs = append(p.stateSubs, fn)
+	return func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.stateSubs[i] = nil
+	}
+}
+
+func (p *Tiingo) setState(s State, errMsg string) {
+	p.mu.Lock()
+	prev := p.state
 	p.state = s
 	if errMsg != "" || s != StateDisconnected {
 		p.lastErr = p.redact(errMsg)
 	}
+	if prev != s && len(p.stateSubs) > 0 {
+		subs := append([]func(State, State, string){}, p.stateSubs...)
+		d := p.lastErr
+		p.mu.Unlock()
+		for _, fn := range subs {
+			if fn != nil {
+				fn(prev, s, d)
+			}
+		}
+		return
+	}
+	p.mu.Unlock()
 }
 
 func (p *Tiingo) setErr(msg string) {

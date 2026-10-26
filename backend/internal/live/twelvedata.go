@@ -309,6 +309,7 @@ type TwelveData struct {
 
 	mu        sync.Mutex
 	state     State
+	stateSubs []func(prev, next State, detail string) // transition listeners
 	lastErr   string
 	quote     *Quote
 	lastFetch time.Time // last successful upstream fetch
@@ -1209,13 +1210,39 @@ func (t *TwelveData) redact(s string) string {
 	return s
 }
 
-func (t *TwelveData) setState(s State, errMsg string) {
+// SubscribeState mirrors Tiingo: transition-time delivery for coverage
+// tracking. Optional capability — providers implement it themselves.
+func (t *TwelveData) SubscribeState(fn func(prev, next State, detail string)) func() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	i := len(t.stateSubs)
+	t.stateSubs = append(t.stateSubs, fn)
+	return func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		t.stateSubs[i] = nil
+	}
+}
+
+func (t *TwelveData) setState(s State, errMsg string) {
+	t.mu.Lock()
+	prev := t.state
 	t.state = s
 	if errMsg != "" || s != StateDisconnected {
 		t.lastErr = t.redact(errMsg)
 	}
+	if prev != s && len(t.stateSubs) > 0 {
+		subs := append([]func(State, State, string){}, t.stateSubs...)
+		d := t.lastErr
+		t.mu.Unlock()
+		for _, fn := range subs {
+			if fn != nil {
+				fn(prev, s, d)
+			}
+		}
+		return
+	}
+	t.mu.Unlock()
 }
 
 func (t *TwelveData) setErr(msg string) {

@@ -29,7 +29,8 @@ import type {
   ValidateGraphResponse,
   ResearchStudy,
   ResearchStudyRequest,
-  ShadowStatus, ShadowOrders,
+  ShadowStatus,
+  ShadowDecisionsResponse, ShadowOrders,
 } from '@/types/domain';
 import type { HealthStatus } from '@/types/api';
 
@@ -123,4 +124,5 @@ export interface ResearchStudyService {
 export interface ShadowService {
   getStatus(): Promise<ShadowStatus>;
   getOrders(limit?: number): Promise<ShadowOrders>;
+  getDecisions(limit?: number): Promise<ShadowDecisionsResponse>;
 }

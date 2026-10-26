@@ -15,8 +15,9 @@ import (
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 type memQuoteRepo struct {
-	mu   sync.Mutex
-	rows []repository.QuoteObservationRow
+	mu     sync.Mutex
+	rows   []repository.QuoteObservationRow
+	events []repository.FeedEventRow
 }
 
 func (m *memQuoteRepo) InsertQuoteObservations(_ context.Context, rows []repository.QuoteObservationRow) error {
@@ -27,6 +28,25 @@ func (m *memQuoteRepo) InsertQuoteObservations(_ context.Context, rows []reposit
 }
 func (m *memQuoteRepo) CountQuoteObservations(context.Context, string) (int, error) {
 	return len(m.rows), nil
+}
+func (m *memQuoteRepo) StartCoverage(context.Context, string, string) (int64, error) {
+	return 1, nil
+}
+func (m *memQuoteRepo) HeartbeatCoverage(context.Context, int64, repository.CoverageSample) error {
+	return nil
+}
+func (m *memQuoteRepo) EndCoverage(context.Context, int64) error { return nil }
+func (m *memQuoteRepo) CoverageComplete(context.Context, string, string, time.Time, time.Time) (bool, error) {
+	return false, nil
+}
+func (m *memQuoteRepo) OpenCoverage(context.Context, string, string) (*repository.QuoteCoverageRow, error) {
+	return nil, nil
+}
+func (m *memQuoteRepo) InsertFeedEvent(_ context.Context, ev repository.FeedEventRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, ev)
+	return nil
 }
 func (m *memQuoteRepo) LatestQuoteObservation(context.Context, string) (*repository.QuoteObservationRow, error) {
 	if len(m.rows) == 0 {
@@ -50,7 +70,7 @@ func quoteAt(t time.Time, bid, ask float64) live.Quote {
 // rows; missing bid/ask stays NULL (never a fabricated zero spread).
 func TestQuoteRecorderDedupeAndSpread(t *testing.T) {
 	repo := &memQuoteRepo{}
-	rec := NewQuoteRecorder(repo, "tiingo", "XAU/USD", testLogger())
+	rec := NewQuoteRecorder(repo, repo, "tiingo", "XAU/USD", testLogger())
 	p := &fakeProvider{}
 	rec.Start(context.Background(), p)
 
@@ -94,7 +114,7 @@ func TestQuoteRecorderDedupeAndSpread(t *testing.T) {
 // stale — not silently trusted as fresh.
 func TestQuoteRecorderStalenessFlag(t *testing.T) {
 	repo := &memQuoteRepo{}
-	rec := NewQuoteRecorder(repo, "tiingo", "XAU/USD", testLogger())
+	rec := NewQuoteRecorder(repo, repo, "tiingo", "XAU/USD", testLogger())
 	p := &fakeProvider{}
 	rec.Start(context.Background(), p)
 
@@ -108,5 +128,27 @@ func TestQuoteRecorderStalenessFlag(t *testing.T) {
 	defer repo.mu.Unlock()
 	if len(repo.rows) != 1 || !repo.rows[0].Stale {
 		t.Fatalf("stale flag missing: %+v", repo.rows)
+	}
+}
+
+// State transitions persist feed_events at event time — the mechanism that
+// closes the between-heartbeat observability gap.
+func TestQuoteRecorderFeedEvents(t *testing.T) {
+	repo := &memQuoteRepo{}
+	rec := NewQuoteRecorder(repo, repo, "tiingo", "XAU/USD", testLogger())
+	rec.covID = 7 // simulate an open coverage interval
+	rec.feed = &fakeProvider{}
+	// disconnect → event with kind=disconnect; reconnect → recovered.
+	rec.onStateChange(live.StateConnected, live.StateDisconnected, "conn lost")
+	rec.onStateChange(live.StateDisconnected, live.StateConnected, "")
+	rec.onStateChange(live.StateConnected, live.StateStale, "") // computed state — no event
+	if len(repo.events) != 2 {
+		t.Fatalf("events=%d — expected disconnect+recovered only", len(repo.events))
+	}
+	if repo.events[0].Kind != "disconnect" || repo.events[1].Kind != "recovered" {
+		t.Fatalf("kinds: %+v", repo.events)
+	}
+	if repo.events[0].CoverageID != 7 {
+		t.Fatal("event must tag the active coverage interval")
 	}
 }

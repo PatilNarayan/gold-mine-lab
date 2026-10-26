@@ -2,9 +2,9 @@ import { Badge } from '@/components/common/Badge';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { Skeleton } from '@/components/common/Skeleton';
-import { useLiveStatus, useShadowOrders, useShadowStatus } from '@/hooks';
+import { useLiveStatus, useShadowDecisions, useShadowOrders, useShadowStatus } from '@/hooks';
 import type { ShadowOrder } from '@/types/domain';
-import { formatCurrency, formatDateTime } from '@/lib/formatters';
+import { formatCurrency, formatDateTime, formatNumber } from '@/lib/formatters';
 
 /**
  * Shadow Trading — hypothetical execution against real quote events.
@@ -15,6 +15,7 @@ import { formatCurrency, formatDateTime } from '@/lib/formatters';
 export default function Shadow() {
   const status = useShadowStatus();
   const orders = useShadowOrders(100);
+  const decisions = useShadowDecisions(20);
   const live = useLiveStatus();
 
   if (status.isLoading) return <Skeleton className="h-64" />;
@@ -59,6 +60,18 @@ export default function Shadow() {
       {s.session && (
         <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-sm border border-line bg-surface-1 px-3 py-2 text-2xs text-content-3">
           <span>session #{s.session.id} · {s.session.provider}</span>
+          {s.recorder && (
+            <span>
+              recorder #{s.recorder.coverageId}
+              {s.recorder.feedState && ` · feed ${s.recorder.feedState}`}
+              {s.recorder.lastObservationAt
+                ? ` · last obs ${formatDateTime(s.recorder.lastObservationAt)}`
+                : ' · no obs yet'}
+              {s.recorder.droppedBatches > 0 && ` · ${s.recorder.droppedBatches} dropped batches`}
+              {s.recorder.lastFeedDegradedAt && ` · feed degraded ${formatDateTime(s.recorder.lastFeedDegradedAt)}`}
+            </span>
+          )}
+          {!s.recorder && <span>recorder coverage unknown</span>}
           {s.session.startedAt && <span>started {formatDateTime(s.session.startedAt)}</span>}
           <span>restarts {s.session.restartCount}</span>
           {m && (
@@ -109,6 +122,57 @@ export default function Shadow() {
         </section>
       )}
 
+      {/* Decision ledger — every evaluated close, incl. no-signal */}
+      <section className="rounded-sm border border-line bg-surface-1 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-content-3">
+            Recent evaluations
+          </h2>
+          <span className="text-2xs text-content-3">every confirmed close — evidence the strategy ran</span>
+        </div>
+        {(decisions.data?.decisions?.length ?? 0) === 0 ? (
+          <EmptyState
+            title="No evaluations recorded yet"
+            message="Each confirmed candle close records its strategy verdict here."
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-line text-2xs uppercase tracking-wide text-content-3">
+                <tr>
+                  <th className="pb-1 font-medium">bar</th>
+                  <th className="pb-1 font-medium">src</th>
+                  <th className="pb-1 font-medium">action</th>
+                  <th className="pb-1 font-medium">fast/slow EMA</th>
+                  <th className="pb-1 font-medium">outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                {decisions.data!.decisions.slice(0, 8).map((d) => (
+                  <tr key={d.id} className="border-b border-line/40 last:border-0">
+                    <td className="py-1.5">{formatDateTime(d.barTime)}</td>
+                    <td className="py-1.5 text-content-3">{d.source}</td>
+                    <td className="py-1.5">
+                      <Badge tone={d.action === 'buy' ? 'buy' : d.action === 'sell' ? 'sell' : 'neutral'}>
+                        {d.action}
+                      </Badge>
+                    </td>
+                    <td className="py-1.5 tabular-nums">
+                      {d.fastEma != null && d.slowEma != null
+                        ? `${formatNumber(d.fastEma)} / ${formatNumber(d.slowEma)}`
+                        : '—'}
+                    </td>
+                    <td className="py-1.5 text-content-3">
+                      {d.actionable ? `→ order #${d.orderId}` : (d.blockedReason ?? d.reason)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <section className="rounded-sm border border-line bg-surface-1 p-3">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-content-3">
@@ -116,8 +180,8 @@ export default function Shadow() {
           </h2>
           <span className="text-2xs text-content-3">
             filled {s.orderStats.filled} · expired {s.orderStats.expired} ·
-            missed {s.orderStats.missed} · rejected {s.orderStats.rejected} ·
-            pending {s.orderStats.pending}
+            missed {s.orderStats.missed} · unobservable {s.orderStats.unobservable} ·
+            rejected {s.orderStats.rejected} · pending {s.orderStats.pending}
           </span>
         </div>
         {rows.length === 0 ? (
@@ -167,6 +231,7 @@ function OrderRow({ o }: { o: ShadowOrder }) {
   const tone = o.status === 'filled' ? 'buy'
     : o.status === 'pending' ? 'warning'
     : o.status === 'missed' ? 'sell'
+    : o.status === 'unobservable' ? 'neutral'
     : 'neutral';
   return (
     <tr className="border-b border-line/50 text-content-2">

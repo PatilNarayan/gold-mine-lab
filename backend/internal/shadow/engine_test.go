@@ -18,17 +18,20 @@ import (
 // ── fakes ───────────────────────────────────────────────────────────────
 
 type memStore struct {
-	mu      sync.Mutex
-	orders  map[string]*repository.ShadowOrderRow
-	nextID  int64
-	pos     map[string]*repository.ShadowPositionRow
-	obs     []repository.QuoteObservationRow // persisted quote evidence
-	txCalls int                              // FillOrderAndPosition invocations — must be atomic-counted
+	mu        sync.Mutex
+	orders    map[string]*repository.ShadowOrderRow
+	nextID    int64
+	pos       map[string]*repository.ShadowPositionRow
+	obs       []repository.QuoteObservationRow // persisted quote evidence
+	covered   bool                             // coverage-completeness answer
+	decisions map[string]*repository.ShadowDecisionRow
+	txCalls   int // FillOrderAndPosition invocations — must be atomic-counted
 }
 
 func newMemStore() *memStore {
 	return &memStore{orders: map[string]*repository.ShadowOrderRow{},
-		pos: map[string]*repository.ShadowPositionRow{}}
+		pos:       map[string]*repository.ShadowPositionRow{},
+		decisions: map[string]*repository.ShadowDecisionRow{}}
 }
 
 func pkey(sid, ver, sym string, tf market.Timeframe) string {
@@ -92,6 +95,37 @@ func (m *memStore) FillOrderAndPosition(_ context.Context, id int64, f repositor
 func (m *memStore) UpdateOrderFilled(context.Context, int64, repository.ShadowFillRecord) error {
 	return errors.New("non-atomic path must not be used")
 }
+func (m *memStore) RecordDecision(_ context.Context, d repository.ShadowDecisionRow) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := d.StrategyID + "|" + d.StrategyVersion + "|" + d.Symbol + "|" + d.Timeframe + "|" + d.BarTime.Format(time.RFC3339)
+	m.nextID++
+	if _, exists := m.decisions[key]; !exists {
+		m.decisions[key] = &d
+	}
+	return m.nextID, nil
+}
+func (m *memStore) Decisions() []*repository.ShadowDecisionRow {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*repository.ShadowDecisionRow, 0, len(m.decisions))
+	for _, d := range m.decisions {
+		out = append(out, d)
+	}
+	return out
+}
+func (m *memStore) ListDecisions(_ context.Context, strategyID, version, symbol string, tf market.Timeframe, limit int) ([]repository.ShadowDecisionRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]repository.ShadowDecisionRow, 0, len(m.decisions))
+	for _, d := range m.decisions {
+		out = append(out, *d)
+	}
+	return out, nil
+}
+func (m *memStore) CoverageComplete(context.Context, string, string, time.Time, time.Time) (bool, error) {
+	return m.covered, nil
+}
 func (m *memStore) FindQuoteInWindow(_ context.Context, provider, symbol string, from, to time.Time) (*repository.QuoteObservationRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -145,7 +179,8 @@ type scriptedStream struct {
 }
 
 func (s *scriptedStream) Next(c market.Candle) strategy.Signal {
-	return strategy.Signal{Action: s.actions[c.Time]}
+	return strategy.Signal{Action: s.actions[c.Time],
+		Metadata: map[string]any{"fast_ema": c.Close * 0.99, "slow_ema": c.Close}}
 }
 
 var testCfg = Config{
@@ -377,10 +412,11 @@ func obsQuote(at time.Time, bid, ask float64) repository.QuoteObservationRow {
 		ProviderTime: &at, Bid: &bid, Ask: &ask, ReceivedAt: at.Add(100 * time.Millisecond)}
 }
 
-// Signal fired while offline; window long gone; no evidence → 'missed',
-// never a fill.
+// Window PROVEN fully observed, no admissible quote → 'missed' (evidence
+// of absence), never a fill.
 func TestRecoveryMissedNoEvidence(t *testing.T) {
-	store := newMemStore()         // no observations at all
+	store := newMemStore()
+	store.covered = true           // recorder provably ran through the window
 	now := bar1.Add(3 * time.Hour) // recovered 3h after the signal
 	e := mkEngine(store, map[time.Time]strategy.Action{bar1: strategy.ActionBuy}, now)
 	ctx := context.Background()
@@ -498,5 +534,127 @@ func TestRestartBeforeSignal(t *testing.T) {
 	orders, _ := store.ListOrders(ctx, "ema-cross", "XAU/USD", market.Timeframe1h, 10)
 	if len(orders) != 1 {
 		t.Fatalf("expected exactly 1 order, got %d", len(orders))
+	}
+}
+
+// Coverage UNKNOWN (recorder down / DB lost / pre-coverage era) →
+// 'unobservable' — absence of evidence must NOT be claimed as absence of
+// quotes.
+func TestRecoveryUnobservableWhenCoverageUnknown(t *testing.T) {
+	store := newMemStore() // covered=false — nothing proves the window was seen
+	now := bar1.Add(3 * time.Hour)
+	e := mkEngine(store, map[time.Time]strategy.Action{bar1: strategy.ActionBuy}, now)
+	ctx := context.Background()
+	if err := e.ProcessMissedClose(ctx, bar(bar1)); err != nil {
+		t.Fatal(err)
+	}
+	orders, _ := store.ListOrders(ctx, "ema-cross", "XAU/USD", market.Timeframe1h, 10)
+	if len(orders) != 1 || orders[0].Status != "unobservable" {
+		t.Fatalf("expected 'unobservable', got %+v", orders)
+	}
+	if m := e.MetricsSnapshot(); m.Unobservable != 1 || m.Missed != 0 {
+		t.Fatalf("metrics wrong: %+v", m)
+	}
+}
+
+// Deep recovery: >400 missed closes in sequence — recovery is bounded by
+// the persisted marker, not a warmup cap; decisions at any depth resolve.
+func TestRecoveryBeyondWarmupDepth(t *testing.T) {
+	store := newMemStore()
+	actions := map[time.Time]strategy.Action{
+		bar1.Add(300 * time.Hour): strategy.ActionBuy,
+		bar1.Add(600 * time.Hour): strategy.ActionSell,
+	}
+	// Evidence only for the BUY window: it fills via replay → position
+	// opens → the deep SELL becomes actionable and resolves unobservable.
+	buyAnchor := bar1.Add(301 * time.Hour)
+	store.obs = append(store.obs, obsQuote(buyAnchor.Add(30*time.Second), 100.0, 100.1))
+	now := bar1.Add(900 * time.Hour)
+	e := mkEngine(store, actions, now)
+	ctx := context.Background()
+	for i := 0; i < 700; i++ {
+		if err := e.ProcessMissedClose(ctx, bar(bar1.Add(time.Duration(i)*time.Hour))); err != nil {
+			t.Fatalf("missed close %d failed: %v", i, err)
+		}
+	}
+	orders, _ := store.ListOrders(ctx, "ema-cross", "XAU/USD", market.Timeframe1h, 800)
+	if len(orders) != 2 {
+		t.Fatalf("expected exactly 2 resolved decisions at depth, got %d", len(orders))
+	}
+	var fills, unobs int
+	for _, o := range orders {
+		switch o.Status {
+		case "filled":
+			fills++
+		case "unobservable":
+			unobs++
+		}
+	}
+	if fills != 1 || unobs != 1 {
+		t.Fatalf("expected 1 replayed fill + 1 unobservable, got fills=%d unobs=%d", fills, unobs)
+	}
+}
+
+// The decision ledger records EVERY evaluated close — including no-signal
+// bars — proving evaluation happened, not just that the marker moved.
+func TestDecisionLedgerRecordsEveryEvaluation(t *testing.T) {
+	store := newMemStore()
+	e := mkEngine(store, map[time.Time]strategy.Action{bar2: strategy.ActionBuy}, t0)
+	ctx := context.Background()
+	e.OnBarClosed(ctx, bar(bar1)) // neutral — no signal
+	e.OnBarClosed(ctx, bar(bar2)) // BUY
+	e.OnBarClosed(ctx, bar(bar2)) // replayed — idempotent
+	e.OnBarClosed(ctx, bar(bar3)) // neutral
+	ds := store.Decisions()
+	if len(ds) != 3 {
+		t.Fatalf("decisions=%d — every evaluated close must record, got %d", len(ds), len(ds))
+	}
+	var neutral, buys int
+	for _, d := range ds {
+		if d.Source != "live" {
+			t.Fatalf("live close recorded as %q", d.Source)
+		}
+		if d.FastEMA == nil || d.SlowEMA == nil {
+			t.Fatal("decision must carry indicator values")
+		}
+		if d.Action == "buy" {
+			buys++
+			if !d.Actionable || d.OrderID == nil {
+				t.Fatalf("actionable BUY must link its order: %+v", d)
+			}
+		} else {
+			neutral++
+			if d.Actionable {
+				t.Fatalf("neutral decision marked actionable: %+v", d)
+			}
+		}
+	}
+	if buys != 1 || neutral != 2 {
+		t.Fatalf("expected 1 buy + 2 neutral, got %d/%d", buys, neutral)
+	}
+	if m := e.MetricsSnapshot(); m.Decisions != 3 {
+		t.Fatalf("metrics.Decisions=%d want 3", m.Decisions)
+	}
+}
+
+// The first evaluation of a bar is immutable evidence — a later replay
+// (recovery) must never overwrite its decided_at, action, or values.
+func TestDecisionLedgerFirstWriteWins(t *testing.T) {
+	store := newMemStore()
+	e := mkEngine(store, map[time.Time]strategy.Action{bar2: strategy.ActionBuy}, t0)
+	ctx := context.Background()
+	e.OnBarClosed(ctx, bar(bar2)) // live BUY decision
+	e.OnBarClosed(ctx, bar(bar2)) // replay of the same bar — dup-skipped
+
+	ds := store.Decisions()
+	if len(ds) != 1 {
+		t.Fatalf("expected 1 immutable decision, got %d", len(ds))
+	}
+	d := ds[0]
+	if d.Action != "buy" || d.Source != "live" {
+		t.Fatalf("live evidence overwritten: %+v", d)
+	}
+	if d.DecidedAt.IsZero() {
+		t.Fatal("decided_at must be the original evaluation time")
 	}
 }

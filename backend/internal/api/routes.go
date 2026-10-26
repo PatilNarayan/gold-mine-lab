@@ -581,4 +581,18 @@ func registerShadowRoutes(g *gin.RouterGroup, svc ShadowService) {
 		}
 		c.JSON(http.StatusOK, out)
 	})
+	sh.GET("/decisions", func(c *gin.Context) {
+		limit := 50
+		if v := c.Query("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+				limit = n
+			}
+		}
+		out, err := svc.ShadowDecisions(c.Request.Context(), limit)
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, "internal", "shadow decisions failed")
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
 }

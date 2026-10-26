@@ -61,6 +61,13 @@ type Store interface {
 	// FindQuoteInWindow finds the earliest persisted admissible quote in
 	// [from,to) — evidence for downtime recovery, never fabricated.
 	FindQuoteInWindow(ctx context.Context, provider, symbol string, from, to time.Time) (*repository.QuoteObservationRow, error)
+	// CoverageComplete reports whether persisted recorder coverage PROVES
+	// [from,to) was observed — separates confirmed-missed from unobservable.
+	CoverageComplete(ctx context.Context, provider, symbol string, from, to time.Time) (bool, error)
+	// RecordDecision appends the per-bar evaluation ledger row (idempotent).
+	RecordDecision(ctx context.Context, d repository.ShadowDecisionRow) (int64, error)
+	// ListDecisions returns recent ledger rows (newest first).
+	ListDecisions(ctx context.Context, strategyID, version, symbol string, tf market.Timeframe, limit int) ([]repository.ShadowDecisionRow, error)
 }
 
 // EvidenceLookup supplies persisted quote observations for recovery replay.
@@ -75,8 +82,10 @@ type Metrics struct {
 	Fills          int        `json:"fills"`
 	Expired        int        `json:"expired"`
 	Missed         int        `json:"missed"`
+	Unobservable   int        `json:"unobservable"`
 	Recoveries     int        `json:"recoveries"`
 	DupSkips       int        `json:"duplicateEventsSkipped"`
+	Decisions      int        `json:"decisionsEvaluated"`
 	LastQuoteAt    *time.Time `json:"lastQuoteAt,omitempty"`
 	LastFillAt     *time.Time `json:"lastFillAt,omitempty"`
 }
@@ -122,6 +131,11 @@ func (e *Engine) SetStream(s strategy.Stream) { e.stream = s }
 
 // TF reports the engine's configured timeframe.
 func (e *Engine) TF() market.Timeframe { return e.cfg.Timeframe }
+
+// EffectiveConfig returns the config the engine actually runs — defaults
+// applied. Audit artifacts (session fingerprints) must serialize THIS, not
+// the caller's pre-default struct.
+func (e *Engine) EffectiveConfig() Config { return e.cfg }
 
 // SetSession stamps the persisted session identity on new orders/positions.
 func (e *Engine) SetSession(id int64) { e.session = id }
@@ -169,6 +183,43 @@ func (e *Engine) Restore(ctx context.Context) error {
 // last processed bar are ignored — replay-safe. Signals BUY/SELL create a
 // pending order (idempotent via order_key) unless the position already
 // matches the intent.
+// recordDecision appends the per-bar evaluation-ledger evidence. Source
+// distinguishes live closes from recovery replays; replay is idempotent.
+func (e *Engine) recordDecision(ctx context.Context, c market.Candle, sig strategy.Signal,
+	source string, actionable bool, orderID *int64, blocked *string) error {
+	action := "neutral"
+	if sig.Action == strategy.ActionBuy {
+		action = "buy"
+	} else if sig.Action == strategy.ActionSell {
+		action = "sell"
+	}
+	d := repository.ShadowDecisionRow{
+		SessionID: nilIfZero(e.session), OrderID: orderID,
+		StrategyID: e.cfg.StrategyID, StrategyVersion: e.cfg.StrategyVersion,
+		Symbol: e.cfg.Symbol, Timeframe: string(e.cfg.Timeframe),
+		BarTime: c.Time, DecidedAt: e.now().UTC(), Source: source,
+		Action: action, Reason: sig.Reason, Actionable: actionable, BlockedReason: blocked,
+	}
+	if v, ok := sig.Metadata["fast_ema"].(float64); ok {
+		d.FastEMA = &v
+	}
+	if v, ok := sig.Metadata["slow_ema"].(float64); ok {
+		d.SlowEMA = &v
+	}
+	if _, err := e.store.RecordDecision(ctx, d); err != nil {
+		return err
+	}
+	e.metrics.Decisions++
+	return nil
+}
+
+func nilIfZero(v int64) *int64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+
 func (e *Engine) OnBarClosed(ctx context.Context, c market.Candle) error {
 	if e.pos.LastBarTime != nil && !c.Time.After(*e.pos.LastBarTime) {
 		e.metrics.DupSkips++
@@ -185,21 +236,21 @@ func (e *Engine) OnBarClosed(ctx context.Context, c market.Candle) error {
 	switch sig.Action {
 	case strategy.ActionBuy:
 		if e.pos.Side != nil {
-			return e.persistBar(ctx) // already long — no decision to make
+			return e.decide(ctx, c, sig, "live", false, nil, strp("already_long"))
 		}
 		side = "BUY"
 	case strategy.ActionSell:
 		if e.pos.Side == nil {
-			return e.persistBar(ctx) // flat — nothing to close
+			return e.decide(ctx, c, sig, "live", false, nil, strp("flat_no_position"))
 		}
 		side = "SELL"
 	default:
-		return e.persistBar(ctx) // neutral — just advance the marker
+		return e.decide(ctx, c, sig, "live", false, nil, nil)
 	}
 	// One pending order at a time: a live pending order stays until filled
 	// or expired; the new signal is recorded in the bar marker regardless.
 	if e.pending != nil {
-		return e.persistBar(ctx)
+		return e.decide(ctx, c, sig, "live", false, nil, strp("pending_order_active"))
 	}
 	o := repository.ShadowOrderRow{
 		OrderKey: e.orderKey(side, c.Time), StrategyID: e.cfg.StrategyID,
@@ -221,8 +272,24 @@ func (e *Engine) OnBarClosed(ctx context.Context, c market.Candle) error {
 	} else {
 		e.metrics.DupSkips++
 	}
+	var oid *int64
+	if created {
+		oid = &id
+	}
+	return e.decide(ctx, c, sig, "live", created, oid, nil)
+}
+
+// decide records the ledger row then persists the marker — one place so a
+// close always leaves both evidence streams.
+func (e *Engine) decide(ctx context.Context, c market.Candle, sig strategy.Signal,
+	source string, actionable bool, orderID *int64, blocked *string) error {
+	if err := e.recordDecision(ctx, c, sig, source, actionable, orderID, blocked); err != nil {
+		return err
+	}
 	return e.persistBar(ctx)
 }
+
+func strp(s string) *string { return &s }
 
 // MarkBarProcessed advances the resume marker WITHOUT evaluating a signal —
 // used by the driver to warm up on stored history at fresh start: bars that
@@ -266,19 +333,19 @@ func (e *Engine) ProcessMissedClose(ctx context.Context, c market.Candle) error 
 	switch sig.Action {
 	case strategy.ActionBuy:
 		if e.pos.Side != nil {
-			return e.persistBar(ctx)
+			return e.decide(ctx, c, sig, "recovery", false, nil, strp("already_long"))
 		}
 		side = "BUY"
 	case strategy.ActionSell:
 		if e.pos.Side == nil {
-			return e.persistBar(ctx)
+			return e.decide(ctx, c, sig, "recovery", false, nil, strp("flat_no_position"))
 		}
 		side = "SELL"
 	default:
-		return e.persistBar(ctx)
+		return e.decide(ctx, c, sig, "recovery", false, nil, nil)
 	}
 	if e.pending != nil {
-		return e.persistBar(ctx)
+		return e.decide(ctx, c, sig, "recovery", false, nil, strp("pending_order_active"))
 	}
 
 	anchor := c.Time.Add(e.tfDuration()) // bar close = signal becomes actionable
@@ -308,7 +375,7 @@ func (e *Engine) ProcessMissedClose(ctx context.Context, c market.Candle) error 
 		e.pending = &o
 		e.log.Info("shadow recovery: pending order resumed",
 			"side", side, "bar", c.Time, "anchor", anchor)
-		return e.persistBar(ctx)
+		return e.decide(ctx, c, sig, "recovery", true, &id, nil)
 	}
 
 	// Window closed while offline — consult PERSISTED evidence only.
@@ -317,13 +384,29 @@ func (e *Engine) ProcessMissedClose(ctx context.Context, c market.Candle) error 
 		return err
 	}
 	if obs == nil {
-		if err := e.store.SetOrderStatus(ctx, id, "missed",
-			"execution window passed while engine offline; no admissible quote evidence recorded"); err != nil {
+		// No admissible quote found — but absence of evidence is only proof
+		// of absence when the window was OBSERVED. Check recorder coverage:
+		// complete → confirmed missed; incomplete/unknown → unobservable.
+		status, reason := "missed",
+			"no admissible quote recorded in fully observed execution window"
+		covered, cerr := e.store.CoverageComplete(ctx, e.cfg.Provider, e.cfg.Symbol, anchor, windowEnd)
+		if cerr != nil {
+			return cerr
+		}
+		if !covered {
+			status, reason = "unobservable",
+				"quote coverage incomplete or unknown for execution window; outcome cannot be determined"
+		}
+		if err := e.store.SetOrderStatus(ctx, id, status, reason); err != nil {
 			return err
 		}
-		e.metrics.Missed++
-		e.log.Info("shadow decision missed", "side", side, "bar", c.Time, "anchor", anchor)
-		return e.persistBar(ctx)
+		if covered {
+			e.metrics.Missed++
+		} else {
+			e.metrics.Unobservable++
+		}
+		e.log.Info("shadow decision unresolved", "status", status, "side", side, "bar", c.Time, "anchor", anchor)
+		return e.decide(ctx, c, sig, "recovery", true, &id, strp(status))
 	}
 	ev := quoteEvidence{
 		providerTime: *obs.ProviderTime, receivedAt: obs.ReceivedAt,
@@ -335,7 +418,7 @@ func (e *Engine) ProcessMissedClose(ctx context.Context, c market.Candle) error 
 	if err := e.fillOrder(ctx, &o, ev, obs.ReceivedAt); err != nil {
 		return err
 	}
-	return e.persistBar(ctx)
+	return e.decide(ctx, c, sig, "recovery", true, &id, nil)
 }
 
 // OnQuote offers a live quote to a pending order. A fill requires:
