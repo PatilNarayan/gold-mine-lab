@@ -76,10 +76,6 @@ func testEngine(store *fakeStore) *shadow.Engine {
 
 // ── lifecycle regression tests ────────────────────────────────────────────
 
-type recStop struct{ order *[]string }
-
-func (r recStop) Stop() { *r.order = append(*r.order, "recorder") }
-
 func testLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // The single shutdown owner must run steps in the documented order:
@@ -99,7 +95,7 @@ func TestOrderedShutdownSequence(t *testing.T) {
 	close(driverDone) // driver already exited
 
 	cancel := func() { order = append(order, "cancel") }
-	rec := recStop{order: &order}
+	rec := func() { order = append(order, "recorder") }
 	closeProvider := func() error {
 		if rt.Snapshot().Health.State != shadow.HealthStopped {
 			order = append(order, "provider-before-rt-stop")
@@ -153,7 +149,7 @@ func TestOrderedShutdownBoundedOnBlockedRuntime(t *testing.T) {
 	start := time.Now()
 	orderedShutdown(testLog(), 100*time.Millisecond,
 		func() { order = append(order, "cancel") }, nil, rt,
-		recStop{order: &order},
+		func() { order = append(order, "recorder") },
 		func() error { order = append(order, "provider"); return nil },
 		func() { order = append(order, "db") })
 	elapsed := time.Since(start)

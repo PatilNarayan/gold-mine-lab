@@ -69,11 +69,11 @@ func run(shutdown <-chan os.Signal) error {
 	// Go's LIFO defer order and invert the sequence).
 	var shadowRt *shadow.Runtime
 	var driverDone chan struct{}
-	var quoteRec *service.QuoteRecorder
+	var stopRecorder func()
 	var closeProvider func() error
 	defer func() {
 		orderedShutdown(log, cfg.HTTP.ShutdownTimeout, cancelRun, driverDone,
-			shadowRt, quoteRec, closeProvider, pool.Close)
+			shadowRt, stopRecorder, closeProvider, pool.Close)
 	}()
 
 	// Real pipeline: provider-synced Postgres candle store → registry →
@@ -174,8 +174,11 @@ func run(shutdown <-chan os.Signal) error {
 	// Prospective market-cost evidence: record distinct live bid/ask quote
 	// events (deduplicated, staleness-flagged) — never fabricated rows.
 	if liveProvider != nil {
-		quoteRec = service.NewQuoteRecorder(store, store, cfg.Live.Provider, cfg.Live.Symbol, log)
+		quoteRec := service.NewQuoteRecorder(store, store, cfg.Live.Provider, cfg.Live.Symbol, log)
 		quoteRec.Start(runCtx, liveProvider)
+		// Captured as a closure — never a typed-nil interface: a nil
+		// *QuoteRecorder in interface{} is non-nil and Stop() would panic.
+		stopRecorder = quoteRec.Stop
 		log.Info("quote observation recorder started", "provider", cfg.Live.Provider, "symbol", cfg.Live.Symbol)
 	}
 
@@ -289,7 +292,7 @@ func run(shutdown <-chan os.Signal) error {
 // A blocked/unhealthy runtime cannot hang shutdown: Stop honors drainTimeout.
 // Every step is nil-safe so partial startup failures still shut down cleanly.
 func orderedShutdown(log *slog.Logger, drainTimeout time.Duration, cancel context.CancelFunc,
-	driverDone <-chan struct{}, rt *shadow.Runtime, rec interface{ Stop() },
+	driverDone <-chan struct{}, rt *shadow.Runtime, recStop func(),
 	closeProvider func() error, closeDB func()) {
 	cancel()
 	if driverDone != nil {
@@ -302,8 +305,8 @@ func orderedShutdown(log *slog.Logger, drainTimeout time.Duration, cancel contex
 		}
 		c()
 	}
-	if rec != nil {
-		rec.Stop()
+	if recStop != nil {
+		recStop()
 	}
 	if closeProvider != nil {
 		if err := closeProvider(); err != nil {
