@@ -53,6 +53,9 @@ export function useLiveStream(assetId: string, enabled: boolean): StreamState {
       ws.onclose = () => {
         if (closed) return;
         attempts++;
+        // The socket is gone now — reporting 'open'/'connecting' through the
+        // backoff window would misstate browser-client connectivity.
+        setState('reconnecting');
         // 1s → ~15s bounded backoff with jitter.
         const delay = Math.min(15000, 1000 * 2 ** Math.min(attempts, 4)) + Math.random() * 500;
         timer = setTimeout(connect, delay);
