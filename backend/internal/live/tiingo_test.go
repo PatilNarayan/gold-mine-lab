@@ -421,7 +421,7 @@ func TestLabelInstantRoundTripDST(t *testing.T) {
 		label    time.Time
 		wantReal time.Time // real UTC instant the label names
 	}{
-		{time.Date(2026, 7, 15, 20, 0, 0, 0, time.UTC), time.Date(2026, 7, 15, 17, 0, 0, 0, time.UTC)},  // EEST +3
+		{time.Date(2026, 7, 15, 20, 0, 0, 0, time.UTC), time.Date(2026, 7, 15, 17, 0, 0, 0, time.UTC)},   // EEST +3
 		{time.Date(2026, 10, 26, 20, 0, 0, 0, time.UTC), time.Date(2026, 10, 26, 18, 0, 0, 0, time.UTC)}, // EET +2
 	}
 	for _, tc := range cases {

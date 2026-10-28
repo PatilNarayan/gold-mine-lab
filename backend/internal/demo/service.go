@@ -2,6 +2,7 @@ package demo
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -225,6 +226,56 @@ func (s *Service) LatestRunID(_ context.Context) (string, error) {
 
 func (s *Service) DashboardSummary(_ context.Context) (api.DashboardSummary, error) {
 	return s.store.summary(), nil
+}
+
+// PortfolioSummary mirrors the real endpoint: per-strategy rollups over
+// completed runs from the demo store — experiment analytics, not a merged
+// portfolio.
+func (s *Service) PortfolioSummary(_ context.Context) (api.PortfolioSummaryResponse, error) {
+	byStrat := map[string]*api.StrategyAggregate{}
+	for _, r := range s.store.listRuns("") {
+		if r.Status != "completed" {
+			continue
+		}
+		d, ok := s.store.detail(r.ID)
+		if !ok || d.Metrics == nil {
+			continue
+		}
+		a, ok := byStrat[r.StrategyID]
+		if !ok {
+			a = &api.StrategyAggregate{StrategyID: r.StrategyID}
+			byStrat[r.StrategyID] = a
+		}
+		a.Runs++
+		a.TotalNetPnl += d.Metrics.NetPnl
+		a.TotalTrades += float64(d.Metrics.TotalTrades)
+		if a.MeanWinRate == nil {
+			v := d.Metrics.WinRate
+			a.MeanWinRate = &v
+		} else {
+			*a.MeanWinRate = (*a.MeanWinRate*float64(a.Runs-1) + d.Metrics.WinRate) / float64(a.Runs)
+		}
+		if a.BestReturnPct == nil || d.Metrics.ReturnPct > *a.BestReturnPct {
+			v := d.Metrics.ReturnPct
+			a.BestReturnPct = &v
+		}
+		if a.WorstReturnPct == nil || d.Metrics.ReturnPct < *a.WorstReturnPct {
+			v := d.Metrics.ReturnPct
+			a.WorstReturnPct = &v
+		}
+		if a.WorstMaxDD == nil || d.Metrics.MaxDrawdown > *a.WorstMaxDD {
+			v := d.Metrics.MaxDrawdown
+			a.WorstMaxDD = &v
+		}
+	}
+	out := api.PortfolioSummaryResponse{Strategies: make([]api.StrategyAggregate, 0, len(byStrat))}
+	for _, a := range byStrat {
+		out.Strategies = append(out.Strategies, *a)
+	}
+	sort.Slice(out.Strategies, func(i, j int) bool {
+		return out.Strategies[i].StrategyID < out.Strategies[j].StrategyID
+	})
+	return out, nil
 }
 
 func (s *Service) Execute(_ context.Context, req api.BacktestRequest) (api.BacktestRun, error) {

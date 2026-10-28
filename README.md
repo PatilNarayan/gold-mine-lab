@@ -1,7 +1,9 @@
 # Gold Mine Lab
 
-A quantitative strategy research and backtesting platform — asset-agnostic
-(XAUUSD, XAGUSD, MSFT, TSLA, …), starting with historical research workflows.
+A quantitative strategy research and backtesting platform for XAU/USD —
+the only instrument currently exposed (other assets are rejected); the
+underlying engine is asset-general. Starting with historical research
+workflows.
 
 ## Projects
 

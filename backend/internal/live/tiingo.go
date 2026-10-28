@@ -47,6 +47,7 @@ type TiingoConfig struct {
 	WSURL          string        // default wss://api.tiingo.com/fx
 	RESTBaseURL    string        // default https://api.tiingo.com
 	Ticker         string        // provider ticker — default "xauusd"
+	Symbol         string        // display symbol reported back — default "XAU/USD"
 	AssetID        string        // canonical asset id reported back — "xauusd"
 	StaleAfter     time.Duration // quote age after which state reports "stale"
 	CandleRefresh  time.Duration // per-timeframe REST reconcile TTL — default 5m
@@ -142,6 +143,9 @@ func NewTiingo(cfg TiingoConfig) *Tiingo {
 	if cfg.Ticker == "" {
 		cfg.Ticker = "xauusd"
 	}
+	if cfg.Symbol == "" {
+		cfg.Symbol = "XAU/USD"
+	}
 	if cfg.AssetID == "" {
 		cfg.AssetID = "xauusd"
 	}
@@ -232,7 +236,7 @@ func (p *Tiingo) Status() Status {
 		State:                 p.state,
 		Provider:              "tiingo",
 		Transport:             "websocket",
-		Symbol:                p.cfg.Ticker,
+		Symbol:                p.cfg.Symbol,
 		LastError:             p.lastErr,
 		StaleAfter:            p.cfg.StaleAfter,
 		EstimatedDailyCredits: p.estimatedDailyCredits(),
@@ -547,7 +551,7 @@ func (p *Tiingo) onUpdate(raw json.RawMessage) {
 
 	p.applyQuote(Quote{
 		AssetID:      p.cfg.AssetID,
-		Symbol:       p.cfg.Ticker,
+		Symbol:       p.cfg.Symbol,
 		Price:        price,
 		PriceKind:    "mid",
 		Bid:          bid,

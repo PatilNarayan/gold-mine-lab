@@ -233,6 +233,11 @@ func (p *DBProvider) ensure(ctx context.Context, asset Asset, tf Timeframe, from
 					cov.First = covFrom
 				}
 			}
+			// Resume checkpoint for a forward page walk: covTo is the
+			// committed frontier. Backward walkers need no separate
+			// checkpoint — the bridging rule already lowers cov.First on
+			// every committed page, so the next attempt's window IS the
+			// unfetched remainder.
 			cov.ProgressBar = covTo // resume checkpoint for this window
 			cov.State = SyncPartial
 			save()

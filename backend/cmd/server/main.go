@@ -62,32 +62,18 @@ func run(shutdown <-chan os.Signal) error {
 	// cancelled exactly once, inside the ordered shutdown below.
 	runCtx, cancelRun := context.WithCancel(ctx)
 
-	// Ordered shutdown — registered FIRST so every worker defer that follows
-	// runs before it, and the DB pool always closes LAST:
-	//   1. stop admitting new shadow events (cancel → producers detach)
-	//   2. drain accepted runtime work / finish in-flight transactions
-	//   3. stop the quote recorder (drains its own buffer to the DB)
-	//   4. close the provider connection
-	//   5. close the pool
+	// Ordered shutdown — the SINGLE deterministic owner. Workers register
+	// stop hooks via these vars; this defer runs them in the documented
+	// order and the DB pool always closes LAST. Provider Close hooks are
+	// captured here (not `defer p.Close()`, which would run first under
+	// Go's LIFO defer order and invert the sequence).
 	var shadowRt *shadow.Runtime
 	var driverDone chan struct{}
 	var quoteRec *service.QuoteRecorder
+	var closeProvider func() error
 	defer func() {
-		cancelRun()
-		if driverDone != nil {
-			<-driverDone
-		}
-		if shadowRt != nil {
-			drainCtx, c := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
-			if err := shadowRt.Stop(drainCtx); err != nil {
-				log.Warn("shadow runtime drain incomplete — admitted events left unprocessed", "err", err)
-			}
-			c()
-		}
-		if quoteRec != nil {
-			quoteRec.Stop()
-		}
-		pool.Close()
+		orderedShutdown(log, cfg.HTTP.ShutdownTimeout, cancelRun, driverDone,
+			shadowRt, quoteRec, closeProvider, pool.Close)
 	}()
 
 	// Real pipeline: provider-synced Postgres candle store → registry →
@@ -119,13 +105,14 @@ func run(shutdown <-chan os.Signal) error {
 				WSURL:         cfg.Live.TiingoWSURL,
 				RESTBaseURL:   cfg.Live.TiingoRESTURL,
 				Ticker:        "xauusd",
+				Symbol:        cfg.Live.Symbol,
 				AssetID:       market.CanonicalAssetID,
 				StaleAfter:    cfg.Live.StaleAfter,
 				CandleRefresh: cfg.Live.CandleRefresh,
 				Logger:        log,
 			})
 			p.Start(ctx)
-			defer func() { _ = p.Close() }()
+			closeProvider = p.Close
 			liveProvider = p
 		default:
 			p := live.NewTwelveData(live.TwelveDataConfig{
@@ -141,14 +128,17 @@ func run(shutdown <-chan os.Signal) error {
 				Logger:        log,
 			})
 			p.Start(ctx)
-			defer func() { _ = p.Close() }()
+			closeProvider = p.Close
 			liveProvider = p
 		}
-		est := liveProvider.Status().EstimatedDailyCredits
-		log.Info("live market data enabled", "provider", cfg.Live.Provider,
-			"transport", cfg.Live.Transport, "pollInterval", cfg.Live.PollInterval,
+		st := liveProvider.Status()
+		est := st.EstimatedDailyCredits
+		// Log the provider's ACTUAL transport/symbol — cfg.Live.Transport is a
+		// Twelve Data-only knob and lies about Tiingo (websocket-only).
+		log.Info("live market data enabled", "provider", st.Provider,
+			"transport", st.Transport, "pollInterval", cfg.Live.PollInterval,
 			"candleRefresh", cfg.Live.CandleRefresh, "estDailyCredits", est,
-			"symbol", cfg.Live.Symbol)
+			"symbol", st.Symbol)
 		if est > cfg.Live.CreditLimit {
 			log.Warn("estimated daily API credits exceed plan allowance — raise intervals or the plan",
 				"estDailyCredits", est, "dailyLimit", cfg.Live.CreditLimit,
@@ -285,6 +275,42 @@ func run(shutdown <-chan os.Signal) error {
 	}
 	log.Info("stopped cleanly")
 	return nil
+}
+
+// orderedShutdown is the single deterministic shutdown owner:
+//  1. cancel producers — nothing new is admitted anywhere
+//  2. join the shadow driver so producers stop submitting events
+//  3. drain admitted runtime events within drainTimeout — deadline expiry
+//     is reported; leftover events are counted dropped, never claimed durable
+//  4. stop the quote recorder (it drains its own buffer to the DB)
+//  5. close the live provider connection
+//  6. close the database pool LAST — no worker may write after this
+//
+// A blocked/unhealthy runtime cannot hang shutdown: Stop honors drainTimeout.
+// Every step is nil-safe so partial startup failures still shut down cleanly.
+func orderedShutdown(log *slog.Logger, drainTimeout time.Duration, cancel context.CancelFunc,
+	driverDone <-chan struct{}, rt *shadow.Runtime, rec interface{ Stop() },
+	closeProvider func() error, closeDB func()) {
+	cancel()
+	if driverDone != nil {
+		<-driverDone
+	}
+	if rt != nil {
+		drainCtx, c := context.WithTimeout(context.Background(), drainTimeout)
+		if err := rt.Stop(drainCtx); err != nil {
+			log.Warn("shadow runtime drain incomplete — admitted events left unprocessed", "err", err)
+		}
+		c()
+	}
+	if rec != nil {
+		rec.Stop()
+	}
+	if closeProvider != nil {
+		if err := closeProvider(); err != nil {
+			log.Warn("provider close failed", "err", err)
+		}
+	}
+	closeDB()
 }
 
 func newLogger(cfg config.Config) *slog.Logger {

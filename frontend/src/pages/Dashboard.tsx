@@ -172,7 +172,7 @@ export default function Dashboard() {
                   <th className="py-1 pr-3 font-medium">Runs</th>
                   <th className="py-1 pr-3 font-medium">Total net P&L</th>
                   <th className="py-1 pr-3 font-medium">Trades</th>
-                  <th className="py-1 pr-3 font-medium">Mean win rate</th>
+                  <th className="py-1 pr-3 font-medium">Mean win rate (per run)</th>
                   <th className="py-1 pr-3 font-medium">Best / worst return</th>
                   <th className="py-1 font-medium">Worst drawdown</th>
                 </tr>
