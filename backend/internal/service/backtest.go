@@ -122,6 +122,26 @@ func (s *Service) DashboardSummary(ctx context.Context) (api.DashboardSummary, e
 	return sum, nil
 }
 
+// PortfolioSummary returns per-strategy experiment analytics over completed
+// runs — persisted metric rollups, no recomputation. Still NOT a merged
+// portfolio: each strategy's row aggregates its own independent runs.
+func (s *Service) PortfolioSummary(ctx context.Context) (api.PortfolioSummaryResponse, error) {
+	aggs, err := s.repos.Metrics.StrategyMetricAggregates(ctx)
+	if err != nil {
+		return api.PortfolioSummaryResponse{}, err
+	}
+	out := api.PortfolioSummaryResponse{Strategies: make([]api.StrategyAggregate, 0, len(aggs))}
+	for _, a := range aggs {
+		out.Strategies = append(out.Strategies, api.StrategyAggregate{
+			StrategyID: a.StrategyID, Runs: a.Runs,
+			TotalNetPnl: a.TotalNetPnl, TotalTrades: a.TotalTrades,
+			MeanWinRate: a.MeanWinRate, BestReturnPct: a.BestReturnPct,
+			WorstReturnPct: a.WorstReturnPct, WorstMaxDD: a.WorstMaxDD,
+		})
+	}
+	return out, nil
+}
+
 // Execute runs the real engine synchronously:
 // queued → running → engine over the CSV window → persist trades+metrics+curve
 // in one transaction → completed. Failures mark the run failed with a safe

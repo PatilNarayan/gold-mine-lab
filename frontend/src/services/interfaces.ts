@@ -14,6 +14,7 @@ import type {
   SignalResearch,
   SignalResearchRequest,
   DashboardSummary,
+  PortfolioSummary,
   MarketSummary,
   PagedTrades,
   Signal,
@@ -69,6 +70,7 @@ export interface BacktestService {
   getRun(runId: string): Promise<BacktestDetail>;
   getLatestRunId(): Promise<string | null>;
   getSummary(): Promise<DashboardSummary>;
+  getPortfolioSummary(): Promise<PortfolioSummary>;
   run(request: BacktestRequest): Promise<BacktestRun>;
 }
 

@@ -275,3 +275,27 @@ func parseRetryAfter(v string) time.Duration {
 	}
 	return 0
 }
+
+// ── candle-label coordinate system ──────────────────────────────────────
+// Candle bar_time values are Kyiv civil-time labels rendered as naive UTC —
+// session identifiers, not instants. Provider timestamps, quote times, and
+// receipt times ARE real instants. Never compare one space against the
+// other; convert at the boundary.
+
+// LabelToInstant converts a candle label back to the real instant it names —
+// the inverse of sessionBucket: the label's wall-clock fields interpreted in
+// Europe/Kyiv. During the autumn fall-back two real hours share one label
+// (identical to the broker export); Go resolves the overlap deterministically.
+func LabelToInstant(label time.Time) time.Time {
+	return time.Date(label.Year(), label.Month(), label.Day(),
+		label.Hour(), label.Minute(), label.Second(), label.Nanosecond(), brokerLoc)
+}
+
+// NowLabel returns the current instant in candle-label space — the correct
+// upper bound for queries against stored bar_time values. Using time.Now()
+// directly mixes coordinates and silently truncates the freshest ~2–3 hours.
+func NowLabel() time.Time {
+	lt := time.Now().In(brokerLoc)
+	return time.Date(lt.Year(), lt.Month(), lt.Day(), lt.Hour(),
+		lt.Minute(), lt.Second(), lt.Nanosecond(), time.UTC)
+}

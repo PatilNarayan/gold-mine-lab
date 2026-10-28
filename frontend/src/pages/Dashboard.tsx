@@ -3,6 +3,7 @@ import {
   useAssets,
   useDashboardSummary,
   useMarketSummary,
+  usePortfolioSummary,
   useSignals,
   useStrategies,
 } from '@/hooks';
@@ -31,6 +32,7 @@ export default function Dashboard() {
   const strategies = useStrategies();
   const signals = useSignals({ limit: 10 });
   const perf = useDashboardSummary();
+  const portfolio = usePortfolioSummary();
   const assets = useAssets();
 
   const sigCounts = (signals.data ?? []).reduce(
@@ -152,6 +154,61 @@ export default function Dashboard() {
           ) : null}
         </section>
       </div>
+
+      {/* Per-strategy experiment analytics — honest rollup, NOT a merged
+          portfolio: independent runs cannot be summed into one account. */}
+      <section aria-label="Experiment analytics" className="border border-line bg-surface-1 p-3">
+        <h2 className="section-label mb-2">Experiment analytics — per strategy</h2>
+        {portfolio.isLoading ? (
+          <SkeletonRows rows={3} height="h-8" />
+        ) : portfolio.isError ? (
+          <ErrorState error={portfolio.error} onRetry={() => portfolio.refetch()} />
+        ) : portfolio.data && portfolio.data.strategies.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-2xs">
+              <thead>
+                <tr className="border-b border-line text-content-3">
+                  <th className="py-1 pr-3 font-medium">Strategy</th>
+                  <th className="py-1 pr-3 font-medium">Runs</th>
+                  <th className="py-1 pr-3 font-medium">Total net P&L</th>
+                  <th className="py-1 pr-3 font-medium">Trades</th>
+                  <th className="py-1 pr-3 font-medium">Mean win rate</th>
+                  <th className="py-1 pr-3 font-medium">Best / worst return</th>
+                  <th className="py-1 font-medium">Worst drawdown</th>
+                </tr>
+              </thead>
+              <tbody>
+                {portfolio.data.strategies.map((a) => (
+                  <tr key={a.strategyId} className="border-b border-line/60">
+                    <td className="py-1.5 pr-3 font-medium text-content-1">{a.strategyId}</td>
+                    <td className="tnum py-1.5 pr-3">{a.runs}</td>
+                    <td className={`tnum py-1.5 pr-3 ${a.totalNetPnl >= 0 ? 'text-buy' : 'text-sell'}`}>
+                      {formatSignedCurrency(a.totalNetPnl)}
+                    </td>
+                    <td className="tnum py-1.5 pr-3">{formatInteger(a.totalTrades)}</td>
+                    <td className="tnum py-1.5 pr-3">
+                      {a.meanWinRate != null ? formatPercent(a.meanWinRate) : '—'}
+                    </td>
+                    <td className="tnum py-1.5 pr-3">
+                      {a.bestReturnPct != null ? formatSignedPercent(a.bestReturnPct) : '—'}
+                      {' / '}
+                      {a.worstReturnPct != null ? formatSignedPercent(a.worstReturnPct) : '—'}
+                    </td>
+                    <td className="tnum py-1.5 text-sell">
+                      {a.worstMaxDrawdown != null ? formatPercent(a.worstMaxDrawdown) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-1.5 text-2xs text-content-3">
+              Rollups across each strategy&apos;s completed runs — experiment analytics, not a merged portfolio.
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs text-content-3">No completed backtests yet.</p>
+        )}
+      </section>
 
       {/* Equity curve */}
       <section aria-label="Portfolio equity curve" className="border border-line bg-surface-1 p-3">

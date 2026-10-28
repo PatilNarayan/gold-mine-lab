@@ -344,6 +344,25 @@ export const dashboardSummarySchema = z.object({
 });
 export type DashboardSummary = z.infer<typeof dashboardSummarySchema>;
 
+/** GET /api/portfolio/summary — per-strategy experiment analytics over
+ * completed runs. NOT a merged portfolio: independent runs cannot be
+ * summed into one account. Null metric = no run recorded it. */
+export const strategyAggregateSchema = z.object({
+  strategyId: z.string(),
+  runs: z.number(),
+  totalNetPnl: z.number(),
+  totalTrades: z.number(),
+  meanWinRate: z.number().nullable().optional(),
+  bestReturnPct: z.number().nullable().optional(),
+  worstReturnPct: z.number().nullable().optional(),
+  worstMaxDrawdown: z.number().nullable().optional(),
+});
+export type StrategyAggregate = z.infer<typeof strategyAggregateSchema>;
+export const portfolioSummarySchema = z.object({
+  strategies: z.array(strategyAggregateSchema),
+});
+export type PortfolioSummary = z.infer<typeof portfolioSummarySchema>;
+
 // --- comparisons (Phase 4 research grouping) ---------------------------------
 
 export const comparisonLegSchema = z.object({
@@ -925,6 +944,15 @@ export const shadowStatusSchema = z.object({
     lastFeedDegradedAt: z.string().optional(),
     lastHeartbeatGapAt: z.string().optional(),
     lastDropAt: z.string().optional(),
+  }).optional().nullable(),
+  runtime: z.object({
+    state: z.enum(['starting', 'running', 'unhealthy', 'stopped']),
+    reason: z.string().optional().nullable(),
+    since: z.string().optional(),
+    eventsSubmitted: z.number(),
+    eventsProcessed: z.number(),
+    eventsRejected: z.number(),
+    eventsDropped: z.number(),
   }).optional().nullable(),
 });
 

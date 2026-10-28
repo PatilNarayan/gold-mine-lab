@@ -45,6 +45,15 @@ export function useDashboardSummary() {
   });
 }
 
+/** GET /api/portfolio/summary — per-strategy experiment analytics. */
+export function usePortfolioSummary() {
+  return useQuery({
+    queryKey: ['portfolioSummary'],
+    queryFn: () => services.backtest.getPortfolioSummary(),
+    staleTime: 30_000,
+  });
+}
+
 export function useRunBacktest() {
   const qc = useQueryClient();
   return useMutation({

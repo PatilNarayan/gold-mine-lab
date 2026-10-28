@@ -9,6 +9,7 @@ export {
   useBacktestRun,
   useLatestRunId,
   useDashboardSummary,
+  usePortfolioSummary,
   useRunBacktest,
 } from './useBacktests';
 export { useTrades } from './useTrades';

@@ -4,12 +4,14 @@ import type {
   BacktestRequest,
   BacktestRun,
   DashboardSummary,
+  PortfolioSummary,
 } from '@/types/domain';
 import {
   backtestDetailSchema,
   backtestRequestSchema,
   backtestRunSchema,
   dashboardSummarySchema,
+  portfolioSummarySchema,
 } from '@/types/domain';
 import type { BacktestService } from '@/services/interfaces';
 import { apiClient } from './client';
@@ -33,6 +35,9 @@ export const httpBacktestService: BacktestService = {
   },
   getSummary(): Promise<DashboardSummary> {
     return apiClient.get('/api/backtests/summary', dashboardSummarySchema);
+  },
+  getPortfolioSummary(): Promise<PortfolioSummary> {
+    return apiClient.get('/api/portfolio/summary', portfolioSummarySchema);
   },
   run(request: BacktestRequest): Promise<BacktestRun> {
     return apiClient.post('/api/backtests', backtestRequestSchema.parse(request), backtestRunSchema);

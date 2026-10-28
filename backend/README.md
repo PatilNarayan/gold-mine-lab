@@ -288,6 +288,99 @@ validation rejects anything else. EMA warm-up is parameter-derived:
    `completed` in one transaction; failures write status `failed` + a safe
    message. Never a partially-completed run.
 
+## Shadow simulation (`internal/shadow`, `internal/service/shadowdriver.go`)
+
+**Simulation only — never broker orders.** A persistent shadow engine replays
+the frozen EMA20/50 benchmark against the live quote stream.
+
+**Two coordinate systems (do not mix):** `bar_time`/`signal_bar_time` are
+*labels* — Kyiv civil time rendered as naive UTC (`live.sessionBucket`).
+Quote times, `received_at`, `decision_at`, and execution windows are *real
+instants*. Convert with `live.LabelToInstant(label)` /
+`live.NowLabel()`; never compare `time.Now()` directly to a `bar_time`.
+
+- **Decisions** (`shadow_decisions`): append-only ledger — one row per
+  evaluated close with source (`live`|`recovery`), action, reason, EMA
+  values, actionability and order link. First write wins
+  (`ON CONFLICT DO NOTHING`): the original evaluation is immutable.
+  `CHECK (actionable = false OR order_id IS NOT NULL)` enforces the
+  decision→order link.
+- **Orders**: BUY at ask, SELL at bid, mid never executes. Pending orders
+  fill only on quotes with provider_time ≥ `decision_at` and inside the
+  fill timeout; otherwise `expired`. Recovery replays only persisted
+  admissible quotes inside the original real-time window — never a
+  current quote for an old signal.
+- **missed vs unobservable**: a passed window resolves `missed` only when
+  `CoverageComplete` proves the execution window was fully observed
+  (recorder span + heartbeat continuity + no in-window persistence
+  failure + no degraded feed interval overlapping); otherwise
+  `unobservable`. The decision *anchor* is the bar close as a real
+  instant (`live.LabelToInstant(bar_time) + timeframe`) — recovery
+  replay searches persisted quote evidence in that real window only.
+- **Sessions** (`shadow_sessions`): one open session per
+  (strategy,version,symbol,tf,provider); a different effective-config
+  fingerprint retires the old session (records kept) and opens a new one.
+  Positions (PK `session_id`+identity), pending orders, decisions
+  (`UNIQUE NULLS NOT DISTINCT` on session+identity+bar), and order keys
+  (key includes `session_id`) are session-scoped — **no state is
+  inherited across sessions; the session is resolved before any state
+  is restored**.
+- **Retry semantics**: a failed bar commit leaves the durable checkpoint
+  unadvanced and keeps the bar's evaluated signal cached — the stream is
+  never double-advanced. In-process continuation after a failed commit is
+  NOT attempted: Postgres rollback does not roll back an advanced
+  indicator stream, so the runtime halts (see *Runtime*).
+- **API**: `GET /api/shadow/status`, `/api/shadow/orders`,
+  `/api/shadow/decisions`.
+
+### Shadow runtime (single-writer architecture)
+
+`internal/shadow/runtime.go` owns the engine. Exactly ONE goroutine (the
+runtime's owner) mutates `shadow.Engine`; producers only submit events:
+
+- Provider quote callbacks → `Submit(EvQuote)` — non-blocking; the
+  upstream delivery path is never stalled.
+- Driver poll loop → `Submit(EvBarClosed)` (newest confirmed close) and
+  `Submit(EvTick)` (expiry sweep).
+- `Start` runs the bootstrap (session → restore → warmup/recovery) ON the
+  owner goroutine before any live event — recovery can never interleave
+  with live processing.
+- HTTP handlers read only `Runtime.Snapshot()` — an immutable deep copy
+  published after every event — never the engine.
+
+**Durability — what is atomic:** `CommitBar` persists one bar's complete
+transition in a single transaction: order intent (order_key dedupe) →
+fill/terminal resolution → ledger decision (session+bar dedupe) →
+position/`last_bar_time` checkpoint. `FillOrderAndPosition` (live fills)
+and `SetOrderStatus` (expiry) stay separate atomic units.
+
+**Failure semantics — what requires restart:** any persistence error marks
+the runtime `unhealthy` (state + reason in `/api/shadow/status` →
+`runtime`) and HALTS all strategy/execution processing. Recovery is a
+process restart, which rebuilds from committed state — idempotent keys
+(order_key, decision unique key, session-scoped position PK) make replay
+safe, and the atomic commit means an ambiguous commit resolves by
+inspecting durable state: either the whole transition landed or none did.
+
+**Mailbox overload:** bounded (1024). Quote/bar events that can't be
+admitted are REJECTED (`ErrMailboxFull`) and degrade the runtime — a
+dropped observation can never masquerade as complete coverage. Tick
+overflow only rejects (one deferrable sweep).
+
+**Ownership:** `pg_try_advisory_lock` on a dedicated pooled connection
+(`AcquireShadowOwnership`, key = FNV of the runtime identity). A second
+process can't co-own the session; losing the connection degrades the
+runtime; the lease is released on orderly shutdown.
+
+**Shutdown order:** cancel producers → join driver → `Runtime.Stop`
+(drain admitted work; deadline expiry is reported, remaining events
+counted dropped — never claimed durable) → recorder drain → provider
+close → pool close LAST.
+
+**Not guaranteed:** exactly-once execution across crashes (we guarantee
+atomicity + safe replay instead), in-process recovery from persistence
+failures, and multi-runtime orchestration.
+
 ## Metric formulas
 
 `netPnl = finalEquity − initialCapital` · `returnPct = netPnl/initialCapital` ·

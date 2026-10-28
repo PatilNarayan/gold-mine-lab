@@ -138,6 +138,19 @@ states, never generated candles.
 provider data (see below) for offline analysis — nothing in the runtime
 reads them.
 
+## Shadow simulation (research, never real orders)
+
+A persistent shadow engine replays the frozen `ema-cross` v1.0.0 benchmark
+against the live quote stream: decisions on confirmed bar closes,
+hypothetical BUY-at-ask / SELL-at-bid fills on admissible quotes, full
+PostgreSQL persistence — sessions, per-bar decision ledger
+(`shadow_decisions`), orders, positions, and quote-observation coverage.
+State is session-scoped (a changed effective config starts a new session;
+nothing is inherited). Historical backtests replay stored candles
+deterministically; the shadow engine consumes the live feed — two separate
+surfaces, never mixed. API: `GET /api/shadow/status` · `/orders` ·
+`/decisions`. See `backend/README.md` → *Shadow simulation*.
+
 ## Refreshing historical data (archival, optional)
 
 `scripts/sync-xauusd-history.ps1` (or `.sh`) produces a **new versioned

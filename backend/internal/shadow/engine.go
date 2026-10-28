@@ -50,22 +50,26 @@ type Config struct {
 
 // Store is the persistence the engine needs — implemented by postgres.Store.
 type Store interface {
-	CreateOrderIfAbsent(ctx context.Context, o repository.ShadowOrderRow) (id int64, created bool, err error)
-	GetPendingOrder(ctx context.Context, strategyID, version, symbol string, tf market.Timeframe) (*repository.ShadowOrderRow, error)
+	GetPendingOrder(ctx context.Context, sessionID int64, strategyID, version, symbol string, tf market.Timeframe) (*repository.ShadowOrderRow, error)
 	SetOrderStatus(ctx context.Context, orderID int64, status, reason string) error
 	UpsertPosition(ctx context.Context, p repository.ShadowPositionRow) error
-	GetPosition(ctx context.Context, strategyID, version, symbol string, tf market.Timeframe) (*repository.ShadowPositionRow, error)
+	GetPosition(ctx context.Context, sessionID int64, strategyID, version, symbol string, tf market.Timeframe) (*repository.ShadowPositionRow, error)
 	ListOrders(ctx context.Context, strategyID, symbol string, tf market.Timeframe, limit int) ([]repository.ShadowOrderRow, error)
 	// FillOrderAndPosition commits order-fill + position transition atomically.
 	FillOrderAndPosition(ctx context.Context, orderID int64, f repository.ShadowFillRecord, pos repository.ShadowPositionRow) error
+	// CommitBar commits ONE bar's complete durable transition in a single
+	// transaction: the order intent (idempotent on order_key), the order's
+	// optional fill or terminal resolution, the ledger decision (idempotent
+	// on the session+identity+bar key), and the position/checkpoint upsert.
+	// A failed commit writes NOTHING — the caller must leave its in-memory
+	// state untouched so durable state stays authoritative on restart.
+	CommitBar(ctx context.Context, c repository.ShadowBarCommit) (repository.ShadowBarResult, error)
 	// FindQuoteInWindow finds the earliest persisted admissible quote in
 	// [from,to) — evidence for downtime recovery, never fabricated.
 	FindQuoteInWindow(ctx context.Context, provider, symbol string, from, to time.Time) (*repository.QuoteObservationRow, error)
 	// CoverageComplete reports whether persisted recorder coverage PROVES
 	// [from,to) was observed — separates confirmed-missed from unobservable.
 	CoverageComplete(ctx context.Context, provider, symbol string, from, to time.Time) (bool, error)
-	// RecordDecision appends the per-bar evaluation ledger row (idempotent).
-	RecordDecision(ctx context.Context, d repository.ShadowDecisionRow) (int64, error)
 	// ListDecisions returns recent ledger rows (newest first).
 	ListDecisions(ctx context.Context, strategyID, version, symbol string, tf market.Timeframe, limit int) ([]repository.ShadowDecisionRow, error)
 }
@@ -99,13 +103,17 @@ type Engine struct {
 	log    *slog.Logger
 	now    func() time.Time
 
-	mu      struct{} // serialized by callers (single driver goroutine)
-	pos     repository.ShadowPositionRow
-	pending *repository.ShadowOrderRow
-	equity  float64 // running virtual equity = initial + realized
-	metrics Metrics
-	session int64 // persisted session identity, 0 = unset
-	loaded  bool
+	// Ownership: exactly one goroutine may call any Engine method — the
+	// Runtime's owner. There is deliberately no mutex: the single-writer
+	// contract is structural, and a second caller is a bug, not contention.
+	pos      repository.ShadowPositionRow
+	pending  *repository.ShadowOrderRow
+	hasPos   bool    // a fill applied or a stored row restored — gates Snapshot().Position
+	equity   float64 // running virtual equity = initial + realized
+	metrics  Metrics
+	session  int64 // persisted session identity, 0 = unset
+	loaded   bool
+	lastEval *pendingEval // evaluated-but-unpersisted bar — retry-safe
 }
 
 func New(cfg Config, store Store, log *slog.Logger) *Engine {
@@ -138,7 +146,13 @@ func (e *Engine) TF() market.Timeframe { return e.cfg.Timeframe }
 func (e *Engine) EffectiveConfig() Config { return e.cfg }
 
 // SetSession stamps the persisted session identity on new orders/positions.
-func (e *Engine) SetSession(id int64) { e.session = id }
+// SetSession stamps the persisted session identity on the engine AND the
+// in-memory position row — fill-time position upserts serialize e.pos
+// directly, so the stamp must live on the row, not only the engine field.
+func (e *Engine) SetSession(id int64) {
+	e.session = id
+	e.pos.SessionID = &id
+}
 
 func (e *Engine) tfDuration() time.Duration {
 	switch e.cfg.Timeframe {
@@ -152,24 +166,27 @@ func (e *Engine) tfDuration() time.Duration {
 }
 
 func (e *Engine) orderKey(side string, barTime time.Time) string {
-	return fmt.Sprintf("%s@%s|%s|%s|%s|%s",
+	return fmt.Sprintf("%s@%s|%s|%s|%s|%s|s%d",
 		e.cfg.StrategyID, e.cfg.StrategyVersion, e.cfg.Symbol,
-		e.cfg.Timeframe, barTime.UTC().Format(time.RFC3339Nano), side)
+		e.cfg.Timeframe, barTime.UTC().Format(time.RFC3339Nano), side,
+		e.session)
 }
 
 // Restore loads persisted position + pending order + last-bar marker so a
-// restart resumes state instead of replaying decisions.
+// restart resumes state instead of replaying decisions. Session-scoped: a
+// new configuration session starts clean — never inherits prior state.
 func (e *Engine) Restore(ctx context.Context) error {
-	pos, err := e.store.GetPosition(ctx, e.cfg.StrategyID, e.cfg.StrategyVersion,
+	pos, err := e.store.GetPosition(ctx, e.session, e.cfg.StrategyID, e.cfg.StrategyVersion,
 		e.cfg.Symbol, e.cfg.Timeframe)
 	if err != nil {
 		return err
 	}
 	if pos != nil {
 		e.pos = *pos
+		e.hasPos = true
 		e.equity = e.cfg.InitialEquity + pos.RealizedPnl
 	}
-	pend, err := e.store.GetPendingOrder(ctx, e.cfg.StrategyID, e.cfg.StrategyVersion,
+	pend, err := e.store.GetPendingOrder(ctx, e.session, e.cfg.StrategyID, e.cfg.StrategyVersion,
 		e.cfg.Symbol, e.cfg.Timeframe)
 	if err != nil {
 		return err
@@ -183,10 +200,10 @@ func (e *Engine) Restore(ctx context.Context) error {
 // last processed bar are ignored — replay-safe. Signals BUY/SELL create a
 // pending order (idempotent via order_key) unless the position already
 // matches the intent.
-// recordDecision appends the per-bar evaluation-ledger evidence. Source
-// distinguishes live closes from recovery replays; replay is idempotent.
-func (e *Engine) recordDecision(ctx context.Context, c market.Candle, sig strategy.Signal,
-	source string, actionable bool, orderID *int64, blocked *string) error {
+// decisionRow builds the per-bar evaluation-ledger row. Source distinguishes
+// live closes from recovery replays; replay is idempotent via the unique key.
+func (e *Engine) decisionRow(c market.Candle, sig strategy.Signal,
+	source string, actionable bool, blocked *string) repository.ShadowDecisionRow {
 	action := "neutral"
 	if sig.Action == strategy.ActionBuy {
 		action = "buy"
@@ -194,7 +211,7 @@ func (e *Engine) recordDecision(ctx context.Context, c market.Candle, sig strate
 		action = "sell"
 	}
 	d := repository.ShadowDecisionRow{
-		SessionID: nilIfZero(e.session), OrderID: orderID,
+		SessionID:  nilIfZero(e.session),
 		StrategyID: e.cfg.StrategyID, StrategyVersion: e.cfg.StrategyVersion,
 		Symbol: e.cfg.Symbol, Timeframe: string(e.cfg.Timeframe),
 		BarTime: c.Time, DecidedAt: e.now().UTC(), Source: source,
@@ -206,11 +223,7 @@ func (e *Engine) recordDecision(ctx context.Context, c market.Candle, sig strate
 	if v, ok := sig.Metadata["slow_ema"].(float64); ok {
 		d.SlowEMA = &v
 	}
-	if _, err := e.store.RecordDecision(ctx, d); err != nil {
-		return err
-	}
-	e.metrics.Decisions++
-	return nil
+	return d
 }
 
 func nilIfZero(v int64) *int64 {
@@ -220,37 +233,115 @@ func nilIfZero(v int64) *int64 {
 	return &v
 }
 
+// barOutcome is everything one bar can durably produce beyond the ledger
+// decision + checkpoint (which commitBar always writes). All fields optional.
+type barOutcome struct {
+	order   *repository.ShadowOrderRow        // order intent to persist
+	resolve *repository.ShadowOrderResolution // terminal status for that order
+	fill    *repository.ShadowFillRecord      // fill applied to that order
+	fillNet float64                           // realized delta when fill closes
+	pos     repository.ShadowPositionRow      // post-bar position (post-fill too)
+}
+
+// commitBar writes one bar's COMPLETE durable transition in a single
+// transaction — order intent, optional fill/resolution, ledger decision,
+// and the position/checkpoint — then applies the in-memory effects only
+// after the commit succeeds. On error the engine is byte-identical to its
+// pre-call state: nothing half-applied, nothing published as committed.
+func (e *Engine) commitBar(ctx context.Context, c market.Candle, sig strategy.Signal,
+	source string, actionable bool, blocked *string, out barOutcome) error {
+	d := e.decisionRow(c, sig, source, actionable, blocked)
+	out.pos.StrategyID, out.pos.StrategyVersion = e.cfg.StrategyID, e.cfg.StrategyVersion
+	out.pos.Symbol, out.pos.Timeframe = e.cfg.Symbol, string(e.cfg.Timeframe)
+	if e.session != 0 {
+		out.pos.SessionID = &e.session
+	}
+	out.pos.LastBarTime = &c.Time
+	bc := repository.ShadowBarCommit{
+		NewOrder: out.order, Resolve: out.resolve, Fill: out.fill,
+		Decision: &d, Position: out.pos,
+	}
+	res, err := e.store.CommitBar(ctx, bc)
+	if err != nil {
+		return err // durable marker unchanged — caller marks runtime unhealthy
+	}
+	// Commit succeeded — apply in-memory effects.
+	e.pos = out.pos
+	e.lastEval = nil
+	e.metrics.Decisions++
+	if out.order != nil {
+		out.order.ID = res.OrderID
+		if res.OrderCreated {
+			// Only a live-pending order stays tracked; fills/resolutions are
+			// already terminal in the same transaction.
+			if out.resolve == nil && out.fill == nil {
+				e.pending = out.order
+				e.log.Info("shadow decision", "side", out.order.Side, "bar", c.Time, "order", res.OrderID)
+			}
+		} else {
+			e.metrics.DupSkips++
+		}
+	}
+	if out.fill != nil {
+		e.equity += out.fillNet
+		e.pending = nil
+		e.hasPos = true
+		e.metrics.Fills++
+		ft := out.fill.FilledAt
+		e.metrics.LastFillAt = &ft
+		e.log.Info("shadow fill", "order", res.OrderID, "side", out.order.Side,
+			"price", out.fill.FillPrice)
+	}
+	return nil
+}
+
+// evaluate runs the stream for a bar ONCE per process lifetime. A failed
+// persist retries the same bar — the cached signal is reused so the
+// streaming indicator state is never double-advanced.
+func (e *Engine) evaluate(c market.Candle) strategy.Signal {
+	if e.lastEval != nil && e.lastEval.bar.Equal(c.Time) {
+		return e.lastEval.sig
+	}
+	sig := e.stream.Next(c)
+	e.lastEval = &pendingEval{bar: c.Time, sig: sig}
+	return sig
+}
+
+type pendingEval struct {
+	bar time.Time
+	sig strategy.Signal
+}
+
 func (e *Engine) OnBarClosed(ctx context.Context, c market.Candle) error {
 	if e.pos.LastBarTime != nil && !c.Time.After(*e.pos.LastBarTime) {
 		e.metrics.DupSkips++
 		return nil // already processed — reconnect/replay duplicate
 	}
-	e.pos.LastBarTime = &c.Time
 	e.metrics.BarsProcessed++
 	if e.stream == nil {
 		return fmt.Errorf("shadow engine has no strategy stream")
 	}
-	sig := e.stream.Next(c)
+	sig := e.evaluate(c)
 	var side string
 	e.metrics.SignalsSeen++
 	switch sig.Action {
 	case strategy.ActionBuy:
 		if e.pos.Side != nil {
-			return e.decide(ctx, c, sig, "live", false, nil, strp("already_long"))
+			return e.commitBar(ctx, c, sig, "live", false, strp("already_long"), barOutcome{pos: e.pos})
 		}
 		side = "BUY"
 	case strategy.ActionSell:
 		if e.pos.Side == nil {
-			return e.decide(ctx, c, sig, "live", false, nil, strp("flat_no_position"))
+			return e.commitBar(ctx, c, sig, "live", false, strp("flat_no_position"), barOutcome{pos: e.pos})
 		}
 		side = "SELL"
 	default:
-		return e.decide(ctx, c, sig, "live", false, nil, nil)
+		return e.commitBar(ctx, c, sig, "live", false, nil, barOutcome{pos: e.pos})
 	}
 	// One pending order at a time: a live pending order stays until filled
 	// or expired; the new signal is recorded in the bar marker regardless.
 	if e.pending != nil {
-		return e.decide(ctx, c, sig, "live", false, nil, strp("pending_order_active"))
+		return e.commitBar(ctx, c, sig, "live", false, strp("pending_order_active"), barOutcome{pos: e.pos})
 	}
 	o := repository.ShadowOrderRow{
 		OrderKey: e.orderKey(side, c.Time), StrategyID: e.cfg.StrategyID,
@@ -261,45 +352,42 @@ func (e *Engine) OnBarClosed(ctx context.Context, c market.Candle) error {
 	if e.session != 0 {
 		o.SessionID = &e.session
 	}
-	id, created, err := e.store.CreateOrderIfAbsent(ctx, o)
-	if err != nil {
-		return err
-	}
-	if created {
-		o.ID = id
-		e.pending = &o
-		e.log.Info("shadow decision", "side", side, "bar", c.Time, "order", id)
-	} else {
-		e.metrics.DupSkips++
-	}
-	var oid *int64
-	if created {
-		oid = &id
-	}
-	return e.decide(ctx, c, sig, "live", created, oid, nil)
-}
-
-// decide records the ledger row then persists the marker — one place so a
-// close always leaves both evidence streams.
-func (e *Engine) decide(ctx context.Context, c market.Candle, sig strategy.Signal,
-	source string, actionable bool, orderID *int64, blocked *string) error {
-	if err := e.recordDecision(ctx, c, sig, source, actionable, orderID, blocked); err != nil {
-		return err
-	}
-	return e.persistBar(ctx)
+	// Order intent + ledger decision + checkpoint commit atomically: the
+	// decision is actionable whether this commit created the order or an
+	// identical earlier commit did (order_key dedupe).
+	return e.commitBar(ctx, c, sig, "live", true, nil, barOutcome{order: &o, pos: e.pos})
 }
 
 func strp(s string) *string { return &s }
 
-// MarkBarProcessed advances the resume marker WITHOUT evaluating a signal —
-// used by the driver to warm up on stored history at fresh start: bars that
-// closed before the engine existed must not retroactively create decisions.
-func (e *Engine) MarkBarProcessed(ctx context.Context, t time.Time) error {
-	if e.pos.LastBarTime != nil && !t.After(*e.pos.LastBarTime) {
+// Warmup feeds one already-closed historical bar to the stream AND advances
+// the durable resume marker WITHOUT evaluating a signal — fresh-start state
+// reconstruction: bars that closed before the engine existed must not
+// retroactively create decisions. On failure the marker is reverted (the
+// stream is not — the caller must treat the failure as fatal and rebuild).
+func (e *Engine) Warmup(ctx context.Context, c market.Candle) error {
+	if e.pos.LastBarTime != nil && !c.Time.After(*e.pos.LastBarTime) {
 		return nil
 	}
-	e.pos.LastBarTime = &t
-	return e.persistBar(ctx)
+	if e.stream != nil {
+		e.stream.Next(c)
+	}
+	prev := e.pos.LastBarTime
+	e.pos.LastBarTime = &c.Time
+	if err := e.persistBar(ctx); err != nil {
+		e.pos.LastBarTime = prev
+		return err
+	}
+	return nil
+}
+
+// FeedWarmup pushes one already-processed historical bar through the stream
+// WITHOUT touching the durable marker — restart-time indicator
+// reconstruction for bars the checkpoint already covers.
+func (e *Engine) FeedWarmup(c market.Candle) {
+	if e.stream != nil {
+		e.stream.Next(c)
+	}
 }
 
 // ProcessMissedClose handles a candle that closed while the engine was
@@ -322,33 +410,35 @@ func (e *Engine) ProcessMissedClose(ctx context.Context, c market.Candle) error 
 		e.metrics.DupSkips++
 		return nil
 	}
-	e.pos.LastBarTime = &c.Time
 	e.metrics.BarsProcessed++
 	if e.stream == nil {
 		return fmt.Errorf("shadow engine has no strategy stream")
 	}
-	sig := e.stream.Next(c)
+	sig := e.evaluate(c)
 	e.metrics.SignalsSeen++
 	var side string
 	switch sig.Action {
 	case strategy.ActionBuy:
 		if e.pos.Side != nil {
-			return e.decide(ctx, c, sig, "recovery", false, nil, strp("already_long"))
+			return e.commitBar(ctx, c, sig, "recovery", false, strp("already_long"), barOutcome{pos: e.pos})
 		}
 		side = "BUY"
 	case strategy.ActionSell:
 		if e.pos.Side == nil {
-			return e.decide(ctx, c, sig, "recovery", false, nil, strp("flat_no_position"))
+			return e.commitBar(ctx, c, sig, "recovery", false, strp("flat_no_position"), barOutcome{pos: e.pos})
 		}
 		side = "SELL"
 	default:
-		return e.decide(ctx, c, sig, "recovery", false, nil, nil)
+		return e.commitBar(ctx, c, sig, "recovery", false, nil, barOutcome{pos: e.pos})
 	}
 	if e.pending != nil {
-		return e.decide(ctx, c, sig, "recovery", false, nil, strp("pending_order_active"))
+		return e.commitBar(ctx, c, sig, "recovery", false, strp("pending_order_active"), barOutcome{pos: e.pos})
 	}
 
-	anchor := c.Time.Add(e.tfDuration()) // bar close = signal becomes actionable
+	// anchor = the bar's close as a REAL instant: the label is Kyiv wall
+	// clock rendered naive-UTC — converting through Europe/Kyiv puts the
+	// execution window in the same coordinate system as quote times.
+	anchor := live.LabelToInstant(c.Time).Add(e.tfDuration())
 	o := repository.ShadowOrderRow{
 		OrderKey: e.orderKey(side, c.Time), StrategyID: e.cfg.StrategyID,
 		StrategyVersion: e.cfg.StrategyVersion, Symbol: e.cfg.Symbol,
@@ -359,23 +449,13 @@ func (e *Engine) ProcessMissedClose(ctx context.Context, c market.Candle) error 
 		o.SessionID = &e.session
 	}
 	e.metrics.Recoveries++
-	id, created, err := e.store.CreateOrderIfAbsent(ctx, o)
-	if err != nil {
-		return err
-	}
-	if !created {
-		e.metrics.DupSkips++
-		return e.persistBar(ctx) // already recovered — replay produces nothing
-	}
-	o.ID = id
 
 	windowEnd := anchor.Add(e.cfg.FillTimeout)
 	if e.now().Before(windowEnd) {
 		// Window still open: a live quote AFTER the anchor may legitimately fill.
-		e.pending = &o
 		e.log.Info("shadow recovery: pending order resumed",
 			"side", side, "bar", c.Time, "anchor", anchor)
-		return e.decide(ctx, c, sig, "recovery", true, &id, nil)
+		return e.commitBar(ctx, c, sig, "recovery", true, nil, barOutcome{order: &o, pos: e.pos})
 	}
 
 	// Window closed while offline — consult PERSISTED evidence only.
@@ -397,16 +477,15 @@ func (e *Engine) ProcessMissedClose(ctx context.Context, c market.Candle) error 
 			status, reason = "unobservable",
 				"quote coverage incomplete or unknown for execution window; outcome cannot be determined"
 		}
-		if err := e.store.SetOrderStatus(ctx, id, status, reason); err != nil {
-			return err
-		}
 		if covered {
 			e.metrics.Missed++
 		} else {
 			e.metrics.Unobservable++
 		}
 		e.log.Info("shadow decision unresolved", "status", status, "side", side, "bar", c.Time, "anchor", anchor)
-		return e.decide(ctx, c, sig, "recovery", true, &id, strp(status))
+		return e.commitBar(ctx, c, sig, "recovery", true, strp(status),
+			barOutcome{order: &o, pos: e.pos,
+				resolve: &repository.ShadowOrderResolution{Status: status, Reason: reason}})
 	}
 	ev := quoteEvidence{
 		providerTime: *obs.ProviderTime, receivedAt: obs.ReceivedAt,
@@ -414,11 +493,9 @@ func (e *Engine) ProcessMissedClose(ctx context.Context, c market.Candle) error 
 	}
 	e.log.Info("shadow recovery fill replayed", "side", side, "bar", c.Time,
 		"quote_at", obs.ProviderTime)
-	e.pending = &o
-	if err := e.fillOrder(ctx, &o, ev, obs.ReceivedAt); err != nil {
-		return err
-	}
-	return e.decide(ctx, c, sig, "recovery", true, &id, nil)
+	fr, pos, net := e.computeFill(&o, ev, obs.ReceivedAt)
+	return e.commitBar(ctx, c, sig, "recovery", true, nil,
+		barOutcome{order: &o, fill: &fr, fillNet: net, pos: pos})
 }
 
 // OnQuote offers a live quote to a pending order. A fill requires:
@@ -462,10 +539,11 @@ type quoteEvidence struct {
 	bid, ask     float64
 }
 
-// fillOrder computes fill/qty/commission, transitions the position, and
-// commits order+position atomically. Single source of fill truth for both
-// live quotes and recovery replays.
-func (e *Engine) fillOrder(ctx context.Context, o *repository.ShadowOrderRow, ev quoteEvidence, filledAt time.Time) error {
+// computeFill derives the fill record, the post-fill position, and the
+// realized equity delta from an admissible quote. PURE — no store calls and
+// no engine mutation: callers commit atomically, then apply the outcome.
+// Single source of fill truth for both live quotes and recovery replays.
+func (e *Engine) computeFill(o *repository.ShadowOrderRow, ev quoteEvidence, filledAt time.Time) (repository.ShadowFillRecord, repository.ShadowPositionRow, float64) {
 	var fill float64
 	if o.Side == "BUY" {
 		fill = ev.ask
@@ -493,6 +571,7 @@ func (e *Engine) fillOrder(ctx context.Context, o *repository.ShadowOrderRow, ev
 	}
 
 	pos := e.pos
+	var net float64 // realized delta — nonzero only when a SELL closes a long
 	if o.Side == "BUY" {
 		s := "BUY"
 		pos.Side = &s
@@ -506,11 +585,10 @@ func (e *Engine) fillOrder(ctx context.Context, o *repository.ShadowOrderRow, ev
 	} else {
 		// Realize P&L: (bid-exit - ask-entry) * qty - both commissions.
 		gross := (fill - *pos.EntryPrice) * pos.Quantity
-		net := gross - pos.EntryCommission - comm
+		net = gross - pos.EntryCommission - comm
 		pos.RealizedPnl += net
 		pos.RealizedComm += comm
 		pos.RealizedSpread += spreadCost * pos.Quantity
-		e.equity += net
 		pos.Side = nil
 		pos.Quantity = 0
 		pos.EntryPrice = nil
@@ -520,15 +598,27 @@ func (e *Engine) fillOrder(ctx context.Context, o *repository.ShadowOrderRow, ev
 	}
 	pos.StrategyID, pos.StrategyVersion = e.cfg.StrategyID, e.cfg.StrategyVersion
 	pos.Symbol, pos.Timeframe = e.cfg.Symbol, string(e.cfg.Timeframe)
+	if e.session != 0 {
+		pos.SessionID = &e.session
+	}
+	return fr, pos, net
+}
 
+// fillOrder commits a live-quote fill: order-fill + position transition in
+// one transaction; in-memory position, equity, and metrics apply ONLY after
+// the commit succeeds — a failed commit leaves engine state untouched.
+func (e *Engine) fillOrder(ctx context.Context, o *repository.ShadowOrderRow, ev quoteEvidence, filledAt time.Time) error {
+	fr, pos, net := e.computeFill(o, ev, filledAt)
 	if err := e.store.FillOrderAndPosition(ctx, o.ID, fr, pos); err != nil {
 		return err
 	}
 	e.pos = pos
+	e.equity += net
+	e.hasPos = true
 	e.metrics.Fills++
 	ft := filledAt
 	e.metrics.LastFillAt = &ft
-	e.log.Info("shadow fill", "order", o.ID, "side", o.Side, "price", fill, "mid", mid)
+	e.log.Info("shadow fill", "order", o.ID, "side", o.Side, "price", fr.FillPrice, "mid", *fr.QuoteMid)
 	e.pending = nil
 	return nil
 }
@@ -597,18 +687,26 @@ type Snapshot struct {
 // MetricsSnapshot returns the engine's honest counters.
 func (e *Engine) MetricsSnapshot() Metrics { return e.metrics }
 
+// Snapshot is a deep-enough copy for publication: the position is copied by
+// value and the pending order is copied to a fresh struct — callers can
+// never reach into mutable engine state through the returned references.
 func (e *Engine) Snapshot() Snapshot {
 	var pos *repository.ShadowPositionRow
-	if e.pos.StrategyID != "" || e.pos.Side != nil {
+	if e.hasPos || e.pos.Side != nil {
 		p := e.pos
 		pos = &p
+	}
+	var pend *repository.ShadowOrderRow
+	if e.pending != nil {
+		p := *e.pending
+		pend = &p
 	}
 	return Snapshot{
 		StrategyID: e.cfg.StrategyID, StrategyVersion: e.cfg.StrategyVersion,
 		Symbol: e.cfg.Symbol, Timeframe: string(e.cfg.Timeframe),
-		Mode: "simulated", Position: pos, Pending: e.pending,
+		Mode: "simulated", Position: pos, Pending: pend,
 		RealizedPnl: e.pos.RealizedPnl, RealizedComm: e.pos.RealizedComm,
 		RealizedSpread: e.pos.RealizedSpread, Equity: e.equity,
-		LastBarTime: e.pos.LastBarTime,
+		LastBarTime: e.pos.LastBarTime, SessionID: e.session,
 	}
 }

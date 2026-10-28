@@ -9,10 +9,12 @@ import (
 	"github.com/gold-mine-lab/backend/internal/shadow"
 )
 
-// ShadowService exposes the shadow engine's state via the API — all
-// SIMULATED, clearly labeled, never a broker position.
+// ShadowService exposes the shadow runtime's state via the API — all
+// SIMULATED, clearly labeled, never a broker position. It reads ONLY the
+// runtime's published immutable snapshot plus repository rows — it holds no
+// reference to the engine and can never touch mutable runtime state.
 type ShadowService struct {
-	eng      *shadow.Engine
+	rt       *shadow.Runtime
 	store    shadow.Store
 	sessions SessionReader
 	coverage CoverageReader
@@ -29,8 +31,8 @@ type SessionReader interface {
 	GetOpenSession(ctx context.Context, strategyID, version, symbol, tf, provider string) (*repository.ShadowSessionRow, error)
 }
 
-func NewShadowService(eng *shadow.Engine, store shadow.Store, sessions SessionReader, coverage CoverageReader, cfg shadow.Config) *ShadowService {
-	return &ShadowService{eng: eng, store: store, sessions: sessions, coverage: coverage, cfg: cfg}
+func NewShadowService(rt *shadow.Runtime, store shadow.Store, sessions SessionReader, coverage CoverageReader, cfg shadow.Config) *ShadowService {
+	return &ShadowService{rt: rt, store: store, sessions: sessions, coverage: coverage, cfg: cfg}
 }
 
 func orderDTO(o repository.ShadowOrderRow) api.ShadowOrder {
@@ -45,13 +47,26 @@ func orderDTO(o repository.ShadowOrderRow) api.ShadowOrder {
 }
 
 func (s *ShadowService) ShadowStatus(ctx context.Context) (api.ShadowStatusResponse, error) {
-	snap := s.eng.Snapshot()
+	rs := s.rt.Snapshot()
+	snap := rs.Engine
 	out := api.ShadowStatusResponse{
 		Mode: snap.Mode, StrategyID: snap.StrategyID,
 		StrategyVersion: snap.StrategyVersion, Symbol: snap.Symbol,
 		Timeframe: snap.Timeframe, RealizedPnl: snap.RealizedPnl,
 		RealizedComm: snap.RealizedComm, RealizedSpread: snap.RealizedSpread,
 		Equity: snap.Equity, LastBarTime: snap.LastBarTime,
+	}
+	// Operational health is reported separately from committed state — an
+	// unhealthy runtime must never read as a healthy idle one.
+	st := rs.Health
+	out.Runtime = &api.ShadowRuntime{
+		State: string(st.State), Since: &st.Since,
+		Submitted: rs.Stats.Submitted, Processed: rs.Stats.Processed,
+		Rejected: rs.Stats.Rejected, Dropped: rs.Stats.Dropped,
+	}
+	if st.Reason != "" {
+		r := st.Reason
+		out.Runtime.Reason = &r
 	}
 	if snap.Position != nil && snap.Position.Side != nil {
 		out.Position = &api.ShadowPosition{
@@ -74,7 +89,7 @@ func (s *ShadowService) ShadowStatus(ctx context.Context) (api.ShadowStatusRespo
 			StartedAt: &sess.StartedAt, RestartCount: sess.RestartCount,
 		}
 	}
-	m := s.eng.MetricsSnapshot()
+	m := rs.Metrics
 	out.Metrics = api.ShadowMetrics{
 		BarsProcessed: m.BarsProcessed, SignalsSeen: m.SignalsSeen,
 		QuotesSeen: m.QuotesSeen, QuotesRejected: m.QuotesRejected,

@@ -196,6 +196,14 @@ func registerBacktestRoutes(g *gin.RouterGroup, svc BacktestService) {
 		}
 		c.JSON(http.StatusOK, out)
 	})
+	g.GET("/portfolio/summary", func(c *gin.Context) {
+		out, err := svc.PortfolioSummary(c.Request.Context())
+		if err != nil {
+			respondErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
 	g.GET("/backtests", func(c *gin.Context) {
 		out, err := svc.ListRuns(c.Request.Context(), c.Query("strategy"))
 		if err != nil {

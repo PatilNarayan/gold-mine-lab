@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"fmt"
+
+	"github.com/gold-mine-lab/backend/internal/repository"
 )
 
 func (s *Store) GetMetrics(ctx context.Context, runID string) (map[string]float64, error) {
@@ -42,6 +44,42 @@ func (s *Store) AggregateMetrics(ctx context.Context) (netPnl, winRateMean, maxD
 		return 0, 0, 0, 0, fmt.Errorf("aggregate metrics: %w", err)
 	}
 	return netPnl, winRateMean, maxDrawdown, totalRuns, nil
+}
+
+// StrategyMetricAggregates rolls up persisted metric rows per strategy over
+// completed runs — one query, no recomputation of trading math here.
+// Metric means are computed over runs that recorded the metric (a NULL
+// metric contributes nothing — absent = undefined, never a fake zero).
+func (s *Store) StrategyMetricAggregates(ctx context.Context) ([]repository.StrategyMetricAggregate, error) {
+	const q = `
+		SELECT r.strategy_id,
+		    count(DISTINCT r.id),
+		    coalesce(sum(case when m.metric_name = 'net_pnl' then m.metric_value end), 0),
+		    coalesce(sum(case when m.metric_name = 'total_trades' then m.metric_value end), 0),
+		    avg(case when m.metric_name = 'win_rate' then m.metric_value end),
+		    max(case when m.metric_name = 'return_pct' then m.metric_value end),
+		    min(case when m.metric_name = 'return_pct' then m.metric_value end),
+		    max(case when m.metric_name = 'max_drawdown' then m.metric_value end)
+		FROM backtest_runs r
+		LEFT JOIN backtest_metrics m ON m.run_id = r.id
+		WHERE r.status = 'completed'
+		GROUP BY r.strategy_id
+		ORDER BY r.strategy_id`
+	rows, err := s.db.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("strategy metric aggregates: %w", err)
+	}
+	defer rows.Close()
+	out := []repository.StrategyMetricAggregate{}
+	for rows.Next() {
+		var a repository.StrategyMetricAggregate
+		if err := rows.Scan(&a.StrategyID, &a.Runs, &a.TotalNetPnl, &a.TotalTrades,
+			&a.MeanWinRate, &a.BestReturnPct, &a.WorstReturnPct, &a.WorstMaxDD); err != nil {
+			return nil, fmt.Errorf("scan strategy aggregate: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // BestStrategyByNetPnl picks the strategy whose best completed run has the

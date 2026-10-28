@@ -46,12 +46,23 @@ export default function Shadow() {
           ? { label: 'position open', tone: 'buy' as const }
           : { label: 'watching — no eligible signal yet', tone: 'info' as const };
 
+  // Runtime operational health — separate from committed state: an
+  // unhealthy runtime must never read as a healthy idle one.
+  const rt = s.runtime;
+  const rtBadge = rt && rt.state !== 'running'
+    ? {
+        label: `runtime ${rt.state}${rt.reason ? ` — ${rt.reason.slice(0, 80)}` : ''}`,
+        tone: (rt.state === 'unhealthy' ? 'sell' : 'neutral') as 'sell' | 'neutral',
+      }
+    : null;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold text-content-1">Shadow Trading</h1>
         <Badge tone="warning">SIMULATED — no real orders</Badge>
         <Badge tone={opState.tone}>{opState.label}</Badge>
+        {rtBadge && <Badge tone={rtBadge.tone}>{rtBadge.label}</Badge>}
         <span className="text-2xs text-content-3">
           {s.strategyId} v{s.strategyVersion} · {s.symbol} · {s.timeframe} · fills at observed bid/ask
         </span>
@@ -83,6 +94,13 @@ export default function Shadow() {
           )}
           {m?.lastQuoteAt && <span>last quote {formatDateTime(m.lastQuoteAt)}</span>}
           {m?.lastFillAt && <span>last fill {formatDateTime(m.lastFillAt)}</span>}
+          {rt && (
+            <span>
+              runtime events {rt.eventsProcessed}/{rt.eventsSubmitted} processed
+              {rt.eventsRejected > 0 && ` · ${rt.eventsRejected} rejected`}
+              {rt.eventsDropped > 0 && ` · ${rt.eventsDropped} dropped`}
+            </span>
+          )}
         </div>
       )}
 

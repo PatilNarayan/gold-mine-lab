@@ -262,6 +262,21 @@ type MetricRepository interface {
 	// BestStrategyByNetPnl returns the strategy of the completed run with the
 	// highest net P&L.
 	BestStrategyByNetPnl(ctx context.Context) (id, name string, ok bool, err error)
+	// StrategyMetricAggregates returns per-strategy aggregates over completed
+	// runs — experiment analytics, not a merged portfolio.
+	StrategyMetricAggregates(ctx context.Context) ([]StrategyMetricAggregate, error)
+}
+
+// StrategyMetricAggregate is one strategy's rollup over its completed runs.
+type StrategyMetricAggregate struct {
+	StrategyID     string
+	Runs           int
+	TotalNetPnl    float64
+	TotalTrades    float64
+	MeanWinRate    *float64
+	BestReturnPct  *float64
+	WorstReturnPct *float64
+	WorstMaxDD     *float64
 }
 
 // SignalResearchRow is one persisted cross-strategy analysis: the full
@@ -420,6 +435,35 @@ type ShadowFillRecord struct {
 	FilledAt          time.Time
 	Quantity          float64
 	Commission        float64
+}
+
+// ShadowOrderResolution is a terminal outcome applied to a shadow order
+// inside a bar transition — missed | unobservable (rejected/expired go
+// through SetOrderStatus on the live path).
+type ShadowOrderResolution struct {
+	Status string
+	Reason string
+}
+
+// ShadowBarCommit is ONE candle's complete durable shadow transition,
+// applied atomically by CommitBar. Ordering inside the transaction:
+// order insert (idempotent on order_key) → fill/terminal resolution on the
+// committed order id (only when the row was created this transaction —
+// an existing row is already resolved and must not be re-applied) →
+// decision insert (idempotent, linked to the order id) → position/checkpoint
+// upsert. Partial application is impossible: all-or-nothing.
+type ShadowBarCommit struct {
+	NewOrder *ShadowOrderRow        // order intent; nil for blocked/neutral bars
+	Resolve  *ShadowOrderResolution // terminal resolution for the new order
+	Fill     *ShadowFillRecord      // replayed/atomic fill for the new order
+	Decision *ShadowDecisionRow     // ledger row; OrderID set from the commit
+	Position ShadowPositionRow      // position state + last_bar_time checkpoint
+}
+
+// ShadowBarResult reports what CommitBar actually created.
+type ShadowBarResult struct {
+	OrderID      int64 // committed order id (existing or new), 0 when none
+	OrderCreated bool  // true when this transaction inserted the order row
 }
 
 // QuoteCoverageRow is one recorder-run interval — proof of observation

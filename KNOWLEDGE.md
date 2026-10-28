@@ -1,5 +1,10 @@
 # Gold Mine Lab — Project Knowledge Base
 
+> **Status note (2026-10-28):** parts of this file predate the
+> provider-synced Postgres candle store, the live feed, and the
+> single-writer shadow runtime. Where it conflicts with `README.md` and
+> `backend/README.md`, those are authoritative.
+
 Everything about what exists, why it exists, and how the pieces connect.
 Update this file when the architecture or use-cases change.
 

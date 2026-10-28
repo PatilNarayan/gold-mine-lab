@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/gold-mine-lab/backend/internal/live"
 )
 
 // HistoricalSource is the candle surface the application service consumes —
@@ -339,7 +341,7 @@ func (p *DBProvider) Tail(asset Asset, tf Timeframe, n int, asOf time.Time) ([]C
 	ctx := context.Background()
 	bound := asOf
 	if bound.IsZero() {
-		bound = p.now().UTC()
+		bound = live.NowLabel() // bar_time is Kyiv-label space, not real UTC
 	}
 	if p.hist != nil {
 		cov, err := p.store.Coverage(ctx, asset.ID, tf)

@@ -3,6 +3,7 @@ import type {
   BacktestRequest,
   BacktestRun,
   DashboardSummary,
+  PortfolioSummary,
 } from '@/types/domain';
 import type { BacktestService } from '@/services/interfaces';
 import {
@@ -54,6 +55,24 @@ export const mockBacktestService: BacktestService = {
       };
     }
     return dashboardSummary();
+  },
+
+  async getPortfolioSummary(): Promise<PortfolioSummary> {
+    await simulateDelay();
+    if (isEmptyScenario()) return { strategies: [] };
+    // Deterministic experiment analytics — independent runs, not a portfolio.
+    return {
+      strategies: [
+        {
+          strategyId: 'ema-cross', runs: 3, totalNetPnl: 1240.5, totalTrades: 27,
+          meanWinRate: 0.56, bestReturnPct: 8.4, worstReturnPct: -3.1, worstMaxDrawdown: 0.062,
+        },
+        {
+          strategyId: 'mean-reversion', runs: 1, totalNetPnl: -412.75, totalTrades: 11,
+          meanWinRate: 0.36, bestReturnPct: -2.9, worstReturnPct: -2.9, worstMaxDrawdown: 0.051,
+        },
+      ],
+    };
   },
 
   async run(request: BacktestRequest): Promise<BacktestRun> {

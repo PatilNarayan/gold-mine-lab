@@ -34,6 +34,12 @@ func newMemStore() *memStore {
 		decisions: map[string]*repository.ShadowDecisionRow{}}
 }
 
+// realAnchor is the REAL instant a 1h bar closes — label→Kyiv instant
+// (the anchor is an instant; quotes/coverage are real-time, not labels).
+func realAnchor(bar time.Time) time.Time {
+	return live.LabelToInstant(bar).Add(time.Hour)
+}
+
 func pkey(sid, ver, sym string, tf market.Timeframe) string {
 	return sid + "|" + ver + "|" + sym + "|" + string(tf)
 }
@@ -51,7 +57,7 @@ func (m *memStore) CreateOrderIfAbsent(_ context.Context, o repository.ShadowOrd
 	m.orders[o.OrderKey] = &cp
 	return cp.ID, true, nil
 }
-func (m *memStore) GetPendingOrder(_ context.Context, sid, ver, sym string, tf market.Timeframe) (*repository.ShadowOrderRow, error) {
+func (m *memStore) GetPendingOrder(_ context.Context, _ int64, sid, ver, sym string, tf market.Timeframe) (*repository.ShadowOrderRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, o := range m.orders {
@@ -105,6 +111,67 @@ func (m *memStore) RecordDecision(_ context.Context, d repository.ShadowDecision
 	}
 	return m.nextID, nil
 }
+
+// CommitBar mirrors the postgres contract: order dedupe → fill/resolve on
+// newly created rows only → decision dedupe (linked to the order id) →
+// position/checkpoint upsert — all under one lock (atomic). Failure
+// injection happens before any write, mirroring a rolled-back transaction.
+func (m *memStore) CommitBar(_ context.Context, c repository.ShadowBarCommit) (repository.ShadowBarResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var res repository.ShadowBarResult
+	if c.NewOrder != nil {
+		o := c.NewOrder
+		if ex, ok := m.orders[o.OrderKey]; ok {
+			res.OrderID = ex.ID
+		} else {
+			m.nextID++
+			cp := *o
+			cp.ID = m.nextID
+			cp.CreatedAt = time.Now()
+			m.orders[o.OrderKey] = &cp
+			res.OrderID, res.OrderCreated = cp.ID, true
+		}
+	}
+	if res.OrderCreated && c.Fill != nil {
+		f := c.Fill
+		for _, o := range m.orders {
+			if o.ID == res.OrderID {
+				o.Status = "filled"
+				o.FillPrice = &f.FillPrice
+				o.Quantity = &f.Quantity
+				o.Commission = &f.Commission
+				o.QuoteBid, o.QuoteAsk, o.QuoteMid = f.QuoteBid, f.QuoteAsk, f.QuoteMid
+				o.QuoteProviderTime, o.QuoteReceivedAt = f.QuoteProviderTime, f.QuoteReceivedAt
+				o.FilledAt = &f.FilledAt
+			}
+		}
+	}
+	if res.OrderCreated && c.Resolve != nil {
+		for _, o := range m.orders {
+			if o.ID == res.OrderID {
+				o.Status = c.Resolve.Status
+				r := c.Resolve.Reason
+				o.RejectReason = &r
+			}
+		}
+	}
+	if c.Decision != nil {
+		d := *c.Decision
+		if d.OrderID == nil && res.OrderID != 0 {
+			d.OrderID = &res.OrderID
+		}
+		key := d.StrategyID + "|" + d.StrategyVersion + "|" + d.Symbol + "|" + d.Timeframe + "|" + d.BarTime.Format(time.RFC3339)
+		if _, exists := m.decisions[key]; !exists {
+			m.nextID++
+			d.ID = m.nextID
+			m.decisions[key] = &d
+		}
+	}
+	cp := c.Position
+	m.pos[pkey(cp.StrategyID, cp.StrategyVersion, cp.Symbol, market.Timeframe(cp.Timeframe))] = &cp
+	return res, nil
+}
 func (m *memStore) Decisions() []*repository.ShadowDecisionRow {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -154,7 +221,7 @@ func (m *memStore) UpsertPosition(_ context.Context, p repository.ShadowPosition
 	m.pos[pkey(p.StrategyID, p.StrategyVersion, p.Symbol, market.Timeframe(p.Timeframe))] = &cp
 	return nil
 }
-func (m *memStore) GetPosition(_ context.Context, sid, ver, sym string, tf market.Timeframe) (*repository.ShadowPositionRow, error) {
+func (m *memStore) GetPosition(_ context.Context, _ int64, sid, ver, sym string, tf market.Timeframe) (*repository.ShadowPositionRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p, ok := m.pos[pkey(sid, ver, sym, tf)]; ok {
@@ -442,7 +509,7 @@ func TestRecoveryMissedNoEvidence(t *testing.T) {
 // at the recorded quote (ASK for entry), not the restart-time quote.
 func TestRecoveryReplaysPersistedEvidence(t *testing.T) {
 	store := newMemStore()
-	anchor := bar1.Add(time.Hour)           // 1h bar close
+	anchor := realAnchor(bar1)              // 1h bar close
 	evQuote := anchor.Add(30 * time.Second) // inside the 1-minute fill window
 	store.obs = append(store.obs, obsQuote(evQuote, 100.0, 100.1))
 	now := anchor.Add(30 * time.Minute) // within the test's 1min timeout? No —
@@ -492,7 +559,7 @@ func TestRecoveryIsIdempotent(t *testing.T) {
 // anchor may fill (a quote predating the signal close is not evidence).
 func TestRecoveryWindowStillOpen(t *testing.T) {
 	store := newMemStore()
-	anchor := bar1.Add(time.Hour)
+	anchor := realAnchor(bar1)
 	now := anchor.Add(10 * time.Second) // within the 1min test timeout
 	e := mkEngine(store, map[time.Time]strategy.Action{bar1: strategy.ActionBuy}, now)
 	ctx := context.Background()
@@ -567,7 +634,7 @@ func TestRecoveryBeyondWarmupDepth(t *testing.T) {
 	}
 	// Evidence only for the BUY window: it fills via replay → position
 	// opens → the deep SELL becomes actionable and resolves unobservable.
-	buyAnchor := bar1.Add(301 * time.Hour)
+	buyAnchor := realAnchor(bar1.Add(300 * time.Hour))
 	store.obs = append(store.obs, obsQuote(buyAnchor.Add(30*time.Second), 100.0, 100.1))
 	now := bar1.Add(900 * time.Hour)
 	e := mkEngine(store, actions, now)
@@ -656,5 +723,76 @@ func TestDecisionLedgerFirstWriteWins(t *testing.T) {
 	}
 	if d.DecidedAt.IsZero() {
 		t.Fatal("decided_at must be the original evaluation time")
+	}
+}
+
+// Fault injection: a persistence failure must NOT leave an advanced
+// marker or a double-advanced stream — the SAME process retries the bar
+// with the cached evaluation and recovers without a restart.
+type flakyStore struct {
+	*memStore
+	failCommit bool
+}
+
+func (f *flakyStore) CommitBar(ctx context.Context, c repository.ShadowBarCommit) (repository.ShadowBarResult, error) {
+	if f.failCommit {
+		f.failCommit = false // transient — once
+		return repository.ShadowBarResult{}, errors.New("injected commit failure")
+	}
+	return f.memStore.CommitBar(ctx, c)
+}
+
+func TestRetryAfterTransientPersistFailure(t *testing.T) {
+	base := newMemStore()
+	store := &flakyStore{memStore: base}
+	actions := map[time.Time]strategy.Action{bar2: strategy.ActionBuy}
+	e := mkEngine(store, actions, t0)
+	ctx := context.Background()
+
+	e.OnBarClosed(ctx, bar(bar1)) // neutral — persists fine
+	store.failCommit = true       // arm transient failure
+	if err := e.OnBarClosed(ctx, bar(bar2)); err == nil {
+		t.Fatal("injected failure should surface")
+	}
+	if m := e.MetricsSnapshot(); m.BarsProcessed < 2 {
+		t.Fatalf("bars processed %d", m.BarsProcessed)
+	}
+	// Same-process retry: marker never advanced, stream never re-advanced.
+	if err := e.OnBarClosed(ctx, bar(bar2)); err != nil {
+		t.Fatalf("in-process retry failed: %v", err)
+	}
+	orders, _ := store.ListOrders(ctx, "ema-cross", "XAU/USD", market.Timeframe1h, 10)
+	if len(orders) != 1 || orders[0].Side != "BUY" {
+		t.Fatalf("retry must produce exactly the one real order, got %+v", orders)
+	}
+	ds := store.Decisions()
+	var buys int
+	for _, d := range ds {
+		if d.Action == "buy" {
+			buys++
+			if d.OrderID == nil {
+				t.Fatal("retried decision must link the order")
+			}
+		}
+	}
+	if buys != 1 {
+		t.Fatalf("expected 1 BUY decision, got %d", buys)
+	}
+}
+
+func TestDecisionWriteFailureBlocksMarker(t *testing.T) {
+	base := newMemStore()
+	store := &flakyStore{memStore: base, failCommit: true}
+	e := mkEngine(store, map[time.Time]strategy.Action{}, t0)
+	ctx := context.Background()
+	if err := e.OnBarClosed(ctx, bar(bar1)); err == nil {
+		t.Fatal("decision-write failure must surface, not be swallowed")
+	}
+	// Marker must not have advanced — retry persists the decision.
+	if err := e.OnBarClosed(ctx, bar(bar1)); err != nil {
+		t.Fatalf("retry after decision-write failure: %v", err)
+	}
+	if len(store.Decisions()) != 1 {
+		t.Fatalf("expected exactly 1 ledger row, got %d", len(store.Decisions()))
 	}
 }

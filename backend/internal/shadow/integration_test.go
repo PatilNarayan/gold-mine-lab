@@ -2,6 +2,7 @@ package shadow
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gold-mine-lab/backend/internal/market"
+	"github.com/gold-mine-lab/backend/internal/repository"
 	"github.com/gold-mine-lab/backend/internal/repository/postgres"
 	"github.com/gold-mine-lab/backend/internal/strategy"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,9 +37,19 @@ func TestShadowIntegrationWithPostgres(t *testing.T) {
 	clean := func() {
 		pool.Exec(ctx, `DELETE FROM shadow_orders WHERE strategy_id=$1`, sid)
 		pool.Exec(ctx, `DELETE FROM shadow_positions WHERE strategy_id=$1`, sid)
+		pool.Exec(ctx, `DELETE FROM shadow_sessions WHERE strategy_id=$1`, sid)
 	}
 	clean()
 	defer clean()
+	sess, err := store.GetOrCreateSession(ctx, repository.ShadowSessionRow{
+		StrategyID: sid, StrategyVersion: ver, Symbol: sym,
+		Timeframe: "1h", Provider: "tiingo",
+		Config: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessID := sess.ID
 
 	cfg := Config{
 		StrategyID: sid, StrategyVersion: ver, Symbol: sym,
@@ -50,6 +62,7 @@ func TestShadowIntegrationWithPostgres(t *testing.T) {
 	eng := func() *Engine {
 		e := New(cfg, store, log)
 		e.SetClock(func() time.Time { return now })
+		e.SetSession(sessID)
 		e.SetStream(&scriptedStream{actions: map[time.Time]strategy.Action{
 			bar1: strategy.ActionBuy, bar2: strategy.ActionSell}})
 		return e
@@ -73,7 +86,7 @@ func TestShadowIntegrationWithPostgres(t *testing.T) {
 	if err != nil || !filled {
 		t.Fatalf("entry fill failed: %v %v", filled, err)
 	}
-	pos, _ := store.GetPosition(ctx, sid, ver, sym, market.Timeframe1h)
+	pos, _ := store.GetPosition(ctx, sessID, sid, ver, sym, market.Timeframe1h)
 	if pos == nil || pos.EntryPrice == nil || *pos.EntryPrice != 100.10 {
 		t.Fatalf("persisted entry %+v — must be ask 100.10", pos)
 	}
@@ -84,7 +97,7 @@ func TestShadowIntegrationWithPostgres(t *testing.T) {
 	if _, err := e.OnQuote(ctx, freshQuote(now.Add(3*time.Second), 110.00, 110.10)); err != nil {
 		t.Fatal(err)
 	}
-	pos, _ = store.GetPosition(ctx, sid, ver, sym, market.Timeframe1h)
+	pos, _ = store.GetPosition(ctx, sessID, sid, ver, sym, market.Timeframe1h)
 	if pos.Side != nil {
 		t.Fatal("position still open after exit")
 	}

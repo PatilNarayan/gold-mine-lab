@@ -34,7 +34,7 @@ Other scripts: `npm run build`, `npm run typecheck`, `npm run lint`, `npm test`.
 
 ```dotenv
 VITE_API_URL=http://localhost:8080   # Go REST API base URL
-VITE_WS_URL=ws://localhost:8080/ws   # realtime feed (unused in Phase 1)
+VITE_WS_URL=ws://localhost:8080/ws   # reserved — live stream derives its URL from VITE_API_URL
 VITE_DATA_MODE=mock                  # mock | api
 ```
 
@@ -43,12 +43,13 @@ overridden in **Settings** (persisted to localStorage; non-sensitive only).
 
 ### Data modes
 
-- `mock` (default): deterministic seeded data. Every screen shows a **Demo data**
-  banner; market status reads "Historical / Demo".
-- `api`: HTTP implementations call the planned backend endpoints
+- `api` (default): HTTP implementations call the backend endpoints
   (`/api/assets`, `/api/market/candles`, `/api/strategies`, `/api/signals`,
-  `/api/backtests`, `/api/trades`, `/api/health`). The header shows
-  **API connected / unreachable** from polling `GET /api/health`.
+  `/api/backtests`, `/api/trades`, `/api/shadow/*`, `/api/health`). The header
+  shows **API connected / unreachable** from polling `GET /api/health`.
+- `mock` (opt-in via `VITE_DATA_MODE=mock`): deterministic seeded data for
+  development/tests. Every screen shows a **Demo data** banner; market status
+  reads "Historical / Demo".
 
 ### Mock scenarios (dev)
 
@@ -111,11 +112,14 @@ src/
 2. `createServices('api')` already returns the `http*` implementations; no UI
    changes needed. Endpoints the frontend expects are listed above — keep
    response shapes aligned with `src/types/domain.ts`.
-3. Realtime: implement `RealtimeClient` (`connect`, `disconnect`,
-   `subscribe(channel, handler)`, `onStatusChange`) against
-   `channels market.candles | strategy.signals | backtest.progress` with the
-   `{ type, channel, timestamp, payload }` envelope, then swap
-   `NoopRealtimeClient` in `src/services/index.ts`.
+3. Realtime: the live market stream is already wired — `useLiveStream`
+   opens one managed WebSocket to `/api/market/live/stream` (URL derived
+   from `VITE_API_URL`) and folds status/quote/bar frames into TanStack
+   Query cache. The generic `RealtimeClient` contract
+   (`connect`/`disconnect`/`subscribe`/`onStatusChange`, channels
+   `market.candles | strategy.signals | backtest.progress`, envelope
+   `{ type, channel, timestamp, payload }`) remains a `NoopRealtimeClient`
+   in `src/services/index.ts` for those not-yet-served channels.
 
 ## Live market data
 
@@ -134,7 +138,9 @@ only polls the backend's cached state (status 10s, quote 5s, candles 10s).
 
 ## Known limitations (Phase 1)
 
-- No real WebSocket — `NoopRealtimeClient` reports `Realtime: disabled`.
+- The generic `RealtimeClient` service stays a noop (`Realtime: disabled`) —
+  future channels beyond the live market stream are not served yet; the
+  Market page's live stream itself is real WebSocket (`useLiveStream`).
 - `http*` services are thin pass-throughs; they work only when the backend
   endpoints exist.
 - Mock candles are synthetic and end at a fixed historical date (2024-12-31);

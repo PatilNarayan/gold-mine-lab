@@ -58,6 +58,38 @@ func run(shutdown <-chan os.Signal) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
+	// runCtx carries the app lifetime to every background worker — it is
+	// cancelled exactly once, inside the ordered shutdown below.
+	runCtx, cancelRun := context.WithCancel(ctx)
+
+	// Ordered shutdown — registered FIRST so every worker defer that follows
+	// runs before it, and the DB pool always closes LAST:
+	//   1. stop admitting new shadow events (cancel → producers detach)
+	//   2. drain accepted runtime work / finish in-flight transactions
+	//   3. stop the quote recorder (drains its own buffer to the DB)
+	//   4. close the provider connection
+	//   5. close the pool
+	var shadowRt *shadow.Runtime
+	var driverDone chan struct{}
+	var quoteRec *service.QuoteRecorder
+	defer func() {
+		cancelRun()
+		if driverDone != nil {
+			<-driverDone
+		}
+		if shadowRt != nil {
+			drainCtx, c := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
+			if err := shadowRt.Stop(drainCtx); err != nil {
+				log.Warn("shadow runtime drain incomplete — admitted events left unprocessed", "err", err)
+			}
+			c()
+		}
+		if quoteRec != nil {
+			quoteRec.Stop()
+		}
+		pool.Close()
+	}()
+
 	// Real pipeline: provider-synced Postgres candle store → registry →
 	// service → repositories. Historical candles come exclusively from the
 	// configured market provider — no bundled CSV datasets at runtime.
@@ -152,9 +184,8 @@ func run(shutdown <-chan os.Signal) error {
 	// Prospective market-cost evidence: record distinct live bid/ask quote
 	// events (deduplicated, staleness-flagged) — never fabricated rows.
 	if liveProvider != nil {
-		quoteRec := service.NewQuoteRecorder(store, store, cfg.Live.Provider, cfg.Live.Symbol, log)
-		quoteRec.Start(ctx, liveProvider)
-		defer quoteRec.Stop()
+		quoteRec = service.NewQuoteRecorder(store, store, cfg.Live.Provider, cfg.Live.Symbol, log)
+		quoteRec.Start(runCtx, liveProvider)
 		log.Info("quote observation recorder started", "provider", cfg.Live.Provider, "symbol", cfg.Live.Symbol)
 	}
 
@@ -168,14 +199,14 @@ func run(shutdown <-chan os.Signal) error {
 	// empty database — all idempotent. Historical sync happens lazily on
 	// first read and eagerly for the coarser timeframes inside Bootstrap.
 	if err := svc.Bootstrap(ctx); err != nil {
-		pool.Close()
 		return fmt.Errorf("bootstrap: %w", err)
 	}
 	liveSvc := service.NewLiveService(liveProvider)
 
 	// Shadow trading (SIMULATED): benchmark EMA cross as control only — it
-	// has no demonstrated edge. The driver consumes real candle closes +
-	// quotes; fills are hypothetical and persisted for replay/recovery.
+	// has no demonstrated edge. A single-writer runtime owns the engine;
+	// the driver produces events; fills are hypothetical and persisted for
+	// replay/recovery. An advisory lock refuses a second concurrent owner.
 	var shadowSvc api.ShadowService
 	if liveProvider != nil {
 		if strat, ok := reg.Get("ema-cross"); ok {
@@ -186,13 +217,21 @@ func run(shutdown <-chan os.Signal) error {
 				InitialEquity: 100000, PositionSizePct: 10,
 				CommissionPct: 0.02, // same assumptions as the historical benchmark
 			}
-			eng := shadow.New(shadowCfg, store, log)
-			asset := market.Asset{ID: "xauusd", Symbol: cfg.Live.Symbol}
-			driver := service.NewShadowDriver(eng, liveProvider, data, asset, strat, shadowCfg, store, log)
-			go driver.Start(ctx)
-			defer func() { _ = eng }()
-			shadowSvc = service.NewShadowService(eng, store, store, store, shadowCfg)
-			log.Info("shadow engine started (simulated)", "strategy", strat.ID(), "version", strat.Version())
+			own, err := store.AcquireShadowOwnership(ctx, shadow.OwnershipKey(shadowCfg))
+			if err != nil {
+				log.Warn("shadow runtime not started — exclusive ownership refused",
+					"err", err, "strategy", strat.ID())
+			} else {
+				eng := shadow.New(shadowCfg, store, log)
+				shadowRt = shadow.NewRuntime(eng, shadow.RuntimeOptions{Ownership: own, Logger: log})
+				asset := market.Asset{ID: "xauusd", Symbol: cfg.Live.Symbol}
+				driver := service.NewShadowDriver(shadowRt, liveProvider, data, asset, strat, shadowCfg, store, log)
+				shadowRt.Start(runCtx, driver.Bootstrap)
+				driverDone = make(chan struct{})
+				go func() { driver.Start(runCtx); close(driverDone) }()
+				shadowSvc = service.NewShadowService(shadowRt, store, store, store, shadowCfg)
+				log.Info("shadow runtime started (simulated)", "strategy", strat.ID(), "version", strat.Version())
+			}
 		}
 	}
 
@@ -242,10 +281,8 @@ func run(shutdown <-chan os.Signal) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, cfg.HTTP.ShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		pool.Close()
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
-	pool.Close()
 	log.Info("stopped cleanly")
 	return nil
 }

@@ -1,5 +1,11 @@
 # Gold Mine Lab — Knowledge Graph
 
+> **Status note (2026-10-28):** this graph predates the DBProvider candle
+> store, the live provider fan-out, and the single-writer shadow runtime
+> (mailbox → owner goroutine → atomic CommitBar → published snapshots, plus
+> advisory-lock ownership and ordered shutdown). For the current map see
+> `README.md`, `backend/README.md` (*Shadow runtime*), and `REVIEW-BRIEF.md`.
+
 Machine-readable architecture context for this repository. Paste this file
 into any AI model to give it an accurate map of what exists and how it
 connects. For deep design rationale see `KNOWLEDGE.md`; for run commands see

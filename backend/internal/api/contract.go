@@ -409,7 +409,28 @@ type BacktestService interface {
 	GetRun(ctx context.Context, runID string) (BacktestDetail, error)
 	LatestRunID(ctx context.Context) (string, error) // "" when no completed run exists
 	DashboardSummary(ctx context.Context) (DashboardSummary, error)
+	PortfolioSummary(ctx context.Context) (PortfolioSummaryResponse, error)
 	Execute(ctx context.Context, req BacktestRequest) (BacktestRun, error)
+}
+
+// PortfolioSummaryResponse is per-strategy experiment analytics over
+// completed runs — deliberately NOT a merged portfolio curve: runs are
+// independent experiments (different params/windows/capital).
+type PortfolioSummaryResponse struct {
+	Strategies []StrategyAggregate `json:"strategies"`
+}
+
+// StrategyAggregate is one strategy's rollup across its completed runs.
+// Pointer metrics are null when no run recorded them — absent = undefined.
+type StrategyAggregate struct {
+	StrategyID     string   `json:"strategyId"`
+	Runs           int      `json:"runs"`
+	TotalNetPnl    float64  `json:"totalNetPnl"`
+	TotalTrades    float64  `json:"totalTrades"`
+	MeanWinRate    *float64 `json:"meanWinRate,omitempty"`
+	BestReturnPct  *float64 `json:"bestReturnPct,omitempty"`
+	WorstReturnPct *float64 `json:"worstReturnPct,omitempty"`
+	WorstMaxDD     *float64 `json:"worstMaxDrawdown,omitempty"`
 }
 
 // TradeService returns filtered, paginated trades.
@@ -868,6 +889,21 @@ type ShadowStatusResponse struct {
 	Session         *ShadowSession   `json:"session,omitempty"`
 	Metrics         ShadowMetrics    `json:"metrics"`
 	Recorder        *ShadowRecorder  `json:"recorder,omitempty"`
+	Runtime         *ShadowRuntime   `json:"runtime,omitempty"`
+}
+
+// ShadowRuntime is the single-writer runtime's operational state —
+// deliberately separate from committed engine state: an unhealthy runtime
+// must never read as a healthy idle one. Additive field (older clients
+// ignore it).
+type ShadowRuntime struct {
+	State     string     `json:"state"` // starting|running|unhealthy|stopped
+	Reason    *string    `json:"reason,omitempty"`
+	Since     *time.Time `json:"since,omitempty"`
+	Submitted int64      `json:"eventsSubmitted"`
+	Processed int64      `json:"eventsProcessed"`
+	Rejected  int64      `json:"eventsRejected"`
+	Dropped   int64      `json:"eventsDropped"`
 }
 
 // ShadowRecorder is the quote-observation recorder's durable health —

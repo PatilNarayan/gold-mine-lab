@@ -412,3 +412,27 @@ func TestTiingoFetchHistorySessionLabels(t *testing.T) {
 		t.Fatalf("aggregated OHLC wrong: %+v", cs[1])
 	}
 }
+
+// Label space is Kyiv civil time rendered naive-UTC — DST changes the real
+// offset but the label round-trips through the zone consistently.
+func TestLabelInstantRoundTripDST(t *testing.T) {
+	// Summer (EEST, +3) and winter (EET, +2) labels map to the right instants.
+	cases := []struct {
+		label    time.Time
+		wantReal time.Time // real UTC instant the label names
+	}{
+		{time.Date(2026, 7, 15, 20, 0, 0, 0, time.UTC), time.Date(2026, 7, 15, 17, 0, 0, 0, time.UTC)},  // EEST +3
+		{time.Date(2026, 10, 26, 20, 0, 0, 0, time.UTC), time.Date(2026, 10, 26, 18, 0, 0, 0, time.UTC)}, // EET +2
+	}
+	for _, tc := range cases {
+		got := LabelToInstant(tc.label)
+		if !got.Equal(tc.wantReal) {
+			t.Fatalf("label %v → %v, want %v", tc.label, got.UTC(), tc.wantReal)
+		}
+	}
+	// NowLabel must sit ~2–3h ahead of real UTC (Kyiv offset) — never equal.
+	d := NowLabel().Sub(time.Now().UTC())
+	if d < 90*time.Minute || d > 200*time.Minute {
+		t.Fatalf("NowLabel offset %v — outside Kyiv bounds", d)
+	}
+}
