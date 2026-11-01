@@ -12,11 +12,13 @@ import (
 )
 
 type fakeProvider struct {
-	status    live.Status
-	quote     *live.Quote
-	candles   []live.Candle
-	err       error
-	listeners []func(live.Quote)
+	status      live.Status
+	quote       *live.Quote
+	candles     []live.Candle
+	candlesByTF map[string][]live.Candle // when set, overrides candles per timeframe
+	reqTFs      []string                 // timeframes requested via Candles
+	err         error
+	listeners   []func(live.Quote)
 }
 
 func (f *fakeProvider) Start(context.Context) {}
@@ -28,7 +30,11 @@ func (f *fakeProvider) LatestQuote() (live.Quote, bool) {
 	}
 	return *f.quote, true
 }
-func (f *fakeProvider) Candles(context.Context, string, int) ([]live.Candle, error) {
+func (f *fakeProvider) Candles(_ context.Context, tf string, _ int) ([]live.Candle, error) {
+	f.reqTFs = append(f.reqTFs, tf)
+	if f.candlesByTF != nil {
+		return f.candlesByTF[tf], f.err
+	}
 	return f.candles, f.err
 }
 func (f *fakeProvider) FetchHistory(context.Context, string, time.Time, time.Time) ([]live.Candle, error) {
