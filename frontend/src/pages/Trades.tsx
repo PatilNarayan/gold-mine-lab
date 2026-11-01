@@ -6,6 +6,7 @@ import { tradeFiltersFromSearchParams } from '@/lib/tradeFilters';
 import { DemoBanner } from '@/components/common/DemoBanner';
 import { Input, Select } from '@/components/common/Input';
 import { Field } from '@/components/common/Field';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Button } from '@/components/common/Button';
 import { TradesTable } from '@/components/tables/TradesTable';
 
@@ -37,7 +38,10 @@ export default function Trades() {
   return (
     <div className="space-y-3">
       <DemoBanner />
-      <h1 className="section-label">Trades</h1>
+      <PageHeader
+        title="Trades"
+        description="Simulated fills from backtest runs — filter by strategy, side, outcome, and window. Shareable via URL."
+      />
 
       {/* Filters — synced to URL query params */}
       <form

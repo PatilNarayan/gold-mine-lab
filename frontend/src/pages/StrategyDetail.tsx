@@ -165,7 +165,8 @@ export default function StrategyDetail() {
                 rowKey={(r) => r.id}
                 error={runs.error}
                 onRetry={() => runs.refetch()}
-                onRowClick={(r) => navigate(`/results/${r.id}`)}
+                rowHref={(r) => `/results/${r.id}`}
+                rowLinkLabel={(r) => `Open results for run ${r.id}`}
                 emptyTitle="No runs"
                 emptyMessage={
                   <>

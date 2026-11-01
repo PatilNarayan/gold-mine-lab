@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { DataTable, type Column } from './DataTable';
@@ -67,5 +68,22 @@ describe('DataTable', () => {
     await userEvent.click(valueHeader);
     const cells = screen.getAllByRole('cell').map((c) => c.textContent);
     expect(cells[1]).toBe('1.00'); // beta's value sorted first ascending
+  });
+
+  it('rowHref renders a real, keyboard-reachable link per row', () => {
+    render(
+      <MemoryRouter>
+        <DataTable
+          columns={columns}
+          rows={rows}
+          rowKey={(r) => r.id}
+          rowHref={(r) => `/rows/${r.id}`}
+          rowLinkLabel={(r) => `Open ${r.name}`}
+        />
+      </MemoryRouter>,
+    );
+    const links = screen.getAllByRole('link');
+    expect(links.map((l) => l.getAttribute('href'))).toEqual(['/rows/1', '/rows/2']);
+    expect(links[0]).toHaveAccessibleName('Open alpha');
   });
 });

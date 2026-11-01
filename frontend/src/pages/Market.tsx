@@ -10,6 +10,7 @@ import { ErrorState } from '@/components/common/ErrorState';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CandlestickChart, type ChartMarker } from '@/components/charts/CandlestickChart';
 import { LiveMarketPanel } from '@/components/market/LiveMarketPanel';
+import { PageHeader } from '@/components/common/PageHeader';
 import type { Coverage } from '@/types/domain';
 
 type Source = 'historical' | 'live';
@@ -33,7 +34,7 @@ function CoverageNote({ coverage }: { coverage: Coverage | undefined }) {
   return (
     <div
       className={`mb-1 px-1 font-mono text-[10px] uppercase tracking-wide ${
-        coverage.state === 'complete' ? 'text-content-3' : 'text-amber-400/90'
+        coverage.state === 'complete' ? 'text-content-3' : 'text-warning'
       }`}
     >
       {parts.join(' · ')}
@@ -69,7 +70,7 @@ export default function Market() {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
-          <h1 className="section-label">Market — {assetId.toUpperCase()}</h1>
+          <PageHeader title={`Market — ${assetId.toUpperCase()}`} />
           <div className="flex gap-1" role="tablist" aria-label="Data source">
             {(['historical', 'live'] as const).map((s) => (
               <button

@@ -41,11 +41,17 @@ export function AppShell() {
 
   return (
     <div className="flex h-full">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-[60] focus:rounded-sm focus:bg-accent focus:px-3 focus:py-1.5 focus:text-sm focus:font-semibold focus:text-surface-0"
+      >
+        Skip to main content
+      </a>
       <Sidebar />
       <MobileNav />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header />
-        <main className="flex-1 overflow-y-auto p-3 sm:p-4" id="main">
+        <main className="flex-1 overflow-y-auto p-3 sm:p-4" id="main" tabIndex={-1}>
           <Suspense fallback={<RouteFallback />}>
             <Outlet />
           </Suspense>

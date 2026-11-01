@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DemoBanner } from '@/components/common/DemoBanner';
 import { Field } from '@/components/common/Field';
 import { Input, Select } from '@/components/common/Input';
@@ -108,7 +108,7 @@ export function WalkForwardPage() {
         <button className="text-xs text-content-3 hover:text-accent-fg" onClick={() => navigate('/walkforward')}>
           ← All experiments
         </button>
-        {detail.isError && <p className="card text-sm text-red-400">Failed to load experiment.</p>}
+        {detail.isError && <p className="card text-sm text-sell">Failed to load experiment.</p>}
         {w && <ExperimentDetail w={w} nameOf={nameOf} />}
       </div>
     );
@@ -175,7 +175,7 @@ export function WalkForwardPage() {
           </div>
         ))}
 
-        {err && <p className="rounded-sm border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-sm text-red-400">{err}</p>}
+        {err && <p className="rounded-sm border border-sell/40 bg-sell/10 px-2 py-1.5 text-sm text-sell">{err}</p>}
         {preview.data?.folds && (() => {
           const idxs = [...new Set(preview.data!.folds!.map((f) => f.foldIndex))].sort((a, b) => a - b);
           const first = preview.data!.folds!.find((f) => f.foldIndex === idxs[0])!;
@@ -202,12 +202,12 @@ export function WalkForwardPage() {
         <ul className="divide-y divide-line">
           {(experiments.data ?? []).map((w) => (
             <li key={w.id}>
-              <button className="flex w-full items-center justify-between px-1 py-2 text-left hover:bg-surface-2" onClick={() => navigate(`/walkforward/${w.id}`)}>
+              <Link to={`/walkforward/${w.id}`} className="flex w-full items-center justify-between px-1 py-2 text-left hover:bg-surface-2 focus-visible:bg-surface-2">
                 <span className="text-sm text-content-1">
                   {w.strategyIds?.map(nameOf).join(' vs ') ?? '—'} · {w.startDate}→{w.endDate} · IS {w.inSampleMonths}m / OOS {w.oosMonths}m / step {w.stepMonths}m
                 </span>
                 <StatusPill status={w.status} />
-              </button>
+              </Link>
             </li>
           ))}
         </ul>
@@ -217,7 +217,7 @@ export function WalkForwardPage() {
 }
 
 function StatusPill({ status }: { status: string }) {
-  const cls = status === 'completed' ? 'text-green-400' : status === 'partial_failed' ? 'text-amber-400' : 'text-red-400';
+  const cls = status === 'completed' ? 'text-buy' : status === 'partial_failed' ? 'text-warning' : 'text-sell';
   return <span className={`text-xs font-semibold uppercase tracking-wide ${cls}`}>{status.replace('_', ' ')}</span>;
 }
 
@@ -244,11 +244,11 @@ function ExperimentDetail({ w, nameOf }: { w: WalkForward; nameOf: (s: string) =
           initial {formatCurrency(w.initialCapital)} · size {w.positionSize}% · commission {w.commission}% · slippage {w.slippage}%
           {w.createdAt ? ` · ${formatDateTime(w.createdAt)}` : ''}
         </p>
-        {w.error && <p className="text-sm text-red-400">{w.error}</p>}
+        {w.error && <p className="text-sm text-sell">{w.error}</p>}
       </section>
 
       {inconclusive && (
-        <p className="card border-amber-500/40 bg-amber-500/10 text-sm text-amber-300">
+        <p className="card border-warning/40 bg-warning/10 text-sm text-warning">
           INCONCLUSIVE: most OOS folds have fewer than 30 trades — too little evidence to judge stability.
         </p>
       )}
@@ -257,7 +257,7 @@ function ExperimentDetail({ w, nameOf }: { w: WalkForward; nameOf: (s: string) =
         <h3 className="section-label">OOS ROBUSTNESS (per strategy, OOS folds only)</h3>
         <table className="w-full text-sm">
           <thead><tr className="text-left text-xs text-content-3">
-            {['Strategy', 'Folds', 'Positive', 'Median ret', 'Worst ret', 'Worst DD', 'OOS trades', 'Median expectancy', 'Median in-mkt', 'Worst streak', 'Missing metrics', '<30-trade folds', 'Verdict'].map((h) => <th key={h} className="py-1 pr-3">{h}</th>)}
+            {['Strategy', 'Folds', 'Positive', 'Median ret', 'Worst ret', 'Worst DD', 'OOS trades', 'Median expectancy', 'Median in-mkt', 'Worst streak', 'Missing metrics', '<30-trade folds', 'Verdict'].map((h) => <th scope="col" key={h} className="py-1 pr-3">{h}</th>)}
           </tr></thead>
           <tbody>
             {Object.entries(summaries).map(([sid, s]) => (
@@ -274,7 +274,7 @@ function ExperimentDetail({ w, nameOf }: { w: WalkForward; nameOf: (s: string) =
                 <td className="tnum">{s.worstConsecutiveLosses ?? '—'}</td>
                 <td className="tnum">{s.missingMetricFolds || '—'}</td>
                 <td className="tnum">{s.lowTradeFolds}</td>
-                <td className={s.inconclusive ? 'text-amber-400' : 'text-green-400'}>{s.inconclusive ? 'inconclusive' : 'usable evidence'}</td>
+                <td className={s.inconclusive ? 'text-warning' : 'text-buy'}>{s.inconclusive ? 'inconclusive' : 'usable evidence'}</td>
               </tr>
             ))}
           </tbody>
@@ -304,7 +304,7 @@ function ExperimentDetail({ w, nameOf }: { w: WalkForward; nameOf: (s: string) =
               {openFold === fi && (
                 <table className="mt-2 w-full text-xs">
                   <thead><tr className="text-left text-content-3">
-                    {['Strategy', 'Sample', 'Status', 'Net P&L', 'Trades', 'Win rate', 'PF', 'Max DD', 'Avg win', 'Avg loss', 'Payoff', 'Expectancy', 'Cons. losses', 'In market', 'Recovery', 'Commissions'].map((h) => <th key={h} className="py-1 pr-2">{h}</th>)}
+                    {['Strategy', 'Sample', 'Status', 'Net P&L', 'Trades', 'Win rate', 'PF', 'Max DD', 'Avg win', 'Avg loss', 'Payoff', 'Expectancy', 'Cons. losses', 'In market', 'Recovery', 'Commissions'].map((h) => <th scope="col" key={h} className="py-1 pr-2">{h}</th>)}
                   </tr></thead>
                   <tbody>
                     {rows.map((f) => <FoldRows key={f.strategyId} f={f} nameOf={nameOf} />)}

@@ -63,7 +63,8 @@ export default function Results() {
                 </Badge>
                 <span className="tnum text-content-3">
                   {detail.data.run.startDate} → {detail.data.run.endDate} · {detail.data.run.timeframe} ·
-                  initial {formatCurrency(detail.data.run.initialCapital)}
+                  initial {formatCurrency(detail.data.run.initialCapital)} · size {detail.data.run.positionSize}% ·
+                  comm {detail.data.run.commission}% · slip {detail.data.run.slippage}%
                 </span>
                 {detail.data.run.dataProvider ? (
                   <Badge tone={detail.data.run.dataProvider === 'csv' ? 'neutral' : 'info'}>
@@ -72,8 +73,30 @@ export default function Results() {
                   </Badge>
                 ) : null}
               </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-content-3">
+                <span className="tnum">
+                  in-sample window · engine {detail.data.run.engineVersion ?? 'legacy'}
+                  {detail.data.run.dataset ? ` · dataset ${detail.data.run.dataset}` : ''}
+                  {detail.data.run.dataFirstBar && detail.data.run.dataLastBar
+                    ? ` · bars ${detail.data.run.dataFirstBar.slice(0, 10)} → ${detail.data.run.dataLastBar.slice(0, 10)}`
+                    : ''}
+                </span>
+                <span className="ml-auto flex gap-3">
+                  {detail.data.strategy ? (
+                    <Link to={`/strategies/${detail.data.run.strategyId}`} className="text-accent-fg hover:underline">
+                      Strategy →
+                    </Link>
+                  ) : null}
+                  <Link
+                    to={`/trades?strategy=${encodeURIComponent(detail.data.run.strategyId)}`}
+                    className="text-accent-fg hover:underline"
+                  >
+                    This strategy's trades →
+                  </Link>
+                </span>
+              </div>
               {detail.data.run.dataProvider === 'csv' ? (
-                <p className="mt-2 text-[10px] uppercase tracking-wide text-amber-400/80">
+                <p className="mt-2 text-[10px] uppercase tracking-wide text-warning">
                   Legacy run on the CSV dataset — not directly comparable to provider-backed runs.
                 </p>
               ) : null}

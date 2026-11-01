@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { Activity, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useAssets,
@@ -18,6 +19,9 @@ import {
   formatTime,
 } from '@/lib/formatters';
 import { DemoBanner } from '@/components/common/DemoBanner';
+import { EmptyState } from '@/components/common/EmptyState';
+import { Button } from '@/components/common/Button';
+import { PageHeader } from '@/components/common/PageHeader';
 import { StatCard } from '@/components/cards/StatCard';
 import { Skeleton, SkeletonRows } from '@/components/common/Skeleton';
 import { ErrorState } from '@/components/common/ErrorState';
@@ -46,6 +50,10 @@ export default function Dashboard() {
   return (
     <div className="space-y-3">
       <DemoBanner />
+      <PageHeader
+        title="Research dashboard"
+        description="Latest experiment evidence for the selected asset — market state, recent signals, and the most recent completed run."
+      />
 
       {/* Market overview */}
       <section aria-label="Market overview" className="border border-line bg-surface-1 p-3">
@@ -168,13 +176,13 @@ export default function Dashboard() {
             <table className="w-full text-left text-2xs">
               <thead>
                 <tr className="border-b border-line text-content-3">
-                  <th className="py-1 pr-3 font-medium">Strategy</th>
-                  <th className="py-1 pr-3 font-medium">Runs</th>
-                  <th className="py-1 pr-3 font-medium">Total net P&L</th>
-                  <th className="py-1 pr-3 font-medium">Trades</th>
-                  <th className="py-1 pr-3 font-medium">Mean win rate (per run)</th>
-                  <th className="py-1 pr-3 font-medium">Best / worst return</th>
-                  <th className="py-1 font-medium">Worst drawdown</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">Strategy</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">Runs</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">Total net P&L</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">Trades</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">Mean win rate (per run)</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">Best / worst return</th>
+                  <th scope="col" className="py-1 font-medium">Worst drawdown</th>
                 </tr>
               </thead>
               <tbody>
@@ -206,7 +214,15 @@ export default function Dashboard() {
             </p>
           </div>
         ) : (
-          <p className="text-xs text-content-3">No completed backtests yet.</p>
+          <EmptyState
+            title="No completed backtests yet"
+            message="Pick a strategy and run it over a historical window — its metrics will roll up here."
+            action={
+              <Link to="/backtests">
+                <Button variant="secondary" size="sm">Run a backtest</Button>
+              </Link>
+            }
+          />
         )}
       </section>
 
@@ -215,7 +231,15 @@ export default function Dashboard() {
         <h2 className="section-label mb-2">
           Latest run equity curve
           {perf.data?.latestRunId ? (
-            <span className="tnum text-content-3"> — {perf.data.latestRunId.slice(0, 8)}</span>
+            <>
+              <span className="tnum text-content-3"> — {perf.data.latestRunId.slice(0, 8)}</span>
+              <Link
+                to={`/results/${perf.data.latestRunId}`}
+                className="ml-2 font-normal normal-case tracking-normal text-accent-fg hover:underline"
+              >
+                View run →
+              </Link>
+            </>
           ) : null}
         </h2>
         {perf.isLoading ? (

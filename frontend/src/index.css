@@ -18,7 +18,7 @@
   --border-strong: #323d52;
   --text-1: #e9edf3;
   --text-2: #98a3b6;
-  --text-3: #5d6879;
+  --text-3: #8290a3;
   --accent: #c9a227;
   --accent-soft: rgba(201, 162, 39, 0.14);
   --accent-fg: #eed98a;
@@ -39,7 +39,7 @@
   --border-strong: #c6cdd8;
   --text-1: #1a2029;
   --text-2: #4d5869;
-  --text-3: #87919f;
+  --text-3: #5b6675;
   --accent: #a3821a;
   --accent-soft: rgba(163, 130, 26, 0.12);
   --accent-fg: #7c640f;
@@ -74,10 +74,29 @@ body {
   @apply text-2xs font-semibold uppercase tracking-[0.14em] text-content-3;
 }
 
+/* Bordered surface panel used by research/graph/compare pages. */
+.card {
+  @apply rounded-sm border border-line bg-surface-1 p-3;
+}
+
+/* Primary action styling lives in the Button/LinkButton components — one
+ * button system, no duplicate .btn class. */
+
 /* Visible focus ring for keyboard navigation. */
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 ::-webkit-scrollbar {

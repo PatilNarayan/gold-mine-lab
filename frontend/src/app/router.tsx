@@ -1,4 +1,4 @@
-import { lazy } from 'react';
+import { lazy, Suspense } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import NotFound from '@/pages/NotFound';
@@ -14,6 +14,7 @@ const StrategyDetail = lazy(() => import('@/pages/StrategyDetail'));
 const Backtests = lazy(() => import('@/pages/Backtests'));
 const Compare = lazy(() => import('@/pages/Compare'));
 const Results = lazy(() => import('@/pages/Results'));
+const Landing = lazy(() => import('@/pages/Landing'));
 const ResultsRedirect = lazy(() => import('@/pages/ResultsRedirect'));
 const Trades = lazy(() => import('@/pages/Trades'));
 const Graphs = lazy(() => import('@/pages/Graphs'));
@@ -22,10 +23,12 @@ const Studies = lazy(() => import('@/pages/Studies'));
 const Settings = lazy(() => import('@/pages/Settings'));
 
 export const router = createBrowserRouter([
+  // Public marketing page — renders without the app shell (no sidebar).
+  { path: '/', element: <Suspense fallback={null}><Landing /></Suspense> },
   {
     element: <AppShell />,
     children: [
-      { path: '/', element: <Dashboard /> },
+      { path: '/dashboard', element: <Dashboard /> },
       { path: '/market', element: <Market /> },
       { path: '/shadow', element: <Shadow /> },
       { path: '/strategies', element: <Strategies /> },

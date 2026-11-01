@@ -23,7 +23,7 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/market', label: 'Market', icon: ChartCandlestick },
   { to: '/shadow', label: 'Shadow', icon: Ghost },
   { to: '/strategies', label: 'Strategies', icon: Layers },

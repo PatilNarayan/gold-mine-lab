@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
@@ -31,6 +32,8 @@ export function DataTable<T>({
   emptyTitle = 'No rows',
   emptyMessage,
   onRowClick,
+  rowHref,
+  rowLinkLabel,
   dense = true,
   ariaLabel,
 }: {
@@ -43,6 +46,11 @@ export function DataTable<T>({
   emptyTitle?: string;
   emptyMessage?: ReactNode;
   onRowClick?: (row: T) => void;
+  /** Primary row navigation as a real link — the first cell stretches it
+   *  across the row so middle-click / open-in-new-tab / AT all work. Prefer
+   *  this over onRowClick for navigation. */
+  rowHref?: (row: T) => string;
+  rowLinkLabel?: (row: T) => string;
   dense?: boolean;
   ariaLabel?: string;
 }) {
@@ -120,7 +128,7 @@ export function DataTable<T>({
                     <button
                       type="button"
                       onClick={() => toggleSort(c.key)}
-                      className="inline-flex items-center gap-1 uppercase tracking-[0.14em] hover:text-content-1"
+                      className="inline-flex cursor-pointer items-center gap-1 uppercase tracking-[0.14em] hover:text-content-1"
                     >
                       {content}
                     </button>
@@ -138,7 +146,7 @@ export function DataTable<T>({
               key={rowKey(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
               onKeyDown={
-                onRowClick
+                onRowClick && !rowHref
                   ? (e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
@@ -147,12 +155,12 @@ export function DataTable<T>({
                     }
                   : undefined
               }
-              tabIndex={onRowClick ? 0 : undefined}
-              className={`border-b border-line/60 last:border-0 ${
-                onRowClick ? 'cursor-pointer hover:bg-surface-2 focus-visible:bg-surface-2' : ''
+              tabIndex={onRowClick && !rowHref ? 0 : undefined}
+              className={`relative border-b border-line/60 last:border-0 ${
+                onRowClick || rowHref ? 'cursor-pointer hover:bg-surface-2 focus-visible:bg-surface-2' : ''
               }`}
             >
-              {columns.map((c) => (
+              {columns.map((c, i) => (
                 <td
                   key={c.key}
                   className={`whitespace-nowrap px-3 ${dense ? 'py-1.5' : 'py-2.5'} text-xs text-content-2 ${
@@ -160,6 +168,13 @@ export function DataTable<T>({
                   } ${c.className ?? ''}`}
                 >
                   {c.cell(row)}
+                  {i === 0 && rowHref ? (
+                    <Link
+                      to={rowHref(row)}
+                      aria-label={rowLinkLabel?.(row) ?? 'Open'}
+                      className="absolute inset-0"
+                    />
+                  ) : null}
                 </td>
               ))}
             </tr>

@@ -44,7 +44,7 @@ function renderRoute(entry: string, routePath: string, element: React.ReactNode)
 
 describe('route smoke tests (mock data mode)', () => {
   it('Dashboard renders market overview, signals and equity chart', async () => {
-    renderRoute('/', '/', <Dashboard />);
+    renderRoute('/dashboard', '/dashboard', <Dashboard />);
     expect(await screen.findByText('Market overview', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByText('Historical / Demo')).toBeInTheDocument();
     expect(screen.getAllByText(/demo data/i).length).toBeGreaterThan(0);

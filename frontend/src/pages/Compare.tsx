@@ -283,7 +283,8 @@ function ComparisonWorkspace() {
             ariaLabel="Comparison history"
             rows={comparisons.data}
             rowKey={(c) => c.id}
-            onRowClick={(c) => navigate(`/compare/${c.id}`)}
+            rowHref={(c) => `/compare/${c.id}`}
+            rowLinkLabel={(c) => `Open comparison ${c.id}`}
             columns={[
               { key: 'created', header: 'Created', cell: (c) => <span className="tnum">{formatDateTime(c.createdAt)}</span>, sortValue: (c) => c.createdAt },
               { key: 'strategies', header: 'Strategies', cell: (c) => c.strategyIds.map(nameOf).join(' vs ') },

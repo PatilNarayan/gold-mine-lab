@@ -158,11 +158,11 @@ export default function Shadow() {
             <table className="w-full text-left text-xs">
               <thead className="border-b border-line text-2xs uppercase tracking-wide text-content-3">
                 <tr>
-                  <th className="pb-1 font-medium">bar</th>
-                  <th className="pb-1 font-medium">src</th>
-                  <th className="pb-1 font-medium">action</th>
-                  <th className="pb-1 font-medium">fast/slow EMA</th>
-                  <th className="pb-1 font-medium">outcome</th>
+                  <th scope="col" className="pb-1 font-medium">bar</th>
+                  <th scope="col" className="pb-1 font-medium">src</th>
+                  <th scope="col" className="pb-1 font-medium">action</th>
+                  <th scope="col" className="pb-1 font-medium">fast/slow EMA</th>
+                  <th scope="col" className="pb-1 font-medium">outcome</th>
                 </tr>
               </thead>
               <tbody>
@@ -209,13 +209,13 @@ export default function Shadow() {
             <table className="w-full text-left text-xs">
               <thead className="border-b border-line text-2xs uppercase tracking-wide text-content-3">
                 <tr>
-                  <th className="px-2 py-1.5">Side</th>
-                  <th className="px-2 py-1.5">Status</th>
-                  <th className="px-2 py-1.5">Signal bar</th>
-                  <th className="px-2 py-1.5">Fill</th>
-                  <th className="px-2 py-1.5">Bid / Ask</th>
-                  <th className="px-2 py-1.5">Qty</th>
-                  <th className="px-2 py-1.5">Reason</th>
+                  <th scope="col" className="px-2 py-1.5">Side</th>
+                  <th scope="col" className="px-2 py-1.5">Status</th>
+                  <th scope="col" className="px-2 py-1.5">Signal bar</th>
+                  <th scope="col" className="px-2 py-1.5">Fill</th>
+                  <th scope="col" className="px-2 py-1.5">Bid / Ask</th>
+                  <th scope="col" className="px-2 py-1.5">Qty</th>
+                  <th scope="col" className="px-2 py-1.5">Reason</th>
                 </tr>
               </thead>
               <tbody>

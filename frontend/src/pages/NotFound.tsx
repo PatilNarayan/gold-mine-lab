@@ -9,7 +9,7 @@ export default function NotFound() {
       <p className="max-w-sm text-xs text-content-3">
         The route you requested does not exist in Gold Mine Lab.
       </p>
-      <Link to="/" className="text-xs text-accent-fg hover:underline">
+      <Link to="/dashboard" className="text-xs text-accent-fg hover:underline">
         ← Back to dashboard
       </Link>
     </div>

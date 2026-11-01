@@ -8,6 +8,7 @@ import { Badge } from '@/components/common/Badge';
 import { SkeletonRows } from '@/components/common/Skeleton';
 import { ErrorState } from '@/components/common/ErrorState';
 import { DataTable, type Column } from '@/components/tables/DataTable';
+import { PageHeader } from '@/components/common/PageHeader';
 import { BacktestForm } from '@/components/forms/BacktestForm';
 
 export default function Backtests() {
@@ -83,7 +84,10 @@ export default function Backtests() {
   return (
     <div className="space-y-3">
       <DemoBanner />
-      <h1 className="section-label">Run a backtest</h1>
+      <PageHeader
+        title="Backtests"
+        description="Replay a strategy over a historical window with explicit costs — in-sample evidence, not a forecast."
+      />
 
       <section className="border border-line bg-surface-1 p-3" aria-label="New backtest">
         {loading ? (
@@ -128,7 +132,8 @@ export default function Backtests() {
           isLoading={runs.isLoading}
           error={runs.error}
           onRetry={() => runs.refetch()}
-          onRowClick={(r) => navigate(`/results/${r.id}`)}
+          rowHref={(r) => `/results/${r.id}`}
+          rowLinkLabel={(r) => `Open results for run ${r.id}`}
           emptyTitle="No runs yet"
           emptyMessage="Run a backtest above and it will appear here."
           ariaLabel="Backtest run history"

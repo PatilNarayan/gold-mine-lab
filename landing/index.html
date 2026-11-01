@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="AURIC — institutional-grade digital asset security. Custody, trade and audit crypto with bank-level protection." />
+<title>AURIC — Secure Digital Asset Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #070a12;
+    --bg-2: #0b101c;
+    --panel: rgba(255,255,255,.045);
+    --panel-2: rgba(255,255,255,.07);
+    --stroke: rgba(255,255,255,.10);
+    --stroke-2: rgba(255,255,255,.16);
+    --text: #eef2f8;
+    --text-2: #9aa7bd;
+    --text-3: #6b7890;
+    --gold: #f5b83d;
+    --gold-2: #ffd97a;
+    --violet: #8b5cf6;
+    --green: #34d399;
+    --red: #f87171;
+    --radius: 16px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+  .display { font-family: Orbitron, Inter, sans-serif; letter-spacing: -.01em; }
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+  /* ambient background */
+  .glow { position: fixed; border-radius: 50%; filter: blur(110px); opacity: .32; pointer-events: none; z-index: 0; }
+  .glow.a { width: 560px; height: 560px; background: #b78a1e; top: -220px; left: -160px; }
+  .glow.b { width: 480px; height: 480px; background: #4c2fb8; top: 20%; right: -180px; }
+  .glow.c { width: 420px; height: 420px; background: #0f4c5c; bottom: -180px; left: 30%; }
+  .grid-bg {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image: linear-gradient(rgba(255,255,255,.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.028) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 40%, transparent 100%);
+  }
+  .wrap { position: relative; z-index: 1; max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+
+  .glass {
+    background: linear-gradient(160deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--stroke);
+    border-radius: var(--radius);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  /* nav */
+  nav { position: sticky; top: 0; z-index: 50; border-bottom: 1px solid var(--stroke); backdrop-filter: blur(16px); background: rgba(7,10,18,.72); }
+  .nav-in { display: flex; align-items: center; gap: 28px; height: 62px; }
+  .logo { font-family: Orbitron; font-weight: 800; font-size: 17px; letter-spacing: .14em; }
+  .logo em { color: var(--gold); font-style: normal; }
+  .nav-links { display: flex; gap: 22px; margin-left: 8px; font-size: 13px; color: var(--text-2); }
+  .nav-links a:hover { color: var(--text); }
+  .nav-cta { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .live-pill { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: var(--green); border: 1px solid rgba(52,211,153,.3); padding: 4px 10px; border-radius: 99px; background: rgba(52,211,153,.08); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.8s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; border-radius: 10px; padding: 10px 18px; cursor: pointer; border: 1px solid transparent; transition: transform .15s, box-shadow .2s, background .2s; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-gold { background: linear-gradient(135deg, var(--gold), #d99a1f); color: #16100a; box-shadow: 0 4px 22px rgba(245,184,61,.28); }
+  .btn-gold:hover { box-shadow: 0 6px 30px rgba(245,184,61,.42); }
+  .btn-ghost { border-color: var(--stroke-2); color: var(--text); background: var(--panel); }
+  .btn-ghost:hover { background: var(--panel-2); }
+
+  /* hero */
+  .hero { display: grid; grid-template-columns: 1.05fr .95fr; gap: 48px; align-items: center; padding: 76px 0 56px; }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: var(--gold-2); border: 1px solid rgba(245,184,61,.3); background: rgba(245,184,61,.07); border-radius: 99px; padding: 6px 14px; }
+  h1 { font-size: clamp(34px, 4.6vw, 54px); font-weight: 800; line-height: 1.08; margin: 20px 0 16px; }
+  h1 .grad { background: linear-gradient(100deg, var(--gold-2), var(--gold) 45%, #b87eff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { color: var(--text-2); font-size: 16px; max-width: 480px; }
+  .hero-ctas { display: flex; gap: 12px; margin: 28px 0 30px; }
+  .hero-trust { display: flex; gap: 22px; flex-wrap: wrap; font-size: 12px; color: var(--text-3); }
+  .hero-trust span { display: inline-flex; gap: 7px; align-items: center; }
+
+  /* chart card */
+  .chart-card { padding: 18px 18px 10px; position: relative; overflow: hidden; }
+  .chart-head { display: flex; align-items: baseline; justify-content: space-between; padding: 0 4px 12px; }
+  .chart-pair { font-size: 12px; color: var(--text-3); letter-spacing: .1em; }
+  .chart-price { font-size: 26px; font-weight: 600; }
+  .chart-chg { font-size: 12px; font-weight: 600; }
+  .up { color: var(--green); }
+  .down { color: var(--red); }
+  #heroChart { width: 100%; height: 230px; display: block; }
+  .chart-foot { display: flex; gap: 6px; padding: 10px 4px 8px; border-top: 1px solid var(--stroke); }
+  .tf { font-size: 11px; color: var(--text-3); padding: 4px 10px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; background: none; font-family: "JetBrains Mono"; }
+  .tf.on { color: var(--gold-2); border-color: rgba(245,184,61,.35); background: rgba(245,184,61,.08); }
+
+  /* stats bar */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; padding: 8px 0 54px; }
+  .stat { padding: 18px 20px; }
+  .stat b { display: block; font-size: 24px; font-weight: 700; font-family: "JetBrains Mono"; }
+  .stat span { font-size: 12px; color: var(--text-3); }
+
+  /* section scaffold */
+  section { padding: 44px 0; }
+  .sec-head { margin-bottom: 28px; }
+  .sec-tag { font-size: 11px; font-weight: 600; letter-spacing: .2em; text-transform: uppercase; color: var(--violet); }
+  .sec-tag.gold { color: var(--gold); }
+  h2 { font-size: clamp(24px, 3vw, 34px); font-weight: 800; margin: 8px 0 8px; }
+  .sec-sub { color: var(--text-2); font-size: 14px; max-width: 560px; }
+
+  /* market cards */
+  .coins { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .coin { padding: 16px; transition: transform .18s, border-color .2s; }
+  .coin:hover { transform: translateY(-3px); border-color: var(--stroke-2); }
+  .coin-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .coin-ic { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-family: Orbitron; font-weight: 800; font-size: 13px; }
+  .coin-name { font-size: 13px; font-weight: 600; }
+  .coin-sym { font-size: 11px; color: var(--text-3); }
+  .coin-price { font-size: 18px; font-weight: 600; }
+  .coin-chg { font-size: 12px; font-weight: 600; margin-left: auto; }
+  .spark { width: 100%; height: 44px; margin-top: 10px; }
+
+  /* security */
+  .sec-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .sec-card { padding: 22px; position: relative; overflow: hidden; }
+  .sec-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 1px; background: linear-gradient(90deg, transparent, rgba(245,184,61,.5), transparent); }
+  .sec-ic { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; margin-bottom: 14px; background: rgba(245,184,61,.1); border: 1px solid rgba(245,184,61,.25); }
+  .sec-card.v .sec-ic { background: rgba(139,92,246,.1); border-color: rgba(139,92,246,.3); }
+  .sec-card.g .sec-ic { background: rgba(52,211,153,.1); border-color: rgba(52,211,153,.3); }
+  .sec-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  .sec-card p { font-size: 12.5px; color: var(--text-2); }
+  .sec-card svg { width: 20px; height: 20px; }
+
+  /* wallet */
+  .wallet { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; }
+  .wallet-card { padding: 26px; }
+  .w-row { display: flex; align-items: center; gap: 14px; padding: 13px 14px; border: 1px solid var(--stroke); border-radius: 12px; margin-bottom: 10px; background: rgba(255,255,255,.02); transition: border-color .2s, background .2s; cursor: pointer; }
+  .w-row:hover, .w-row.sel { border-color: rgba(245,184,61,.4); background: rgba(245,184,61,.05); }
+  .w-ic { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; font-weight: 800; font-size: 12px; font-family: Orbitron; flex-shrink: 0; }
+  .w-name { font-size: 13px; font-weight: 600; }
+  .w-tag { font-size: 10px; color: var(--text-3); margin-left: auto; border: 1px solid var(--stroke); padding: 2px 8px; border-radius: 99px; }
+  .w-row.sel .w-tag { color: var(--gold-2); border-color: rgba(245,184,61,.4); }
+  .wallet-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .w-feat { display: flex; gap: 12px; padding: 14px; border-radius: 12px; border: 1px solid var(--stroke); background: rgba(255,255,255,.02); }
+  .w-feat b { font-size: 13px; display: block; }
+  .w-feat span { font-size: 11.5px; color: var(--text-3); }
+  .w-feat .fi { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; display: grid; place-items: center; background: rgba(139,92,246,.12); border: 1px solid rgba(139,92,246,.3); font-size: 14px; }
+
+  /* trust */
+  .trust-row { display: flex; flex-wrap: wrap; gap: 12px; }
+  .trust-badge { display: inline-flex; align-items: center; gap: 9px; padding: 11px 18px; font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+  .trust-badge svg { width: 17px; height: 17px; color: var(--gold); }
+
+  /* cta + footer */
+  .cta { text-align: center; padding: 64px 24px; margin: 30px 0 60px; }
+  .cta h2 { margin-bottom: 10px; }
+  footer { border-top: 1px solid var(--stroke); padding: 26px 0 40px; font-size: 12px; color: var(--text-3); }
+  .foot-in { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+  @media (max-width: 900px) {
+    .hero, .wallet { grid-template-columns: 1fr; }
+    .coins { grid-template-columns: repeat(2, 1fr); }
+    .sec-grid { grid-template-columns: 1fr 1fr; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .nav-links { display: none; }
+  }
+  @media (max-width: 560px) {
+    .sec-grid, .coins, .wallet-list { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="glow a"></div><div class="glow b"></div><div class="glow c"></div>
+<div class="grid-bg"></div>
+
+<nav>
+  <div class="wrap nav-in">
+    <span class="logo">AUR<em>IC</em></span>
+    <div class="nav-links">
+      <a href="#markets">Markets</a><a href="#security">Security</a>
+      <a href="#wallet">Wallet</a><a href="#trust">Trust</a>
+    </div>
+    <div class="nav-cta">
+      <span class="live-pill"><span class="dot"></span>MARKETS LIVE</span>
+      <a href="#wallet" class="btn btn-ghost">Connect wallet</a>
+      <a href="#cta" class="btn btn-gold">Get started</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap hero">
+  <div>
+    <span class="eyebrow">◆ SOC 2 Type II · ISO 27001 Certified</span>
+    <h1 class="display">Institutional-grade custody for the <span class="grad">digital asset era</span></h1>
+    <p class="sub">Trade, custody and audit crypto on infrastructure built for security first — MPC key management, 95% cold storage, and real-time market execution.</p>
+    <div class="hero-ctas">
+      <a href="#cta" class="btn btn-gold">Create secure account →</a>
+      <a href="#security" class="btn btn-ghost">Explore security</a>
+    </div>
+    <div class="hero-trust">
+      <span>🛡 $2.1B assets secured</span><span>🔒 Zero breaches since 2019</span><span>✓ 100% reserve attested</span>
+    </div>
+  </div>
+  <div class="glass chart-card">
+    <div class="chart-head">
+      <div>
+        <div class="chart-pair">BTC / USD · LIVE PREVIEW</div>
+        <div class="chart-price mono" id="heroPrice">$97,432.10</div>
+      </div>
+      <div class="chart-chg mono up" id="heroChg">▲ +2.41%</div>
+    </div>
+    <canvas id="heroChart" role="img" aria-label="Live BTC/USD price chart preview"></canvas>
+    <div class="chart-foot">
+      <button class="tf" data-tf="1m">1M</button><button class="tf" data-tf="5m">5M</button>
+      <button class="tf on" data-tf="15m">15M</button><button class="tf" data-tf="1h">1H</button>
+      <button class="tf" data-tf="4h">4H</button><button class="tf" data-tf="1d">1D</button>
+      <span style="margin-left:auto" class="chart-pair">streaming · demo feed</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap stats">
+  <div class="glass stat"><b class="mono">$2.1B+</b><span>Assets under custody</span></div>
+  <div class="glass stat"><b class="mono">99.99%</b><span>Platform uptime · 24 mo</span></div>
+  <div class="glass stat"><b class="mono">480K</b><span>Verified accounts</span></div>
+  <div class="glass stat"><b class="mono">$250M</b><span>Insurance coverage</span></div>
+</div>
+
+<section class="wrap" id="markets">
+  <div class="sec-head">
+    <div class="sec-tag gold">Markets</div>
+    <h2>Real-time prices, streaming now</h2>
+    <p class="sec-sub">Sub-second quote updates across 200+ pairs — the same feed that powers execution.</p>
+  </div>
+  <div class="coins" id="coins"></div>
+</section>
+
+<section class="wrap" id="security">
+  <div class="sec-head">
+    <div class="sec-tag">Security</div>
+    <h2>Defense in depth, by design</h2>
+    <p class="sec-sub">Every layer of the stack assumes breach — keys are split, funds are cold, and access is hardware-verified.</p>
+  </div>
+  <div class="sec-grid">
+    <div class="glass sec-card">
+      <div class="sec-ic"><svg fill="none" stroke="var(--gold)" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg></div>
+      <h3>95% cold storage</h3><p>Client assets live in geographically distributed, air-gapped vaults. Hot wallets hold operational float only.</p>
+    </div>
+    <div class="glass sec-card v">
+      <div class="sec-ic"><svg fill="none" stroke="var(--violet)" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="8" cy="12" r="3"/><circle cx="16" cy="12" r="3"/><path d="M11 12h2M5 9l-2 3 2 3M19 9l2 3-2 3"/></svg></div>
+      <h3>MPC key sharding</h3><p>Private keys never exist in one place. Multi-party computation signs without reconstructing secrets.</p>
+    </div>
+    <div class="glass sec-card g">
+      <div class="sec-ic"><svg fill="none" stroke="var(--green)" stroke-width="1.8" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
+      <h3>Hardware auth</h3><p>Passkeys and FIDO2 hardware keys for every withdrawal — phishing-resistant by default, no SMS fallbacks.</p>
+    </div>
+    <div class="glass sec-card g">
+      <div class="sec-ic"><svg fill="none" stroke="var(--green)" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 12l2 2 4-5M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg></div>
+      <h3>Independent audits</h3><p>Quarterly penetration tests and annual SOC 2 + ISO 27001 audits — reports published, not promised.</p>
+    </div>
+    <div class="glass sec-card">
+      <div class="sec-ic"><svg fill="none" stroke="var(--gold)" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M7 7l10 10M17 7L7 17"/></svg></div>
+      <h3>24/7 threat monitoring</h3><p>Anomaly detection on every session and withdrawal — unusual velocity, device or geography freezes the action.</p>
+    </div>
+    <div class="glass sec-card v">
+      <div class="sec-ic"><svg fill="none" stroke="var(--violet)" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
+      <h3>$250M insurance</h3><p>Crime and specie coverage through Lloyd's syndicates for assets in custody — cold and hot tiers.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" id="wallet">
+  <div class="wallet">
+    <div>
+      <div class="sec-tag">Wallet</div>
+      <h2>Your keys, your call</h2>
+      <p class="sec-sub" style="margin-bottom:22px">Connect self-custody in one click or use AURIC Vault — either way you see the same portfolio, the same risk controls.</p>
+      <div class="wallet-list">
+        <div class="w-feat"><div class="fi">⚡</div><div><b>One-click connect</b><span>MetaMask, Ledger, WalletConnect, Phantom</span></div></div>
+        <div class="w-feat"><div class="fi">🔏</div><div><b>Non-custodial mode</b><span>Trade signed orders — keys never leave your device</span></div></div>
+        <div class="w-feat"><div class="fi">🧾</div><div><b>Unified ledger</b><span>Every deposit, trade and withdrawal, exportable</span></div></div>
+        <div class="w-feat"><div class="fi">⛓</div><div><b>12 chains</b><span>BTC, ETH, SOL and major L2s from one view</span></div></div>
+      </div>
+    </div>
+    <div class="glass wallet-card">
+      <div class="sec-tag" style="margin-bottom:14px">Connect a wallet</div>
+      <div class="w-row sel"><div class="w-ic" style="background:#2c2010;color:var(--gold-2)">MM</div><div class="w-name">MetaMask</div><span class="w-tag">Detected</span></div>
+      <div class="w-row"><div class="w-ic" style="background:#101c2c;color:#7ab8ff">WC</div><div class="w-name">WalletConnect</div><span class="w-tag">300+ wallets</span></div>
+      <div class="w-row"><div class="w-ic" style="background:#14201a;color:var(--green)">LG</div><div class="w-name">Ledger</div><span class="w-tag">Hardware</span></div>
+      <div class="w-row"><div class="w-ic" style="background:#201430;color:#b87eff">PH</div><div class="w-name">Phantom</div><span class="w-tag">Solana</span></div>
+      <button class="btn btn-gold" style="width:100%;justify-content:center;margin-top:8px" onclick="this.textContent='✓ Wallet connected (demo)';this.style.background='linear-gradient(135deg,#34d399,#1fa97a)'">Connect MetaMask</button>
+      <p style="font-size:11px;color:var(--text-3);margin-top:12px;text-align:center">Signature only — we never ask for your seed phrase. Ever.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" id="trust">
+  <div class="sec-head">
+    <div class="sec-tag gold">Trust</div>
+    <h2>Verified, not claimed</h2>
+  </div>
+  <div class="trust-row">
+    <span class="glass trust-badge"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 12l2 2 4-5M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg>SOC 2 Type II</span>
+    <span class="glass trust-badge"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>ISO 27001</span>
+    <span class="glass trust-badge"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>FIDO2 / Passkeys</span>
+    <span class="glass trust-badge"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></svg>100% Proof of Reserves</span>
+    <span class="glass trust-badge"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Bug bounty · $1M max</span>
+    <span class="glass trust-badge"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg>FinCEN registered · MSB</span>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="glass cta" id="cta">
+    <div class="sec-tag gold" style="margin-bottom:12px">Start in under 3 minutes</div>
+    <h2>Security you don't have to think about</h2>
+    <p class="sec-sub" style="margin:0 auto 26px">Open an account, verify once, and custody with the same controls institutions demand.</p>
+    <a href="#" class="btn btn-gold" style="font-size:15px;padding:14px 30px">Create secure account</a>
+    <p style="font-size:11px;color:var(--text-3);margin-top:16px">No card required · Non-custodial mode available day one</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-in">
+    <span class="logo" style="font-size:14px">AUR<em>IC</em></span>
+    <span>Demo landing page — market data simulated. Not investment advice.</span>
+    <span>© 2026 Auric Digital · Security · Status · Legal</span>
+  </div>
+</footer>
+
+<script>
+// ---------- simulated live feed ----------
+const fmt = (n, d=2) => n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const state = {};
+const COINS = [
+  {sym:'BTC', name:'Bitcoin',  px:97432.10, chg: 2.41, c:'#f7931a'},
+  {sym:'ETH', name:'Ethereum', px: 3812.44, chg: 1.87, c:'#7ab8ff'},
+  {sym:'SOL', name:'Solana',   px:  214.86, chg:-0.92, c:'#b87eff'},
+  {sym:'XAU', name:'Gold PAXG',px: 2911.30, chg: 0.34, c:'#f5b83d'},
+];
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const hist = n => { let v=0.5, a=[]; for(let i=0;i<n;i++){v+= (Math.random()-.48)*.09; v=Math.max(.1,Math.min(.95,v)); a.push(v);} return a; };
+
+COINS.forEach(c => { state[c.sym] = { px:c.px, chg:c.chg, hist:hist(60) }; });
+
+const coinsEl = document.getElementById('coins');
+coinsEl.innerHTML = COINS.map((c,i)=>`
+  <div class="glass coin">
+    <div class="coin-top">
+      <div class="coin-ic" style="background:${c.c}22;color:${c.c}">${c.sym[0]}</div>
+      <div><div class="coin-name">${c.name}</div><div class="coin-sym">${c.sym}/USD</div></div>
+      <div class="coin-chg mono ${c.chg>=0?'up':'down'}" id="chg-${c.sym}">${c.chg>=0?'▲':'▼'} ${c.chg>=0?'+':''}${c.chg.toFixed(2)}%</div>
+    </div>
+    <div class="coin-price mono" id="px-${c.sym}">$${fmt(c.px)}</div>
+    <canvas class="spark" id="spark-${c.sym}" aria-hidden="true"></canvas>
+  </div>`).join('');
+
+function drawLine(cv, data, color, fill){
+  const dpr = devicePixelRatio||1, w = cv.clientWidth, h = cv.clientHeight;
+  if(!w||!h) return;
+  cv.width = w*dpr; cv.height = h*dpr;
+  const x = cv.getContext('2d'); x.scale(dpr,dpr);
+  const mn=Math.min(...data), mx=Math.max(...data), r=(mx-mn)||1;
+  const px = i=>i/(data.length-1)*w, py = v=>h-4-((v-mn)/r)*(h-8);
+  x.clearRect(0,0,w,h);
+  if(fill){
+    const g=x.createLinearGradient(0,0,0,h);
+    g.addColorStop(0,color+'55'); g.addColorStop(1,color+'00');
+    x.beginPath(); x.moveTo(0,h); data.forEach((v,i)=>x.lineTo(px(i),py(v))); x.lineTo(w,h); x.closePath();
+    x.fillStyle=g; x.fill();
+  }
+  x.beginPath(); data.forEach((v,i)=>i?x.lineTo(px(i),py(v)):x.moveTo(px(i),py(v)));
+  x.strokeStyle=color; x.lineWidth=1.8; x.lineJoin='round'; x.stroke();
+  // last point glow
+  x.beginPath(); x.arc(px(data.length-1),py(data[data.length-1]),3.2,0,7);
+  x.fillStyle=color; x.shadowColor=color; x.shadowBlur=10; x.fill(); x.shadowBlur=0;
+}
+
+const heroCv = document.getElementById('heroChart');
+let heroData = hist(90);
+function render(){
+  const s = state.BTC;
+  drawLine(heroCv, heroData, s.chg>=0?'#34d399':'#f87171', true);
+  document.getElementById('heroPrice').textContent = '$'+fmt(s.px);
+  const hc=document.getElementById('heroChg');
+  hc.textContent = `${s.chg>=0?'▲ +':'▼ '}${s.chg.toFixed(2)}%`;
+  hc.className = 'chart-chg mono ' + (s.chg>=0?'up':'down');
+  COINS.forEach(c=>{
+    const st=state[c.sym];
+    drawLine(document.getElementById('spark-'+c.sym), st.hist, st.chg>=0?'#34d399':'#f87171', false);
+    document.getElementById('px-'+c.sym).textContent='$'+fmt(st.px, st.px<1000?2:2);
+    const e=document.getElementById('chg-'+c.sym);
+    e.textContent=`${st.chg>=0?'▲ +':'▼ '}${st.chg.toFixed(2)}%`;
+    e.className='coin-chg mono '+(st.chg>=0?'up':'down');
+  });
+}
+
+function tick(){
+  COINS.forEach(c=>{
+    const st=state[c.sym];
+    const dv=(Math.random()-.5)*.0016*st.px;
+    st.px+=dv; st.chg+= (Math.random()-.5)*.12;
+    st.hist.push(st.hist[st.hist.length-1]+(Math.random()-.48)*.08);
+    st.hist.shift();
+  });
+  const s=state.BTC;
+  heroData.push(s.px/ s.px * (heroData[heroData.length-1]+(Math.random()-.48)*.07));
+  heroData.shift();
+  render();
+}
+render();
+if(!reduceMotion) setInterval(tick, 1400); else tick();
+
+// timeframe buttons — cosmetic regime shift
+document.querySelectorAll('.tf').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.tf').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  const vol={'1m':.03,'5m':.05,'15m':.07,'1h':.10,'4h':.14,'1d':.2}[b.dataset.tf]||.07;
+  let v=.5; heroData=hist(90).map(x=>x*v*2); render();
+}));
+addEventListener('resize', render);
+</script>
+</body>
+</html>

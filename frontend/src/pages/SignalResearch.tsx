@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { DemoBanner } from '@/components/common/DemoBanner';
+import { Button } from '@/components/common/Button';
 import { SkeletonRows } from '@/components/common/Skeleton';
 import { useSignalResearchList, useSignalResearch, useRunSignalResearch } from '@/hooks/useSignalResearch';
 import { useStrategies } from '@/hooks/useStrategies';
@@ -84,11 +85,11 @@ function ResearchWorkspace() {
             <input type="checkbox" checked={regimeAnalysis} onChange={(e) => setRegimeAnalysis(e.target.checked)} />
             Enable Market Regime Analysis
           </label>
-          <button className="btn" disabled={run.isPending || selected.length < 2} onClick={submit}>
+          <Button disabled={run.isPending || selected.length < 2} onClick={submit}>
             {run.isPending ? 'Analyzing…' : `Analyze ${selected.length} candidates`}
-          </button>
+          </Button>
         </div>
-        {run.isError && <p className="text-xs text-red-400">{(run.error as Error).message}</p>}
+        {run.isError && <p className="text-xs text-sell">{(run.error as Error).message}</p>}
       </section>
 
       <section className="card space-y-2" aria-label="Analysis history">
@@ -98,14 +99,14 @@ function ResearchWorkspace() {
         ) : (
           <table className="w-full text-xs">
             <thead><tr className="text-content-3 text-left">
-              <th className="pr-3">Candidates</th><th className="pr-3">Window</th><th className="pr-3">TF</th>
-              <th className="pr-3">Status</th><th className="pr-3">Created</th>
+              <th scope="col" className="pr-3">Candidates</th><th scope="col" className="pr-3">Window</th><th scope="col" className="pr-3">TF</th>
+              <th scope="col" className="pr-3">Status</th><th scope="col" className="pr-3">Created</th>
             </tr></thead>
             <tbody>
               {(analyses.data ?? []).map((r) => (
-                <tr key={r.id} className="border-t border-line hover:bg-surface-2 cursor-pointer"
-                  onClick={() => navigate(`/research/${r.id}`)}>
-                  <td className="pr-3 py-1">{r.strategyIds.map(nameOf).join(' vs ')}</td>
+                <tr key={r.id} className="relative border-t border-line hover:bg-surface-2 focus-within:bg-surface-2">
+                  <td className="pr-3 py-1">{r.strategyIds.map(nameOf).join(' vs ')}
+                    <Link to={`/research/${r.id}`} aria-label={`Open analysis ${r.id}`} className="absolute inset-0" /></td>
                   <td className="pr-3 tnum">{r.startDate} → {r.endDate}</td>
                   <td className="pr-3">{r.timeframe}</td>
                   <td className={`pr-3 ${r.status === 'completed' ? 'text-buy' : 'text-sell'}`}>{r.status}</td>
@@ -126,7 +127,7 @@ function ResearchDetail({ id }: { id: string }) {
   const nameOf = (sid: string) =>
     (strategies.data ?? []).find((s) => s.id === sid)?.name ?? sid;
   if (q.isLoading) return <SkeletonRows rows={8} />;
-  if (q.isError || !q.data) return <p className="text-xs text-red-400">{(q.error as Error)?.message ?? 'Not found'} · <Link className="underline" to="/research">back</Link></p>;
+  if (q.isError || !q.data) return <p className="text-xs text-sell">{(q.error as Error)?.message ?? 'Not found'} · <Link className="underline" to="/research">back</Link></p>;
   const r: SR = q.data;
   const smallSample = (r.candidates ?? []).some((c) => c.buyEpisodes + c.sellEpisodes < 10);
   return (
@@ -143,7 +144,7 @@ function ResearchDetail({ id }: { id: string }) {
         {r.regimeVersion ? ` · regime definitions ${r.regimeVersion}` : ''}
       </p>
       {smallSample && (
-        <p className="text-xs text-yellow-400">
+        <p className="text-xs text-warning">
           Warning: fewer than 10 signal episodes for at least one candidate — treat statistics as
           exploratory, not conclusive.
         </p>
@@ -154,10 +155,10 @@ function ResearchDetail({ id }: { id: string }) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead><tr className="text-content-3 text-left">
-              <th className="pr-3">Candidate</th><th className="pr-3">Version</th>
-              <th className="pr-3 tnum">BUY</th><th className="pr-3 tnum">SELL</th><th className="pr-3 tnum">NEUTRAL</th>
-              <th className="pr-3 tnum">Actionable %</th><th className="pr-3 tnum">BUY eps</th>
-              <th className="pr-3 tnum">SELL eps</th><th className="pr-3 tnum">Avg score</th>
+              <th scope="col" className="pr-3">Candidate</th><th scope="col" className="pr-3">Version</th>
+              <th scope="col" className="pr-3 tnum">BUY</th><th scope="col" className="pr-3 tnum">SELL</th><th scope="col" className="pr-3 tnum">NEUTRAL</th>
+              <th scope="col" className="pr-3 tnum">Actionable %</th><th scope="col" className="pr-3 tnum">BUY eps</th>
+              <th scope="col" className="pr-3 tnum">SELL eps</th><th scope="col" className="pr-3 tnum">Avg score</th>
             </tr></thead>
             <tbody>
               {(r.candidates ?? []).map((c) => (
@@ -183,10 +184,10 @@ function ResearchDetail({ id }: { id: string }) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead><tr className="text-content-3 text-left">
-              <th className="pr-3">Pair</th><th className="pr-3 tnum">Both BUY</th><th className="pr-3 tnum">Both SELL</th>
-              <th className="pr-3 tnum">Opposite</th><th className="pr-3 tnum">One actionable</th>
-              <th className="pr-3 tnum">Both neutral</th><th className="pr-3 tnum">Co-actionable</th>
-              <th className="pr-3 tnum">Agree %</th><th className="pr-3 tnum">Conflict %</th>
+              <th scope="col" className="pr-3">Pair</th><th scope="col" className="pr-3 tnum">Both BUY</th><th scope="col" className="pr-3 tnum">Both SELL</th>
+              <th scope="col" className="pr-3 tnum">Opposite</th><th scope="col" className="pr-3 tnum">One actionable</th>
+              <th scope="col" className="pr-3 tnum">Both neutral</th><th scope="col" className="pr-3 tnum">Co-actionable</th>
+              <th scope="col" className="pr-3 tnum">Agree %</th><th scope="col" className="pr-3 tnum">Conflict %</th>
             </tr></thead>
             <tbody>
               {(r.pairs ?? []).map((p) => (
@@ -217,13 +218,13 @@ function ResearchDetail({ id }: { id: string }) {
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead><tr className="text-content-3 text-left">
-                <th className="pr-3">Candidate</th><th className="pr-3 tnum">Horizon</th>
-                <th className="pr-3 tnum">Events</th><th className="pr-3 tnum">Excluded</th>
-                <th className="pr-3 tnum">Event mean %</th><th className="pr-3 tnum">Median %</th>
-                <th className="pr-3 tnum">Baseline mean %</th><th className="pr-3 tnum">Ev−base (pp)</th>
-                <th className="pr-3 tnum">Ev−ctl (pp)</th>
-                <th className="pr-3 tnum">Positive %</th><th className="pr-3 tnum">Worst %</th>
-                <th className="pr-3">95% CI of ev−ctl</th>
+                <th scope="col" className="pr-3">Candidate</th><th scope="col" className="pr-3 tnum">Horizon</th>
+                <th scope="col" className="pr-3 tnum">Events</th><th scope="col" className="pr-3 tnum">Excluded</th>
+                <th scope="col" className="pr-3 tnum">Event mean %</th><th scope="col" className="pr-3 tnum">Median %</th>
+                <th scope="col" className="pr-3 tnum">Baseline mean %</th><th scope="col" className="pr-3 tnum">Ev−base (pp)</th>
+                <th scope="col" className="pr-3 tnum">Ev−ctl (pp)</th>
+                <th scope="col" className="pr-3 tnum">Positive %</th><th scope="col" className="pr-3 tnum">Worst %</th>
+                <th scope="col" className="pr-3">95% CI of ev−ctl</th>
               </tr></thead>
               <tbody>
                 {(r.forward ?? []).flatMap((f) =>
@@ -276,9 +277,9 @@ function ResearchDetail({ id }: { id: string }) {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead><tr className="text-content-3 text-left">
-                      <th className="pr-3">Dimension</th><th className="pr-3">Regime</th><th className="pr-3 tnum">Bars</th>
-                      <th className="pr-3 tnum">BUY</th><th className="pr-3 tnum">SELL</th><th className="pr-3 tnum">NEUTRAL</th>
-                      <th className="pr-3 tnum">Actionable %</th><th className="pr-3 tnum">BUY eps</th><th className="pr-3 tnum">SELL eps</th>
+                      <th scope="col" className="pr-3">Dimension</th><th scope="col" className="pr-3">Regime</th><th scope="col" className="pr-3 tnum">Bars</th>
+                      <th scope="col" className="pr-3 tnum">BUY</th><th scope="col" className="pr-3 tnum">SELL</th><th scope="col" className="pr-3 tnum">NEUTRAL</th>
+                      <th scope="col" className="pr-3 tnum">Actionable %</th><th scope="col" className="pr-3 tnum">BUY eps</th><th scope="col" className="pr-3 tnum">SELL eps</th>
                     </tr></thead>
                     <tbody>
                       {(c.byTrend ?? []).map((b) => <RegimeStatRow key={`t-${b.regime}`} dim="Trend" b={b} />)}
@@ -295,9 +296,9 @@ function ResearchDetail({ id }: { id: string }) {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead><tr className="text-content-3 text-left">
-                  <th className="pr-3">Pair</th><th className="pr-3">Regime</th>
-                  <th className="pr-3 tnum">Co-actionable</th><th className="pr-3 tnum">Opposite</th>
-                  <th className="pr-3 tnum">Agree %</th><th className="pr-3 tnum">Conflict %</th>
+                  <th scope="col" className="pr-3">Pair</th><th scope="col" className="pr-3">Regime</th>
+                  <th scope="col" className="pr-3 tnum">Co-actionable</th><th scope="col" className="pr-3 tnum">Opposite</th>
+                  <th scope="col" className="pr-3 tnum">Agree %</th><th scope="col" className="pr-3 tnum">Conflict %</th>
                 </tr></thead>
                 <tbody>
                   {(r.pairs ?? []).flatMap((p) =>
@@ -324,10 +325,10 @@ function ResearchDetail({ id }: { id: string }) {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="text-content-3 text-left">
-                    <th className="pr-3">Candidate</th><th className="pr-3">Regime</th><th className="pr-3 tnum">Horizon</th>
-                    <th className="pr-3 tnum">Eligible</th><th className="pr-3 tnum">Excluded</th>
-                    <th className="pr-3 tnum">Mean %</th><th className="pr-3 tnum">Ev−ctl (pp)</th>
-                    <th className="pr-3 tnum">Positive %</th><th className="pr-3">95% CI of ev−ctl</th>
+                    <th scope="col" className="pr-3">Candidate</th><th scope="col" className="pr-3">Regime</th><th scope="col" className="pr-3 tnum">Horizon</th>
+                    <th scope="col" className="pr-3 tnum">Eligible</th><th scope="col" className="pr-3 tnum">Excluded</th>
+                    <th scope="col" className="pr-3 tnum">Mean %</th><th scope="col" className="pr-3 tnum">Ev−ctl (pp)</th>
+                    <th scope="col" className="pr-3 tnum">Positive %</th><th scope="col" className="pr-3">95% CI of ev−ctl</th>
                   </tr></thead>
                   <tbody>
                     {(r.forward ?? []).flatMap((f) =>
@@ -389,6 +390,6 @@ function ciLabel(b: SignalHorizonBenchmark | null | undefined) {
   if (b.ciStatus === 'insufficient_data') return <span className="text-content-3">insufficient_data ({b.eventCount}/{b.controlCount} ev/ctl)</span>;
   if (b.ciLow == null || b.ciHigh == null) return <span className="text-content-3">unavailable</span>;
   const txt = `[${b.ciLow.toFixed(2)}, ${b.ciHigh.toFixed(2)}]`;
-  if (b.ciStatus === 'inconclusive') return <span className="text-yellow-400">{txt} inconclusive</span>;
+  if (b.ciStatus === 'inconclusive') return <span className="text-warning">{txt} inconclusive</span>;
   return <span className="text-buy">{txt}</span>;
 }

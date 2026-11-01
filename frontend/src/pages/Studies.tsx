@@ -10,6 +10,9 @@ import { useGraphs, useGraphRevisions } from '@/hooks/useGraphs';
 import type {
   ResearchStudyRequest, StudyCandidate, Timeframe,
 } from '@/types/domain';
+import { Button } from '@/components/common/Button';
+import { ConfirmDialog } from '@/components/common/ConfirmDialog';
+import { LinkButton } from '@/components/common/LinkButton';
 
 const timeframes: Timeframe[] = ['1d', '4h', '1h', '15m', '5m', '1m'];
 
@@ -48,6 +51,7 @@ export default function Studies() {
   const [draft, setDraft] = useState<ResearchStudyRequest>(blankRequest);
   const [error, setError] = useState('');
   const [confirmedStudyId, setConfirmedStudyId] = useState<string | null>(null);
+  const [freezeConfirm, setFreezeConfirm] = useState(false);
   const editing = Boolean(id && location.pathname.endsWith(id) && studyQuery.data?.status === 'draft');
   const isBuilder = location.pathname === '/studies/new' || editing;
 
@@ -95,7 +99,7 @@ export default function Studies() {
 
   if (id) {
     if (studyQuery.isLoading) return <p className="text-sm text-content-3">Loading study…</p>;
-    if (studyQuery.isError || !studyQuery.data) return <div role="alert" className="text-danger">Study could not be loaded.</div>;
+    if (studyQuery.isError || !studyQuery.data) return <div role="alert" className="text-sell">Study could not be loaded.</div>;
     const study = studyQuery.data;
     const locked = study.status === 'holdout_consumed';
     return (
@@ -106,20 +110,28 @@ export default function Studies() {
             <h1 className="mt-2 text-xl font-semibold">{study.name}</h1>
             <p className="mt-1 text-sm text-content-3">{study.hypothesis}</p>
           </div>
-          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${locked ? 'bg-amber-100 text-amber-800' : 'bg-surface-2 text-content-2'}`}>
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${locked ? 'bg-warning/15 text-warning' : 'bg-surface-2 text-content-2'}`}>
             {locked ? 'Locked · holdout consumed' : study.status.replaceAll('_', ' ')}
           </span>
         </div>
-        {error && <p role="alert" className="rounded border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
-        {locked && <p className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Locked: this study cannot be edited and its reserved holdout has been consumed.</p>}
+        {error && <p role="alert" className="rounded border border-sell/30 bg-sell/5 p-3 text-sm text-sell">{error}</p>}
+        {locked && <p className="rounded-sm border border-warning/40 bg-warning/10 p-3 text-sm text-warning">Locked: this study cannot be edited and its reserved holdout has been consumed.</p>}
         {study.status === 'draft' && (
           <div className="space-y-3">
             <StudyBuilder value={draft} onChange={setDraft} onSubmit={() => void submit()} onCancel={() => navigate('/studies')} error={error} saving={update.isPending} editing />
-            <button className="rounded bg-content-1 px-3 py-2 text-sm text-white disabled:opacity-50" disabled={freeze.isPending} onClick={() => {
-              if (window.confirm('Freeze this exact specification and reserve its holdout window?')) {
+            <Button disabled={freeze.isPending} onClick={() => setFreezeConfirm(true)}>Freeze and reserve holdout</Button>
+            <ConfirmDialog
+              open={freezeConfirm}
+              tone="danger"
+              title="Freeze specification and reserve holdout"
+              message="Freezing locks the candidate set, windows, metric and horizons. The holdout is reserved at the application level and cannot be edited afterward — this does not guarantee the window was never inspected outside this app."
+              confirmLabel="Freeze and reserve"
+              onCancel={() => setFreezeConfirm(false)}
+              onConfirm={() => {
+                setFreezeConfirm(false);
                 void perform(() => freeze.mutateAsync(study.id));
-              }
-            }}>Freeze and reserve holdout</button>
+              }}
+            />
           </div>
         )}
         <section className="grid gap-3 md:grid-cols-2">
@@ -142,36 +154,35 @@ export default function Studies() {
         </InfoCard>
         <div className="flex flex-wrap gap-2">
           {study.status === 'frozen' || study.status === 'exploratory_complete' ? (
-            <button className="rounded bg-content-1 px-3 py-2 text-sm text-white" disabled={exploratory.isPending} onClick={() => void perform(() => exploratory.mutateAsync(study.id))}>Run development analysis</button>
+            <Button disabled={exploratory.isPending} onClick={() => void perform(() => exploratory.mutateAsync(study.id))}>Run development analysis</Button>
           ) : null}
           {study.status === 'exploratory_complete' && (
-            <button className="rounded bg-amber-700 px-3 py-2 text-sm text-white" disabled={validate.isPending} onClick={() => setConfirmedStudyId(study.id)}>Consume reserved holdout…</button>
+            <button className="rounded-sm border border-warning/40 px-3 py-1.5 text-sm font-medium text-warning hover:bg-warning/10" disabled={validate.isPending} onClick={() => setConfirmedStudyId(study.id)}>Consume reserved holdout…</button>
           )}
         </div>
-        {confirmedStudyId === study.id && (
-          <div role="dialog" aria-modal="true" aria-label="Confirm holdout consumption" className="rounded border border-amber-400 bg-amber-50 p-4">
-            <h2 className="font-semibold text-amber-950">Irreversible confirmatory validation</h2>
-            <p className="my-2 text-sm text-amber-900">This consumes the reserved window {study.holdoutStart} – {study.holdoutEnd} and permanently locks this study. Continue?</p>
-            <div className="flex gap-2">
-              <button className="rounded bg-amber-800 px-3 py-2 text-sm text-white" onClick={() => {
-                setConfirmedStudyId(null);
-                void perform(() => validate.mutateAsync(study.id));
-              }}>Confirm and consume holdout</button>
-              <button className="rounded border px-3 py-2 text-sm" onClick={() => setConfirmedStudyId(null)}>Cancel</button>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          open={confirmedStudyId === study.id}
+          tone="danger"
+          title="Irreversible confirmatory validation"
+          message={`This consumes the reserved window ${study.holdoutStart} – ${study.holdoutEnd} and permanently locks this study. Continue?`}
+          confirmLabel="Confirm and consume holdout"
+          onCancel={() => setConfirmedStudyId(null)}
+          onConfirm={() => {
+            setConfirmedStudyId(null);
+            void perform(() => validate.mutateAsync(study.id));
+          }}
+        />
         <section className="space-y-3">
           <h2 className="font-semibold">Execution history</h2>
-          {study.lastError && <p role="alert" className="text-sm text-danger">Last error: {study.lastError}</p>}
+          {study.lastError && <p role="alert" className="text-sm text-sell">Last error: {study.lastError}</p>}
           {study.executions.map((execution) => (
             <InfoCard key={execution.id} title={`${execution.kind} · ${execution.status} · ${execution.window.startDate} – ${execution.window.endDate}`}>
-              {execution.error && <p className="text-sm text-danger">{execution.error}</p>}
+              {execution.error && <p className="text-sm text-sell">{execution.error}</p>}
               {execution.signalResearchId && <p className="text-xs text-content-3">Signal research: {execution.signalResearchId}</p>}
               {execution.outcomes.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
-                    <thead><tr><th>Candidate</th><th>Label</th><th>Metric</th><th>Horizon</th><th>Value</th><th>CI</th><th>Events / controls</th></tr></thead>
+                    <thead><tr><th scope="col">Candidate</th><th scope="col">Label</th><th scope="col">Metric</th><th scope="col">Horizon</th><th scope="col">Value</th><th scope="col">CI</th><th scope="col">Events / controls</th></tr></thead>
                     <tbody>{execution.outcomes.map((outcome, index) => (
                       <tr key={`${outcome.strategyId}-${outcome.horizon}-${index}`} className="border-t border-line">
                         <td>{outcome.strategyId}</td><td>{outcome.label}</td><td>{outcome.metric}</td><td>{outcome.horizon}</td>
@@ -196,10 +207,10 @@ export default function Studies() {
     <div className="mx-auto max-w-6xl space-y-4">
       <div className="flex items-center justify-between">
         <div><h1 className="text-xl font-semibold">Research studies</h1><p className="text-sm text-content-3">Record a research plan before examining its outcomes.</p></div>
-        <Link to="/studies/new" className="rounded bg-content-1 px-3 py-2 text-sm text-white">New study</Link>
+        <LinkButton to="/studies/new">New study</LinkButton>
       </div>
       {studies.isLoading && <p>Loading studies…</p>}
-      {studies.isError && <p role="alert" className="text-danger">Studies could not be loaded.</p>}
+      {studies.isError && <p role="alert" className="text-sell">Studies could not be loaded.</p>}
       <div className="space-y-2">
         {(studies.data ?? []).map((study) => <Link key={study.id} to={`/studies/${study.id}`} className="block rounded border border-line bg-surface-1 p-3 hover:bg-surface-2">
           <div className="flex justify-between gap-3"><strong>{study.name}</strong><span className="text-xs">{study.status.replaceAll('_', ' ')}</span></div>
@@ -241,7 +252,7 @@ function StudyBuilder({ value, onChange, onSubmit, onCancel, error, saving, edit
     <div className="mx-auto max-w-4xl space-y-4">
       <div><h1 className="text-xl font-semibold">{editing ? 'Edit draft study' : 'Pre-register a study'}</h1>
         <p className="mt-1 text-sm text-content-3">Freeze the candidates, windows, metric and horizons before running the reserved holdout.</p></div>
-      {error && <p role="alert" className="rounded border border-danger/30 p-3 text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="rounded border border-sell/30 p-3 text-sm text-sell">{error}</p>}
       <InfoCard title="Study details">
         <div className="grid gap-3 md:grid-cols-2">
           <Field label="Name"><input value={value.name} onChange={(e) => patch({ name: e.target.value })} /></Field>
@@ -311,7 +322,7 @@ function StudyBuilder({ value, onChange, onSubmit, onCancel, error, saving, edit
       </InfoCard>
       <p className="text-xs text-content-3">Freeze records a plan and reserves an application-level holdout. This does not prove profitability or remove selection bias.</p>
       <div className="flex gap-2">
-        <button className="rounded bg-content-1 px-3 py-2 text-sm text-white disabled:opacity-50" disabled={saving || value.spec.candidates.length === 0} onClick={onSubmit}>{saving ? 'Saving…' : editing ? 'Save draft' : 'Create draft'}</button>
+        <Button disabled={saving || value.spec.candidates.length === 0} onClick={onSubmit}>{saving ? 'Saving…' : editing ? 'Save draft' : 'Create draft'}</Button>
         <button className="rounded border border-line px-3 py-2 text-sm" onClick={onCancel}>Cancel</button>
       </div>
     </div>

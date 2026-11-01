@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ReactFlow, Background, Controls, addEdge, applyNodeChanges, applyEdgeChanges,
   type Connection, type Edge, type EdgeChange, type Node, type NodeChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { DemoBanner } from '@/components/common/DemoBanner';
+import { Button } from '@/components/common/Button';
 import { useGraphs, useGraph, useGraphRevisions, useCreateGraph, useCreateRevision,
   useValidateGraph, useRunGraphBacktest, useGraphDiagnostics } from '@/hooks/useGraphs';
 import { useStrategies } from '@/hooks/useStrategies';
@@ -105,9 +106,8 @@ function GraphList() {
       <DemoBanner />
       <section className="card space-y-3">
         <div className="flex items-center justify-between">
-          <h1 className="text-sm font-semibold text-content-1">Strategy graphs</h1>
-          <button
-            className="btn"
+          <h1 className="text-base font-semibold text-content-1">Strategy graphs</h1>
+          <Button
             disabled={create.isPending}
             onClick={() =>
               create.mutate(
@@ -117,17 +117,19 @@ function GraphList() {
             }
           >
             + New graph (EMA∧RSI template)
-          </button>
+          </Button>
         </div>
-        {create.isError && <p className="text-xs text-red-400">{(create.error as Error).message}</p>}
+        {create.isError && <p className="text-xs text-sell">{(create.error as Error).message}</p>}
         <table className="w-full text-sm">
           <thead><tr className="text-left text-xs text-content-3">
-            {['Name', 'Revisions', 'Status', 'Created'].map((h) => <th key={h} className="py-1 pr-3">{h}</th>)}
+            {['Name', 'Revisions', 'Status', 'Created'].map((h) => <th key={h} scope="col" className="py-1 pr-3">{h}</th>)}
           </tr></thead>
           <tbody>
             {(graphs.data ?? []).map((g) => (
-              <tr key={g.id} className="border-t border-line cursor-pointer hover:bg-surface-2" onClick={() => navigate(`/graphs/${g.id}`)}>
-                <td className="py-1.5 pr-3">{g.name}<span className="ml-2 text-2xs text-content-3 tnum">{g.id.slice(0, 8)}</span></td>
+              <tr key={g.id}
+                className="relative border-t border-line hover:bg-surface-2 focus-within:bg-surface-2">
+                <td className="py-1.5 pr-3">{g.name}<span className="ml-2 text-2xs text-content-3 tnum">{g.id.slice(0, 8)}</span>
+                  <Link to={`/graphs/${g.id}`} aria-label={`Open graph ${g.name}`} className="absolute inset-0" /></td>
                 <td className="tnum pr-3">{g.revisions}</td>
                 <td className="pr-3">{g.status}</td>
                 <td className="text-content-3">{formatDateTime(g.createdAt)}</td>
@@ -237,12 +239,12 @@ function GraphDetail({ id }: { id: string }) {
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="section-label">Add:</span>
           {(strategies.data ?? []).filter((s) => SOURCE_PARAMS[s.id]).map((s) => (
-            <button key={s.id} className="btn text-xs" onClick={() => addNode('strategy', s.id)}>+ {s.id}</button>
+            <Button key={s.id} size="sm" onClick={() => addNode('strategy', s.id)}>+ {s.id}</Button>
           ))}
-          <button className="btn text-xs" onClick={() => addNode('and')}>+ AND</button>
-          <button className="btn text-xs" onClick={() => addNode('or')}>+ OR</button>
-          <button className="btn text-xs" onClick={() => addNode('threshold')}>+ Threshold</button>
-          <button className="btn text-xs" onClick={() => addNode('output')}>+ Output</button>
+          <Button size="sm" onClick={() => addNode('and')}>+ AND</Button>
+          <Button size="sm" onClick={() => addNode('or')}>+ OR</Button>
+          <Button size="sm" onClick={() => addNode('threshold')}>+ Threshold</Button>
+          <Button size="sm" onClick={() => addNode('output')}>+ Output</Button>
           <span className="text-content-3">Drag from a node's edge to connect · select + Delete to remove</span>
         </div>
         <div className="h-80 border border-line">
@@ -284,16 +286,16 @@ function GraphDetail({ id }: { id: string }) {
           </div>
         )}
         <div className="flex items-center gap-2">
-          <button className="btn" onClick={doValidate} disabled={validate.isPending}>Validate</button>
-          <button className="btn" disabled={createRev.isPending}
+          <Button onClick={doValidate} disabled={validate.isPending}>Validate</Button>
+          <Button disabled={createRev.isPending}
             onClick={() => createRev.mutate(workingDef, { onSuccess: () => setRevIdx((revisions.data?.length ?? 0)) })}>
             Save as new revision
-          </button>
-          {createRev.isError && <span className="text-xs text-red-400">{(createRev.error as Error).message}</span>}
-          {validate.data?.valid && verr.length === 0 && <span className="text-xs text-green-400">valid</span>}
+          </Button>
+          {createRev.isError && <span className="text-xs text-sell">{(createRev.error as Error).message}</span>}
+          {validate.data?.valid && verr.length === 0 && <span className="text-xs text-buy">valid</span>}
         </div>
         {verr.length > 0 && (
-          <ul className="text-xs text-red-400 space-y-0.5" role="alert">
+          <ul className="text-xs text-sell space-y-0.5" role="alert">
             {verr.map((e, i) => <li key={i}>• {e}</li>)}
           </ul>
         )}
@@ -317,13 +319,13 @@ function GraphDetail({ id }: { id: string }) {
             onChange={(e) => setRunForm({ ...runForm, commission: Number(e.target.value) })} /></label>
           <label>Slip % <input type="number" step="0.01" className="w-16 bg-surface-2 border border-line px-1 tnum" value={runForm.slippage}
             onChange={(e) => setRunForm({ ...runForm, slippage: Number(e.target.value) })} /></label>
-          <button className="btn" disabled={run.isPending || !current}
+          <Button disabled={run.isPending || !current}
             onClick={() => run.mutate({ assetId: 'xauusd', ...runForm, timeframe: runForm.timeframe as never },
               { onSuccess: (r) => navigate(`/results/${r.id}`) })}>
             {run.isPending ? 'Running…' : 'Run backtest'}
-          </button>
+          </Button>
         </div>
-        {run.isError && <p className="text-xs text-red-400">{(run.error as Error).message}</p>}
+        {run.isError && <p className="text-xs text-sell">{(run.error as Error).message}</p>}
       </section>
 
       <InspectSignals graphId={id} revision={current?.revision} assetId="xauusd" />
@@ -358,13 +360,13 @@ function InspectSignals({ graphId, revision, assetId }: { graphId: string; revis
           onChange={(e) => setForm({ ...form, endDate: e.target.value })} /></label>
         <label>Trace limit <input type="number" className="w-20 bg-surface-2 border border-line px-1 tnum" value={form.traceLimit}
           onChange={(e) => setForm({ ...form, traceLimit: Number(e.target.value) })} /></label>
-        <button className="btn" disabled={diag.isPending || !revision}
+        <Button disabled={diag.isPending || !revision}
           onClick={() => { setSel(0); diag.mutate({ assetId, timeframe: form.timeframe as never,
             startDate: form.startDate, endDate: form.endDate, traceLimit: form.traceLimit }); }}>
           {diag.isPending ? 'Inspecting…' : 'Inspect signals'}
-        </button>
+        </Button>
       </div>
-      {diag.isError && <p className="text-xs text-red-400">{(diag.error as Error).message}</p>}
+      {diag.isError && <p className="text-xs text-sell">{(diag.error as Error).message}</p>}
       {d && (
         <>
           <p className="text-xs text-content-3">
@@ -374,9 +376,9 @@ function InspectSignals({ graphId, revision, assetId }: { graphId: string; revis
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead><tr className="text-content-3 text-left">
-                <th className="pr-3">Node</th><th className="pr-3">Type</th><th className="pr-3 tnum">BUY</th>
-                <th className="pr-3 tnum">SELL</th><th className="pr-3 tnum">NEUTRAL</th>
-                <th className="pr-3 tnum">Actionable %</th><th className="pr-3 tnum">Avg score</th><th>Top reasons</th>
+                <th scope="col" className="pr-3">Node</th><th scope="col" className="pr-3">Type</th><th scope="col" className="pr-3 tnum">BUY</th>
+                <th scope="col" className="pr-3 tnum">SELL</th><th scope="col" className="pr-3 tnum">NEUTRAL</th>
+                <th scope="col" className="pr-3 tnum">Actionable %</th><th scope="col" className="pr-3 tnum">Avg score</th><th scope="col">Top reasons</th>
               </tr></thead>
               <tbody>
                 {d.nodes.map((n) => (
@@ -402,13 +404,14 @@ function InspectSignals({ graphId, revision, assetId }: { graphId: string; revis
               <div className="max-h-56 overflow-y-auto border border-line">
                 <table className="w-full text-xs">
                   <thead><tr className="text-content-3 text-left">
-                    <th className="pr-3">Timestamp</th>
-                    {nodeIds.map((nid) => <th key={nid} className="pr-3">{nid}</th>)}
+                    <th scope="col" className="pr-3">Timestamp</th>
+                    {nodeIds.map((nid) => <th key={nid} scope="col" className="pr-3">{nid}</th>)}
                   </tr></thead>
                   <tbody>
                     {d.traces.slice(0, 300).map((row, i) => (
-                      <tr key={i} onClick={() => setSel(i)}
-                        className={`border-t border-line cursor-pointer ${i === sel ? 'bg-surface-2' : ''}`}>
+                      <tr key={i} tabIndex={0} onClick={() => setSel(i)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSel(i); } }}
+                        className={`border-t border-line cursor-pointer focus-visible:bg-surface-2 ${i === sel ? 'bg-surface-2' : ''}`}>
                         <td className="pr-3 py-0.5 tnum">{formatDateTime(row.timestamp)}</td>
                         {nodeIds.map((nid) => {
                           const e = row.nodes.find((x) => x.nodeId === nid);

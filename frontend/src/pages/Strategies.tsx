@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useStrategies } from '@/hooks';
 import type { StrategyListItem, StrategyStatus } from '@/types/domain';
 import { formatPercent, formatSignedCurrency } from '@/lib/formatters';
@@ -8,9 +7,9 @@ import { Badge } from '@/components/common/Badge';
 import { SignalBadge } from '@/components/common/SignalBadge';
 import { Input, Select } from '@/components/common/Input';
 import { DataTable, type Column } from '@/components/tables/DataTable';
+import { PageHeader } from '@/components/common/PageHeader';
 
 export default function Strategies() {
-  const navigate = useNavigate();
   const strategies = useStrategies();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<StrategyStatus | 'all'>('all');
@@ -81,7 +80,10 @@ export default function Strategies() {
     <div className="space-y-3">
       <DemoBanner />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="section-label">Strategies</h1>
+        <PageHeader
+          title="Strategies"
+          description="Registered signal generators — pick one to inspect its signals and run history."
+        />
         <div className="flex items-center gap-2">
           <label htmlFor="strat-search" className="sr-only">
             Search strategies
@@ -117,7 +119,8 @@ export default function Strategies() {
         isLoading={strategies.isLoading}
         error={strategies.error}
         onRetry={() => strategies.refetch()}
-        onRowClick={(s) => navigate(`/strategies/${s.id}`)}
+        rowHref={(s) => `/strategies/${s.id}`}
+        rowLinkLabel={(s) => `Open strategy ${s.name}`}
         emptyTitle="No strategies"
         emptyMessage="No strategies match the current search or status filter."
         ariaLabel="Strategies"

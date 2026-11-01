@@ -56,10 +56,20 @@ export function getChartPalette(): ChartPalette {
   };
 }
 
+/** True when the OS requests reduced motion — gates chart entry animation. */
+export function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
 /** Shared ECharts base option fragments. */
 export function echartsBaseOption(p: ChartPalette) {
   return {
     backgroundColor: 'transparent',
+    animation: !prefersReducedMotion(),
     textStyle: { color: p.text2, fontFamily: p.fontMono, fontSize: 11 },
     grid: { left: 8, right: 12, top: 28, bottom: 24, containLabel: true },
     tooltip: {
