@@ -15,13 +15,14 @@ import (
 type SetupStatus string
 
 const (
-	SetupActionable   SetupStatus = "actionable"        // BUY + plan + fresh entry quote
-	SetupPlanRejected SetupStatus = "plan_rejected"     // BUY but tradeplan rejected — see RejectionReason
-	SetupLongExit     SetupStatus = "long_exit"         // SELL — exit signal, never a short plan
-	SetupNoSetup      SetupStatus = "no_setup"          // NEUTRAL
-	SetupInsufficient SetupStatus = "insufficient_data" // not enough completed candles
-	SetupStale        SetupStatus = "stale"             // quote older than the provider staleness window
-	SetupUnavailable  SetupStatus = "unavailable"       // provider disabled/disconnected/errored
+	SetupActionable    SetupStatus = "actionable"        // BUY + plan + connected provider + fresh ask
+	SetupReferenceOnly SetupStatus = "reference_only"    // BUY + plan but entry ref is mid/last — never an executable ask
+	SetupPlanRejected  SetupStatus = "plan_rejected"     // BUY but tradeplan rejected — see RejectionReason
+	SetupLongExit      SetupStatus = "long_exit"         // SELL — exit signal, never a short plan
+	SetupNoSetup       SetupStatus = "no_setup"          // NEUTRAL
+	SetupInsufficient  SetupStatus = "insufficient_data" // not enough completed candles
+	SetupStale         SetupStatus = "stale"             // quote older than the provider staleness window
+	SetupUnavailable   SetupStatus = "unavailable"       // provider disabled/disconnected/errored
 )
 
 // SetupEvaluation is one strategy's latest live evaluation. When Plan is
@@ -132,6 +133,22 @@ func (e *LiveSetupEvaluator) evalOne(ctx context.Context, st strategy.Strategy, 
 		res.RejectionReason = "live provider is disabled"
 		return res
 	}
+	// Provider health gate: anything that is not an active connected or stale
+	// stream cannot yield an executable setup — report it honestly up front.
+	pstat := e.provider.Status()
+	switch {
+	case !pstat.Enabled || pstat.State == live.StateDisabled:
+		res.RejectionReason = "live provider is disabled"
+		return res
+	case pstat.State == live.StateConfigError:
+		res.RejectionReason = "live provider configuration error"
+		return res
+	case pstat.State == live.StateConnecting || pstat.State == live.StateDisconnected:
+		res.RejectionReason = fmt.Sprintf("live provider is %s — no trustworthy stream", pstat.State)
+		return res
+	}
+	providerStale := pstat.State == live.StateStale
+
 	tf := st.Timeframe()
 	if !liveTimeframes[tf] {
 		res.RejectionReason = fmt.Sprintf("timeframe %q not supported by live provider", tf)
@@ -177,17 +194,18 @@ func (e *LiveSetupEvaluator) evalOne(ctx context.Context, st strategy.Strategy, 
 	}
 
 	// Entry reference: fresh live ask > streamed price (kind-labeled) >
-	// signal close. Quote freshness is judged on its provider timestamp
-	// (falling back to receipt time) against the provider's staleness window.
+	// signal close. Freshness: provider event time preferred (never
+	// fabricated when absent), receipt time as the honest fallback; age
+	// must be non-negative — a future timestamp is not fresh.
 	q, hasQuote := e.provider.LatestQuote()
-	pstat := e.provider.Status()
 	fresh := false
-	if hasQuote {
+	if hasQuote && pstat.StaleAfter > 0 {
 		qt := q.ReceivedAt
-		if q.ProviderTime != nil {
+		if q.ProviderTime != nil && !q.ProviderTime.IsZero() {
 			qt = *q.ProviderTime
 		}
-		fresh = e.now().Sub(qt) <= pstat.StaleAfter
+		age := e.now().Sub(qt)
+		fresh = !qt.IsZero() && age >= 0 && age <= pstat.StaleAfter
 	}
 
 	entry, src := entryFromQuote(q, hasQuote && fresh, sig.Price)
@@ -207,16 +225,22 @@ func (e *LiveSetupEvaluator) evalOne(ctx context.Context, st strategy.Strategy, 
 	rr := (plan.T2 - plan.Entry) / plan.RiskPerUnit
 	res.RiskReward = &rr
 
-	if !hasQuote {
+	// Final status by provider health + entry-source semantics.
+	switch {
+	case providerStale:
+		res.Status = SetupStale
+		res.RejectionReason = "provider reports stale — setup is not currently executable"
+	case !hasQuote:
 		res.Status = SetupStale
 		res.RejectionReason = "no live quote — plan computed on signal close; setup is not currently executable"
-		return res
-	}
-	if !fresh {
+	case !fresh:
 		res.Status = SetupStale
-		res.RejectionReason = "live quote older than the provider staleness window; setup is not currently executable"
-		return res
+		res.RejectionReason = "live quote outside the provider staleness window; setup is not currently executable"
+	case src == "ask":
+		res.Status = SetupActionable
+	default: // mid | last — usable for reference levels, never an executable ask
+		res.Status = SetupReferenceOnly
+		res.RejectionReason = fmt.Sprintf("entry reference is a %s price — not an executable ask", src)
 	}
-	res.Status = SetupActionable
 	return res
 }

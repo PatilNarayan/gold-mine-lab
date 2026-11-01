@@ -590,6 +590,10 @@ func (p *Tiingo) applyQuote(q Quote) {
 	p.subs.notify(q)
 }
 
+// minOneMinSeedLookback floors the 1m book's REST seed window: 72h covers a
+// normal weekend FX close so Sunday fetches still reach Friday's session.
+const minOneMinSeedLookback = 72 * time.Hour
+
 // fetchPrices pulls recent candles from REST /tiingo/fx/{ticker}/prices with
 // the token in the Authorization header — never in the URL. Rows arrive
 // ascending.
@@ -605,7 +609,13 @@ func (p *Tiingo) fetchPrices(ctx context.Context, tf string, limit int) ([]Candl
 	q := u.Query()
 	// Fetch a window covering `limit` SEED-interval rows plus buffer for
 	// closures — session books seed from 1h rows, not their own bar width.
-	start := p.now().Add(-def.seedBar() * time.Duration(limit) * 2)
+	// The 1m book gets a 72h calendar floor: at ~17h its natural window can
+	// sit entirely inside a weekend/holiday FX close and return empty.
+	lookback := def.seedBar() * time.Duration(limit) * 2
+	if tf == "1m" && lookback < minOneMinSeedLookback {
+		lookback = minOneMinSeedLookback
+	}
+	start := p.now().Add(-lookback)
 	q.Set("startDate", start.Format("2006-01-02"))
 	q.Set("resampleFreq", def.tiFreq)
 	u.RawQuery = q.Encode()

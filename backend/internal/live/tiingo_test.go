@@ -436,3 +436,99 @@ func TestLabelInstantRoundTripDST(t *testing.T) {
 		t.Fatalf("NowLabel offset %v — outside Kyiv bounds", d)
 	}
 }
+
+// --- 1m weekend-resilient seeding ----------------------------------------------
+
+// TestTiingo1mSeedSurvivesWeekend pins the clock to a Sunday: the mock only
+// serves data when the request's startDate reaches back past the weekend —
+// proving the 72h floor, not the ~17h natural window.
+func TestTiingo1mSeedSurvivesWeekend(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC) // Sunday
+	var gotStart string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotStart = r.URL.Query().Get("startDate")
+		sd, _ := time.Parse("2006-01-02", gotStart)
+		// Weekend-only windows see a closed market — no rows.
+		if !sd.Before(time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC)) {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[
+			{"date":"2026-10-30T21:58:00","ticker":"xauusd","open":1,"high":2,"low":0.5,"close":1.5},
+			{"date":"2026-10-30T21:59:00","ticker":"xauusd","open":2,"high":3,"low":1,"close":2.5}
+		]`))
+	}))
+	defer srv.Close()
+
+	p := testTiingo(t, TiingoConfig{APIToken: "tok", RESTBaseURL: srv.URL})
+	p.now = func() time.Time { return now }
+
+	cs, err := p.fetchPrices(context.Background(), "1m", candleBookSize)
+	if err != nil {
+		t.Fatalf("fetchPrices: %v", err)
+	}
+	// startDate must be at least 72h before the injected clock.
+	sd, _ := time.Parse("2006-01-02", gotStart)
+	if now.Sub(sd) < minOneMinSeedLookback {
+		t.Fatalf("1m seed startDate %s is only %v back — must be >= 72h", gotStart, now.Sub(sd))
+	}
+	if len(cs) == 0 {
+		t.Fatal("widened window should have reached Friday's session")
+	}
+	if len(cs) > candleBookSize {
+		t.Fatalf("returned %d candles, limit %d", len(cs), candleBookSize)
+	}
+	for i := 1; i < len(cs); i++ {
+		if !cs[i-1].Time.Before(cs[i].Time) {
+			t.Fatal("candles must stay chronologically ascending")
+		}
+	}
+}
+
+// TestTiingoSeedWindowsOtherTimeframesUnchanged pins the same Sunday clock and
+// verifies non-1m books keep the original seedBar×limit×2 formula.
+func TestTiingoSeedWindowsOtherTimeframesUnchanged(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	var gotStart string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotStart = r.URL.Query().Get("startDate")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	p := testTiingo(t, TiingoConfig{APIToken: "tok", RESTBaseURL: srv.URL})
+	p.now = func() time.Time { return now }
+
+	for _, tf := range []string{"5m", "15m", "1h", "4h", "1d"} {
+		def := supportedTimeframes[tf]
+		limit := def.seedRows()
+		_, _ = p.fetchPrices(context.Background(), tf, limit)
+		want := now.Add(-def.seedBar() * time.Duration(limit) * 2).Format("2006-01-02")
+		if gotStart != want {
+			t.Fatalf("%s startDate = %s, want unchanged formula %s", tf, gotStart, want)
+		}
+	}
+}
+
+// TestTiingo1mEmptyResponseStaysUnavailable proves an empty provider response
+// is never converted into fabricated candles — the book reports unavailable.
+func TestTiingo1mEmptyResponseStaysUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	p := testTiingo(t, TiingoConfig{APIToken: "tok", RESTBaseURL: srv.URL})
+	p.now = func() time.Time { return time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC) }
+
+	cs, err := p.fetchPrices(context.Background(), "1m", candleBookSize)
+	if err != nil {
+		t.Fatalf("empty response is not an error at fetch level: %v", err)
+	}
+	if len(cs) != 0 {
+		t.Fatalf("empty provider response must not fabricate candles, got %d", len(cs))
+	}
+	// And the book-level answer stays honestly unavailable.
+	if _, err := p.Candles(context.Background(), "1m", 0); err == nil {
+		t.Fatal("empty book must report unavailable, not fabricate candles")
+	}
+}

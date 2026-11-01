@@ -211,8 +211,62 @@ func TestMidAndAskSources(t *testing.T) {
 	if got.EntryPriceSource != "mid" || *got.EntryPrice != 100.5 {
 		t.Fatalf("mid must be labeled mid, never ask: %+v", got)
 	}
-	if got.Status != SetupActionable { // fresh mid is usable but honestly labeled
-		t.Fatalf("fresh mid should still evaluate actionable, got %s", got.Status)
+	if got.Status != SetupReferenceOnly { // mid is usable for levels, never executable
+		t.Fatalf("fresh mid must be reference_only, got %s", got.Status)
+	}
+}
+
+func TestLastPriceIsReferenceOnly(t *testing.T) {
+	s := &stubStrategy{id: "ema-cross", ver: "1", tf: market.Timeframe1h, sig: sig(strategy.ActionBuy)}
+	got := newEval(p1h(book(3, 95), freshQuote(100.5, nil, "last")), s).
+		Evaluate(context.Background())[0]
+	if got.Status != SetupReferenceOnly || got.EntryPriceSource != "last" {
+		t.Fatalf("fresh last price must be reference_only, got %+v", got)
+	}
+}
+
+func TestProviderHealthGates(t *testing.T) {
+	s := &stubStrategy{id: "ema-cross", ver: "1", tf: market.Timeframe1h, sig: sig(strategy.ActionBuy)}
+	for _, tc := range []struct {
+		state live.State
+		want  SetupStatus
+	}{
+		{live.StateDisconnected, SetupUnavailable}, // recent cached quote cannot rescue it
+		{live.StateConnecting, SetupUnavailable},
+		{live.StateDisabled, SetupUnavailable},
+		{live.StateConfigError, SetupUnavailable},
+		{live.StateStale, SetupStale},
+	} {
+		p := p1h(book(3, 95), freshQuote(101, f64p(101.5), "last"))
+		p.status.State = tc.state
+		if tc.state == live.StateDisabled {
+			p.status.Enabled = false
+		}
+		got := newEval(p, s).Evaluate(context.Background())[0]
+		if got.Status != tc.want {
+			t.Fatalf("state %s: expected %s, got %s (%s)", tc.state, tc.want, got.Status, got.RejectionReason)
+		}
+	}
+}
+
+func TestFutureProviderTimestampNotFresh(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+	s := &stubStrategy{id: "ema-cross", ver: "1", tf: market.Timeframe1h, sig: sig(strategy.ActionBuy)}
+	got := newEval(p1h(book(3, 95),
+		&live.Quote{Price: 101, PriceKind: "last", Ask: f64p(101.5), ProviderTime: &future, ReceivedAt: future}), s).
+		Evaluate(context.Background())[0]
+	if got.Status == SetupActionable {
+		t.Fatal("future-dated provider timestamp must not qualify as fresh")
+	}
+}
+
+func TestZeroStaleAfterNotActionable(t *testing.T) {
+	s := &stubStrategy{id: "ema-cross", ver: "1", tf: market.Timeframe1h, sig: sig(strategy.ActionBuy)}
+	p := p1h(book(3, 95), freshQuote(101, f64p(101.5), "last"))
+	p.status.StaleAfter = 0
+	got := newEval(p, s).Evaluate(context.Background())[0]
+	if got.Status == SetupActionable {
+		t.Fatal("zero staleness window must not produce actionable")
 	}
 }
 
