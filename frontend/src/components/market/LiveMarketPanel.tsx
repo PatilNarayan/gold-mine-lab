@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useLiveCandles, useLiveQuote, useLiveStatus, useLiveStream } from '@/hooks';
 import type { Timeframe } from '@/types/domain';
 import { Badge } from '@/components/common/Badge';
@@ -52,6 +53,7 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
   const st = status.data;
   const active = st?.enabled === true;
 
+  const [show, setShow] = useState({ ema20: true, ema50: true, donchian: true, rsi: true });
   const quote = useLiveQuote(assetId, active);
   const candles = useLiveCandles(assetId, timeframe, active);
   const stream = useLiveStream(assetId, active);
@@ -135,6 +137,26 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
       ) : null}
 
       <section className="border border-line bg-surface-1 p-2" aria-label="Live price chart">
+        <div className="mb-1 flex flex-wrap gap-1.5" role="group" aria-label="Indicator visibility">
+          {([
+            ['ema20', 'EMA (20)'], ['ema50', 'EMA (50)'],
+            ['donchian', 'Donchian (20)'], ['rsi', 'RSI (14)'],
+          ] as const).map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={show[k]}
+              onClick={() => setShow((v) => ({ ...v, [k]: !v[k] }))}
+              className={`rounded-sm border px-2 py-0.5 text-2xs font-medium transition-colors ${
+                show[k]
+                  ? 'border-accent/40 bg-accent-soft text-content-1'
+                  : 'border-line bg-surface-1 text-content-3 hover:text-content-2'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         {candles.isLoading ? (
           <Skeleton className="h-[440px] w-full" />
         ) : candles.isError ? (
@@ -142,8 +164,11 @@ export function LiveMarketPanel({ assetId, timeframe }: { assetId: string; timef
         ) : candles.data && candles.data.candles.length ? (
           <CandlestickChart
             candles={candles.data.candles}
-            ema20={candles.data.overlays.ema20}
-            ema50={candles.data.overlays.ema50}
+            ema20={show.ema20 ? candles.data.overlays.ema20 : []}
+            ema50={show.ema50 ? candles.data.overlays.ema50 : []}
+            donchianUpper={show.donchian ? candles.data.overlays.donchianUpper : []}
+            donchianLower={show.donchian ? candles.data.overlays.donchianLower : []}
+            rsi={show.rsi ? candles.data.overlays.rsi14 : []}
             height={440}
           />
         ) : (

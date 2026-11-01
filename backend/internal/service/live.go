@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -257,6 +258,18 @@ func (s *LiveService) liveBars() []api.LiveBarUpdate {
 			pt := ov.EMA50[n-1]
 			upd.EMA50 = &pt
 		}
+		if n := len(ov.RSI14); n > 0 {
+			pt := ov.RSI14[n-1]
+			upd.RSI14 = &pt
+		}
+		if n := len(ov.DonchianUpper); n > 0 {
+			pt := ov.DonchianUpper[n-1]
+			upd.DonchianUpper = &pt
+		}
+		if n := len(ov.DonchianLower); n > 0 {
+			pt := ov.DonchianLower[n-1]
+			upd.DonchianLower = &pt
+		}
 		out = append(out, upd)
 	}
 	return out
@@ -322,8 +335,12 @@ func (h *liveHub) push(ch chan api.LiveStreamEvent, ev api.LiveStreamEvent) {
 // it is never reseeded at an arbitrary visible boundary.
 func liveOverlays(cs []live.Candle, tail int) api.Overlays {
 	closes := make([]float64, len(cs))
+	highs := make([]float64, len(cs))
+	lows := make([]float64, len(cs))
 	for i, c := range cs {
 		closes[i] = c.Close
+		highs[i] = c.High
+		lows[i] = c.Low
 	}
 	toPts := func(vals []float64, warmup int) []api.SeriesPoint {
 		pts := make([]api.SeriesPoint, 0, max(0, len(vals)-warmup+1))
@@ -338,9 +355,33 @@ func liveOverlays(cs []live.Candle, tail int) api.Overlays {
 		}
 		return pts
 	}
+	// NaN-tolerant variant for RSI/Donchian: warmup entries are undefined,
+	// never emitted as zero-filled points.
+	toPtsNaN := func(vals []float64) []api.SeriesPoint {
+		pts := make([]api.SeriesPoint, 0, len(vals))
+		for i, v := range vals {
+			if math.IsNaN(v) {
+				continue
+			}
+			pts = append(pts, api.SeriesPoint{
+				Time:  cs[i].Time.UTC().Format(time.RFC3339),
+				Value: round2(v),
+			})
+		}
+		if tail > 0 && len(pts) > tail {
+			pts = pts[len(pts)-tail:]
+		}
+		return pts
+	}
+	// Periods mirror the registered strategy defaults: rsi-mean-reversion
+	// period=14, donchian-breakout lookback=20.
+	du, dl := indicators.DonchianChannels(highs, lows, 20)
 	return api.Overlays{
-		EMA20: toPts(indicators.EMA(closes, 20), 20),
-		EMA50: toPts(indicators.EMA(closes, 50), 50),
+		EMA20:         toPts(indicators.EMA(closes, 20), 20),
+		EMA50:         toPts(indicators.EMA(closes, 50), 50),
+		RSI14:         toPtsNaN(indicators.RSI(closes, 14)),
+		DonchianUpper: toPtsNaN(du),
+		DonchianLower: toPtsNaN(dl),
 	}
 }
 

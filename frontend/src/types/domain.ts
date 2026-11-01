@@ -58,6 +58,9 @@ export const candleSeriesSchema = z.object({
   overlays: z.object({
     ema20: z.array(seriesPointSchema),
     ema50: z.array(seriesPointSchema),
+    rsi14: z.array(seriesPointSchema).nullish().transform(v => v ?? []),
+    donchianUpper: z.array(seriesPointSchema).nullish().transform(v => v ?? []),
+    donchianLower: z.array(seriesPointSchema).nullish().transform(v => v ?? []),
   }),
   coverage: coverageSchema.optional(),
 });
@@ -138,7 +141,13 @@ export const liveCandlesSchema = z.object({
   timeframe: timeframeSchema,
   status: liveStateSchema,
   candles: z.array(liveCandleSchema),
-  overlays: z.object({ ema20: z.array(seriesPointSchema), ema50: z.array(seriesPointSchema) }),
+  overlays: z.object({
+    ema20: z.array(seriesPointSchema),
+    ema50: z.array(seriesPointSchema),
+    rsi14: z.array(seriesPointSchema).nullish().transform(v => v ?? []),
+    donchianUpper: z.array(seriesPointSchema).nullish().transform(v => v ?? []),
+    donchianLower: z.array(seriesPointSchema).nullish().transform(v => v ?? []),
+  }),
 });
 export type LiveCandles = z.infer<typeof liveCandlesSchema>;
 
@@ -149,6 +158,9 @@ export const liveBarUpdateSchema = z.object({
   candle: liveCandleSchema.optional(),
   ema20: seriesPointSchema.optional(),
   ema50: seriesPointSchema.optional(),
+  rsi14: seriesPointSchema.optional(),
+  donchianUpper: seriesPointSchema.optional(),
+  donchianLower: seriesPointSchema.optional(),
 });
 export type LiveBarUpdate = z.infer<typeof liveBarUpdateSchema>;
 

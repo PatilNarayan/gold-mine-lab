@@ -123,6 +123,9 @@ export default function Market() {
             <CandlestickChart
               candles={candles.data.candles}
               ema20={candles.data.overlays.ema20}
+              donchianUpper={candles.data.overlays.donchianUpper}
+              donchianLower={candles.data.overlays.donchianLower}
+              rsi={candles.data.overlays.rsi14}
               ema50={candles.data.overlays.ema50}
               markers={markers}
               height={440}

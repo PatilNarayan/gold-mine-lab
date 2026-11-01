@@ -15,6 +15,9 @@ const base: LiveCandles = {
   overlays: {
     ema20: [{ time: '2026-10-22T18:15:00Z', value: 4040.1 }],
     ema50: [{ time: '2026-10-22T18:15:00Z', value: 4042.5 }],
+    rsi14: [],
+    donchianUpper: [],
+    donchianLower: [],
   },
 };
 

@@ -12,6 +12,37 @@ export const HISTORY_START = '2024-01-02T00:00:00.000Z';
 
 export const DEFAULT_CANDLE_COUNT = 240;
 
+// Demo-only Wilder RSI(14) — mirrors the backend indicators.RSI semantics.
+function rsi(values: number[], period: number): (number | null)[] {
+  const out: (number | null)[] = new Array(values.length).fill(null);
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i < values.length; i++) {
+    const ch = values[i] - values[i - 1];
+    const g = Math.max(ch, 0), l = Math.max(-ch, 0);
+    if (i <= period) {
+      avgGain += g; avgLoss += l;
+      if (i === period) { avgGain /= period; avgLoss /= period; out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss); }
+    } else {
+      avgGain = (avgGain * (period - 1) + g) / period;
+      avgLoss = (avgLoss * (period - 1) + l) / period;
+      out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    }
+  }
+  return out;
+}
+
+// Demo-only Donchian channels — bar i uses strictly the preceding `lookback`
+// bars, matching the backend strategy's no-lookahead semantics.
+function donchian(highs: number[], lows: number[], lookback: number): [(number | null)[], (number | null)[]] {
+  const u: (number | null)[] = new Array(highs.length).fill(null);
+  const l: (number | null)[] = new Array(highs.length).fill(null);
+  for (let i = lookback; i < highs.length; i++) {
+    u[i] = Math.max(...highs.slice(i - lookback, i));
+    l[i] = Math.min(...lows.slice(i - lookback, i));
+  }
+  return [u, l];
+}
+
 function ema(values: number[], period: number): (number | null)[] {
   const k = 2 / (period + 1);
   const out: (number | null)[] = new Array(values.length).fill(null);
@@ -89,6 +120,9 @@ export function generateCandleSeries(
     overlays: {
       ema20: toPoints(ema(closes, 20)),
       ema50: toPoints(ema(closes, 50)),
+      rsi14: toPoints(rsi(closes, 14)),
+      donchianUpper: toPoints(donchian(candles.map((c) => c.high), candles.map((c) => c.low), 20)[0]),
+      donchianLower: toPoints(donchian(candles.map((c) => c.high), candles.map((c) => c.low), 20)[1]),
     },
   };
   cache.set(key, series);

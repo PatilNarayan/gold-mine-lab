@@ -15,7 +15,7 @@ export const mockMarketService: MarketService = {
   async getCandles(assetId: string, timeframe: Timeframe): Promise<CandleSeries> {
     await simulateDelay();
     if (isEmptyScenario()) {
-      return { assetId, timeframe, candles: [], overlays: { ema20: [], ema50: [] } };
+      return { assetId, timeframe, candles: [], overlays: { ema20: [], ema50: [], rsi14: [], donchianUpper: [], donchianLower: [] } };
     }
     return generateCandleSeries(assetId, timeframe);
   },

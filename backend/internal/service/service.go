@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/gold-mine-lab/backend/internal/api"
@@ -150,8 +151,12 @@ func (s *Service) MarketSummary(ctx context.Context, assetID string, tf market.T
 // real closes.
 func seriesFromCandles(assetID string, tf market.Timeframe, candles []market.Candle) api.CandleSeries {
 	closes := make([]float64, len(candles))
+	highs := make([]float64, len(candles))
+	lows := make([]float64, len(candles))
 	for i, c := range candles {
 		closes[i] = c.Close
+		highs[i] = c.High
+		lows[i] = c.Low
 	}
 	toPoints := func(vals []float64, warmup int) []api.SeriesPoint {
 		pts := make([]api.SeriesPoint, 0, max(0, len(vals)-warmup+1))
@@ -163,13 +168,30 @@ func seriesFromCandles(assetID string, tf market.Timeframe, candles []market.Can
 		}
 		return pts
 	}
+	toPointsNaN := func(vals []float64) []api.SeriesPoint {
+		pts := make([]api.SeriesPoint, 0, len(vals))
+		for i, v := range vals {
+			if math.IsNaN(v) {
+				continue
+			}
+			pts = append(pts, api.SeriesPoint{
+				Time:  candles[i].Time.UTC().Format(time.RFC3339),
+				Value: round2(v),
+			})
+		}
+		return pts
+	}
+	du, dl := indicators.DonchianChannels(highs, lows, 20)
 	return api.CandleSeries{
 		AssetID:   assetID,
 		Timeframe: tf,
 		Candles:   candles,
 		Overlays: api.Overlays{
-			EMA20: toPoints(indicators.EMA(closes, 20), 20),
-			EMA50: toPoints(indicators.EMA(closes, 50), 50),
+			EMA20:         toPoints(indicators.EMA(closes, 20), 20),
+			EMA50:         toPoints(indicators.EMA(closes, 50), 50),
+			RSI14:         toPointsNaN(indicators.RSI(closes, 14)),
+			DonchianUpper: toPointsNaN(du),
+			DonchianLower: toPointsNaN(dl),
 		},
 	}
 }

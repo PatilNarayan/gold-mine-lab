@@ -55,8 +55,11 @@ type Coverage struct {
 
 // Overlays holds precomputed indicator series (EMA20/EMA50).
 type Overlays struct {
-	EMA20 []SeriesPoint `json:"ema20"`
-	EMA50 []SeriesPoint `json:"ema50"`
+	EMA20         []SeriesPoint `json:"ema20"`
+	EMA50         []SeriesPoint `json:"ema50"`
+	RSI14         []SeriesPoint `json:"rsi14"`
+	DonchianUpper []SeriesPoint `json:"donchianUpper"`
+	DonchianLower []SeriesPoint `json:"donchianLower"`
 }
 
 // MarketSummary is the market overview tile payload.
@@ -842,10 +845,13 @@ type LiveCandlesResponse struct {
 // LiveBarUpdate is one timeframe's newest bar (usually the forming candle)
 // plus its EMA overlay points — pushed to stream subscribers per quote tick.
 type LiveBarUpdate struct {
-	Timeframe string       `json:"timeframe"`
-	Candle    *LiveCandle  `json:"candle,omitempty"`
-	EMA20     *SeriesPoint `json:"ema20,omitempty"`
-	EMA50     *SeriesPoint `json:"ema50,omitempty"`
+	Timeframe     string       `json:"timeframe"`
+	Candle        *LiveCandle  `json:"candle,omitempty"`
+	EMA20         *SeriesPoint `json:"ema20,omitempty"`
+	EMA50         *SeriesPoint `json:"ema50,omitempty"`
+	RSI14         *SeriesPoint `json:"rsi14,omitempty"`
+	DonchianUpper *SeriesPoint `json:"donchianUpper,omitempty"`
+	DonchianLower *SeriesPoint `json:"donchianLower,omitempty"`
 }
 
 // LiveStreamEvent is one frame on GET /api/market/live/stream. Type is

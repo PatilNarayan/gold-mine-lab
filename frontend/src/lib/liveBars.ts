@@ -18,6 +18,9 @@ export function mergeLiveBar(prev: LiveCandles | undefined, u: LiveBarUpdate, ma
     overlays: {
       ema20: mergeTail(prev.overlays.ema20, u.ema20),
       ema50: mergeTail(prev.overlays.ema50, u.ema50),
+      rsi14: mergeTail(prev.overlays.rsi14, u.rsi14),
+      donchianUpper: mergeTail(prev.overlays.donchianUpper, u.donchianUpper),
+      donchianLower: mergeTail(prev.overlays.donchianLower, u.donchianLower),
     },
   };
 }

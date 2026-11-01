@@ -17,7 +17,7 @@ interface RequestOptions {
  * request IDs through on `ApiError.requestId`.
  */
 export const apiClient = {
-  async request<T>(path: string, schema: z.ZodType<T>, opts: RequestOptions = {}): Promise<T> {
+  async request<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>, opts: RequestOptions = {}): Promise<T> {
     const { method = 'GET', body, timeoutMs = DEFAULT_TIMEOUT_MS, signal } = opts;
     const url = `${getApiUrl()}${path}`;
 
@@ -72,7 +72,7 @@ export const apiClient = {
     return parsed.data;
   },
 
-  get<T>(path: string, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
+  get<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>, opts?: RequestOptions): Promise<T> {
     return this.request(path, schema, opts);
   },
 
