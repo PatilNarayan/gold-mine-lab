@@ -14,10 +14,12 @@ import type {
   ISeriesApi,
   CandlestickData,
   LineData,
+  LogicalRange,
   UTCTimestamp,
 } from 'lightweight-charts';
 import type { Candle, SeriesPoint, SignalAction } from '@/types/domain';
 import { getChartPalette } from '@/charts/theme';
+import type { ChartPalette } from '@/charts/theme';
 import { useUiStore } from '@/stores/useUiStore';
 
 export interface ChartMarker {
@@ -30,13 +32,22 @@ const toUtc = (iso: string) => Math.floor(Date.parse(iso) / 1000) as UTCTimestam
 
 type Bar = Omit<Candle, 'volume'> & { volume: number | null };
 
+interface RsiPane {
+  chart: IChartApi;
+  series: ISeriesApi<'Line'>;
+  unlink: () => void;
+}
+
 interface ChartState {
+  chart: IChartApi;
+  palette: ChartPalette;
+  rsiHeight: number;
   cs: ISeriesApi<'Candlestick'>;
   e20: ISeriesApi<'Line'>;
   e50: ISeriesApi<'Line'>;
   du: ISeriesApi<'Line'>;
   dl: ISeriesApi<'Line'>;
-  rsi?: { chart: IChartApi; series: ISeriesApi<'Line'> };
+  rsi?: RsiPane;
   applied: { candles: Bar[]; ema20: SeriesPoint[]; ema50: SeriesPoint[]; du: SeriesPoint[]; dl: SeriesPoint[]; rsi: SeriesPoint[] };
 }
 
@@ -82,6 +93,49 @@ function applyPoints(series: ISeriesApi<'Line'>, prev: SeriesPoint[] | undefined
     return;
   }
   series.update(toPt(next[next.length - 1]));
+}
+
+const lineOpts = { lineWidth: 1 as const, crosshairMarkerVisible: false, priceLineVisible: false };
+
+/**
+ * Lower RSI pane: its own chart instance on the same UTC timestamps, with
+ * two-way visible-range sync against the price chart. The `syncing` flag is
+ * a reentrancy guard — forwarding a range fires the other pane's handler,
+ * which must not echo the same range back. `unlink` detaches both
+ * subscriptions so a disposed pane leaves nothing behind.
+ */
+function createRsiPane(container: HTMLElement, main: IChartApi, p: ChartPalette, height: number): RsiPane {
+  const rc = createChart(container, {
+    width: container.clientWidth,
+    height,
+    layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: p.text3, fontFamily: p.fontMono, fontSize: 10, attributionLogo: false },
+    grid: { vertLines: { color: p.grid }, horzLines: { color: p.grid } },
+    crosshair: { mode: CrosshairMode.Normal },
+    rightPriceScale: { borderColor: p.border },
+    timeScale: { borderColor: p.border, timeVisible: true, secondsVisible: false },
+  });
+  const series = rc.addSeries(LineSeries, { ...lineOpts, color: p.info });
+  series.createPriceLine({ price: 70, color: p.sell, lineStyle: LineStyle.Dashed, lineWidth: 1, title: '70' });
+  series.createPriceLine({ price: 30, color: p.buy, lineStyle: LineStyle.Dashed, lineWidth: 1, title: '30' });
+  let syncing = false;
+  const link = (to: IChartApi) => (r: LogicalRange | null) => {
+    if (!r || syncing) return;
+    syncing = true;
+    try {
+      to.timeScale().setVisibleLogicalRange(r);
+    } finally {
+      syncing = false;
+    }
+  };
+  const toRsi = link(rc);
+  const toMain = link(main);
+  main.timeScale().subscribeVisibleLogicalRangeChange(toRsi);
+  rc.timeScale().subscribeVisibleLogicalRangeChange(toMain);
+  const unlink = () => {
+    main.timeScale().unsubscribeVisibleLogicalRangeChange(toRsi);
+    rc.timeScale().unsubscribeVisibleLogicalRangeChange(toMain);
+  };
+  return { chart: rc, series, unlink };
 }
 
 /**
@@ -157,7 +211,6 @@ export function CandlestickChart({
     });
     candlesSeries.setData(candles.map(toBar));
 
-    const lineOpts = { lineWidth: 1 as const, crosshairMarkerVisible: false, priceLineVisible: false };
     const e20 = chart.addSeries(LineSeries, { ...lineOpts, color: p.info });
     e20.setData(ema20.map(toPt));
     const e50 = chart.addSeries(LineSeries, { ...lineOpts, color: p.warning });
@@ -223,56 +276,42 @@ export function CandlestickChart({
 
     chart.timeScale().fitContent();
 
-    // Separate RSI pane below the price chart — own chart instance sharing
-    // the same UTC timestamps; visible range syncs one-way from the price
-    // chart so scroll/zoom stays aligned.
-    let rsiState: ChartState['rsi'];
-    if (rsi.length && rsiRef.current) {
-      const rc = createChart(rsiRef.current, {
-        width: rsiRef.current.clientWidth || el.clientWidth,
-        height: rsiHeight,
-        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: p.text3, fontFamily: p.fontMono, fontSize: 10, attributionLogo: false },
-        grid: { vertLines: { color: p.grid }, horzLines: { color: p.grid } },
-        crosshair: { mode: CrosshairMode.Normal },
-        rightPriceScale: { borderColor: p.border },
-        timeScale: { borderColor: p.border, timeVisible: true, secondsVisible: false },
-      });
-      const rseries = rc.addSeries(LineSeries, { ...lineOpts, color: p.info });
-      rseries.setData(rsi.map(toPt));
-      rseries.createPriceLine({ price: 70, color: p.sell, lineStyle: LineStyle.Dashed, lineWidth: 1, title: '70' });
-      rseries.createPriceLine({ price: 30, color: p.buy, lineStyle: LineStyle.Dashed, lineWidth: 1, title: '30' });
-      // Two-way range sync with a reentrancy guard: interacting with either
-      // pane moves the other, without a subscription echo loop.
-      let syncing = false;
-      const link = (from: IChartApi, to: IChartApi) => {
-        from.timeScale().subscribeVisibleLogicalRangeChange((r) => {
-          if (!r || syncing) return;
-          syncing = true;
-          try { to.timeScale().setVisibleLogicalRange(r); } finally { syncing = false; }
-        });
-      };
-      link(chart, rc);
-      link(rc, chart);
-      rsiState = { chart: rc, series: rseries };
-    }
-
-    stateRef.current = { cs: candlesSeries, e20, e50, du, dl, rsi: rsiState, applied: { candles, ema20, ema50, du: donchianUpper, dl: donchianLower, rsi } };
+    // The RSI pane is NOT created here — its container only exists while the
+    // rsi prop has data, so its lifecycle lives in the incremental effect.
+    stateRef.current = {
+      chart,
+      palette: p,
+      rsiHeight,
+      cs: candlesSeries,
+      e20,
+      e50,
+      du,
+      dl,
+      applied: { candles, ema20, ema50, du: donchianUpper, dl: donchianLower, rsi },
+    };
 
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(() => chart.resize(el.clientWidth, el.clientHeight));
+      ro = new ResizeObserver(() => {
+        chart.resize(el.clientWidth, el.clientHeight);
+        stateRef.current?.rsi?.chart.resize(el.clientWidth, rsiHeight);
+      });
       ro.observe(el);
     }
     return () => {
       ro?.disconnect();
+      const s = stateRef.current;
       stateRef.current = null;
-      rsiState?.chart.remove();
+      if (s?.rsi) {
+        s.rsi.unlink();
+        s.rsi.chart.remove();
+      }
       chart.remove();
     };
     // Chart is rebuilt only when layout-relevant props change; data flows
     // through the incremental effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [height, theme]);
+  }, [height, rsiHeight, theme]);
 
   // Incremental data path: fold prop changes into the existing series —
   // forming-bar ticks use series.update(); bootstrap/timeframe changes
@@ -285,7 +324,20 @@ export function CandlestickChart({
     if (s.applied.ema50 !== ema50) applyPoints(s.e50, s.applied.ema50, ema50);
     if (s.applied.du !== donchianUpper) applyPoints(s.du, s.applied.du, donchianUpper);
     if (s.applied.dl !== donchianLower) applyPoints(s.dl, s.applied.dl, donchianLower);
-    if (s.rsi && s.applied.rsi !== rsi) applyPoints(s.rsi.series, s.applied.rsi, rsi);
+    // RSI pane lifecycle follows the data, not the mount effect: the pane's
+    // container only exists while `rsi` is non-empty, so React remounts a
+    // fresh div every time data returns. Create on 0→n, dispose on n→0,
+    // update in place while it stays alive.
+    if (rsi.length && rsiRef.current && !s.rsi) {
+      s.rsi = createRsiPane(rsiRef.current, s.chart, s.palette, s.rsiHeight);
+      s.rsi.series.setData(rsi.map(toPt));
+    } else if (!rsi.length && s.rsi) {
+      s.rsi.unlink();
+      s.rsi.chart.remove();
+      s.rsi = undefined;
+    } else if (s.rsi && s.applied.rsi !== rsi) {
+      applyPoints(s.rsi.series, s.applied.rsi, rsi);
+    }
     s.applied = { candles, ema20, ema50, du: donchianUpper, dl: donchianLower, rsi };
   }, [candles, ema20, ema50, donchianUpper, donchianLower, rsi]);
 
